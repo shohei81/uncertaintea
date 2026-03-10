@@ -22,6 +22,24 @@ struct HMCChains
     chains::Vector{HMCChain}
 end
 
+struct HMCParameterSummary
+    index::Int
+    binding::Symbol
+    address::Any
+    mean::Float64
+    sd::Float64
+    quantiles::Vector{Float64}
+    rhat::Float64
+    ess::Float64
+end
+
+struct HMCSummary
+    model::TeaModel
+    space::Symbol
+    quantile_probs::Vector{Float64}
+    parameters::Vector{HMCParameterSummary}
+end
+
 mutable struct DualAveragingState
     target_accept::Float64
     gamma::Float64
@@ -48,10 +66,15 @@ end
 
 Base.length(chain::HMCChain) = size(chain.unconstrained_samples, 2)
 Base.length(chains::HMCChains) = length(chains.chains)
+Base.length(summary::HMCSummary) = length(summary.parameters)
 Base.getindex(chains::HMCChains, index::Int) = chains.chains[index]
+Base.getindex(summary::HMCSummary, index::Int) = summary.parameters[index]
 Base.firstindex(chains::HMCChains) = firstindex(chains.chains)
+Base.firstindex(summary::HMCSummary) = firstindex(summary.parameters)
 Base.lastindex(chains::HMCChains) = lastindex(chains.chains)
+Base.lastindex(summary::HMCSummary) = lastindex(summary.parameters)
 Base.iterate(chains::HMCChains, state...) = iterate(chains.chains, state...)
+Base.iterate(summary::HMCSummary, state...) = iterate(summary.parameters, state...)
 
 function Base.show(io::IO, chain::HMCChain)
     print(
@@ -83,6 +106,21 @@ function Base.show(io::IO, chains::HMCChains)
         round(acceptancerate(chains); digits=3),
         ", divergences=",
         sum(count(identity, chain.divergent) for chain in chains.chains),
+        ")",
+    )
+end
+
+function Base.show(io::IO, summary::HMCSummary)
+    print(
+        io,
+        "HMCSummary(",
+        summary.model.name,
+        ", space=",
+        summary.space,
+        ", parameters=",
+        length(summary),
+        ", quantiles=",
+        summary.quantile_probs,
         ")",
     )
 end
@@ -128,6 +166,11 @@ function numsamples(chains::HMCChains)
     return length(first(chains.chains))
 end
 
+function _summary_address(address::AddressSpec)
+    parts = Any[part isa AddressLiteralPart ? part.value : part.value for part in address.parts]
+    return length(parts) == 1 ? first(parts) : Tuple(parts)
+end
+
 function _validate_hmc_diagnostics(chains::HMCChains, space::Symbol)
     length(chains) >= 2 || throw(ArgumentError("multi-chain diagnostics require at least 2 chains"))
     num_samples = numsamples(chains)
@@ -146,6 +189,15 @@ function _validate_hmc_diagnostics(chains::HMCChains, space::Symbol)
     return num_params, num_samples
 end
 
+function _validate_summary_quantiles(quantile_probs)
+    isempty(quantile_probs) && throw(ArgumentError("summary quantiles must be non-empty"))
+    probabilities = Float64[Float64(prob) for prob in quantile_probs]
+    for prob in probabilities
+        0.0 <= prob <= 1.0 || throw(ArgumentError("summary quantiles must lie in [0, 1]"))
+    end
+    return probabilities
+end
+
 function _sample_mean(values::AbstractVector)
     return sum(values) / length(values)
 end
@@ -153,6 +205,40 @@ end
 function _sample_variance(values::AbstractVector, mean_value::Real=_sample_mean(values))
     length(values) > 1 || return 0.0
     return sum((value - mean_value)^2 for value in values) / (length(values) - 1)
+end
+
+function _sample_sd(values::AbstractVector, mean_value::Real=_sample_mean(values))
+    return sqrt(max(_sample_variance(values, mean_value), 0.0))
+end
+
+function _pooled_parameter_draws(chains::HMCChains, parameter_index::Int, space::Symbol)
+    _, num_samples = _validate_hmc_diagnostics(chains, space)
+    pooled = Vector{Float64}(undef, length(chains) * num_samples)
+    offset = 1
+    for chain in chains.chains
+        samples = _diagnostic_space_samples(chain, space)
+        pooled[offset:(offset + num_samples - 1)] = samples[parameter_index, :]
+        offset += num_samples
+    end
+    return pooled
+end
+
+function _quantile(sorted_values::AbstractVector, probability::Float64)
+    num_values = length(sorted_values)
+    num_values == 0 && throw(ArgumentError("quantile requires at least one value"))
+    num_values == 1 && return Float64(sorted_values[1])
+
+    position = 1 + (num_values - 1) * probability
+    lower = floor(Int, position)
+    upper = ceil(Int, position)
+    lower == upper && return Float64(sorted_values[lower])
+    weight = position - lower
+    return (1 - weight) * sorted_values[lower] + weight * sorted_values[upper]
+end
+
+function _quantiles(values::AbstractVector, probabilities::AbstractVector{Float64})
+    sorted_values = sort(collect(values))
+    return Float64[_quantile(sorted_values, probability) for probability in probabilities]
 end
 
 function _split_chain_parameter_draws(chains::HMCChains, parameter_index::Int, space::Symbol)
@@ -257,6 +343,34 @@ function ess(chains::HMCChains; space::Symbol=:constrained)
         values[parameter_index] = _split_ess(_split_chain_parameter_draws(chains, parameter_index, space))
     end
     return values
+end
+
+function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.05, 0.5, 0.95))
+    num_params, _ = _validate_hmc_diagnostics(chains, space)
+    quantile_probs = _validate_summary_quantiles(quantiles)
+    rhats = rhat(chains; space=space)
+    ess_values = ess(chains; space=space)
+    layout = parameterlayout(chains.model)
+    parametercount(layout) == num_params ||
+        throw(DimensionMismatch("summary expected $num_params parameters in layout, got $(parametercount(layout))"))
+
+    parameters = Vector{HMCParameterSummary}(undef, num_params)
+    for slot in layout.slots
+        draws = _pooled_parameter_draws(chains, slot.index, space)
+        mean_value = _sample_mean(draws)
+        parameters[slot.index] = HMCParameterSummary(
+            slot.index,
+            slot.binding,
+            _summary_address(slot.address),
+            mean_value,
+            _sample_sd(draws, mean_value),
+            _quantiles(draws, quantile_probs),
+            rhats[slot.index],
+            ess_values[slot.index],
+        )
+    end
+
+    return HMCSummary(chains.model, space, quantile_probs, parameters)
 end
 
 function _validate_hmc_arguments(

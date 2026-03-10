@@ -444,6 +444,11 @@ using UncertainTea
     gaussian_ess_unconstrained = ess(gaussian_multichain; space=:unconstrained)
     positive_rhat = rhat(positive_multichain)
     positive_ess = ess(positive_multichain)
+    gaussian_summary = summarize(gaussian_multichain)
+    gaussian_summary_unconstrained = summarize(gaussian_multichain; space=:unconstrained)
+    positive_summary = summarize(positive_multichain; quantiles=(0.25, 0.5, 0.75))
+    gaussian_pooled_draws = vcat([vec(chain.constrained_samples[1, :]) for chain in gaussian_multichain]...)
+    gaussian_pooled_mean = sum(gaussian_pooled_draws) / length(gaussian_pooled_draws)
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -483,6 +488,17 @@ using UncertainTea
     @test gaussian_rhat ≈ gaussian_rhat_unconstrained atol=1e-8
     @test 1.0 <= gaussian_ess[1] <= nchains(gaussian_multichain) * numsamples(gaussian_multichain)
     @test gaussian_ess ≈ gaussian_ess_unconstrained atol=1e-8
+    @test length(gaussian_summary) == 1
+    @test gaussian_summary.space == :constrained
+    @test gaussian_summary.quantile_probs == [0.05, 0.5, 0.95]
+    @test gaussian_summary[1].binding == :mu
+    @test gaussian_summary[1].address == :mu
+    @test gaussian_summary[1].mean ≈ gaussian_pooled_mean atol=1e-8
+    @test gaussian_summary[1].sd > 0
+    @test gaussian_summary[1].quantiles[1] <= gaussian_summary[1].quantiles[2] <= gaussian_summary[1].quantiles[3]
+    @test gaussian_summary[1].rhat == gaussian_rhat[1]
+    @test gaussian_summary[1].ess == gaussian_ess[1]
+    @test gaussian_summary[1].mean ≈ gaussian_summary_unconstrained[1].mean atol=1e-8
     @test gaussian_multichain[1].unconstrained_samples[:, 1] ==
         gaussian_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
@@ -524,6 +540,14 @@ using UncertainTea
     @test isfinite(positive_rhat[1])
     @test positive_rhat[1] >= 1.0
     @test 1.0 <= positive_ess[1] <= nchains(positive_multichain) * numsamples(positive_multichain)
+    @test length(positive_summary) == 1
+    @test positive_summary.quantile_probs == [0.25, 0.5, 0.75]
+    @test positive_summary[1].binding isa Symbol
+    @test positive_summary[1].address == (:state, :sigma)
+    @test positive_summary[1].mean > 0
+    @test positive_summary[1].quantiles[1] <= positive_summary[1].quantiles[2] <= positive_summary[1].quantiles[3]
+    @test positive_summary[1].rhat == positive_rhat[1]
+    @test positive_summary[1].ess == positive_ess[1]
     @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_multichain)
     @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
         positive_chain.constrained_samples[1, 1]
@@ -540,6 +564,8 @@ using UncertainTea
     @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
     @test_throws ArgumentError rhat(HMCChains(gaussian_mean, (), constraints, [gaussian_baseline_chain]))
     @test_throws ArgumentError ess(gaussian_multichain; space=:energy)
+    @test_throws ArgumentError summarize(gaussian_multichain; quantiles=())
+    @test_throws ArgumentError summarize(gaussian_multichain; quantiles=(-0.1, 0.5, 0.9))
     @test_throws DimensionMismatch hmc_chains(
         gaussian_mean,
         (),
