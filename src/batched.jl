@@ -13,17 +13,33 @@ mutable struct BatchedLogjointWorkspace{BP,CP,E}
     batched_argument_buffer::Base.RefValue{Any}
 end
 
-struct BatchedGradientColumnCache{F,C,V,W}
+struct BatchedGradientObjective{M,W}
+    model::M
+    workspace::W
+    args::Any
+    constraints::ChoiceMap
+end
+
+function (objective::BatchedGradientObjective)(theta)
+    return _logjoint_unconstrained_with_workspace!(
+        objective.model,
+        objective.workspace,
+        theta,
+        objective.args,
+        objective.constraints,
+    )
+end
+
+struct BatchedGradientColumnCache{F,C,V}
     objective::F
     config::C
     buffer::V
-    workspace::W
 end
 
-struct BatchedLogjointGradientCache
+struct BatchedLogjointGradientCache{C<:AbstractVector,G<:AbstractMatrix}
     model::TeaModel
-    column_caches::Vector{Any}
-    gradient_buffer::Matrix{Float64}
+    column_caches::C
+    gradient_buffer::G
     parameter_count::Int
     batch_size::Int
 end
@@ -317,6 +333,27 @@ function _batched_gradient_column!(
     return destination
 end
 
+function _batched_gradient_column_cache(
+    model::TeaModel,
+    gradient_buffer::AbstractMatrix,
+    params::AbstractMatrix,
+    batch_args,
+    batch_constraints,
+    batch_index::Int,
+)
+    workspace = BatchedLogjointWorkspace(model)
+    objective = BatchedGradientObjective(
+        model,
+        workspace,
+        _batched_args(batch_args, batch_index),
+        _batched_constraints(batch_constraints, batch_index),
+    )
+    seed = collect(view(params, :, batch_index))
+    config = ForwardDiff.GradientConfig(objective, seed)
+    buffer = view(gradient_buffer, :, batch_index)
+    return BatchedGradientColumnCache(objective, config, buffer)
+end
+
 function BatchedLogjointGradientCache(
     model::TeaModel,
     params::AbstractMatrix,
@@ -328,17 +365,22 @@ function BatchedLogjointGradientCache(
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     parameter_count = size(params, 1)
     gradient_buffer = Matrix{Float64}(undef, parameter_count, batch_size)
-    column_caches = Vector{Any}(undef, batch_size)
+    if batch_size == 0
+        return BatchedLogjointGradientCache(model, Any[], gradient_buffer, parameter_count, batch_size)
+    end
 
-    for batch_index in 1:batch_size
-        workspace = BatchedLogjointWorkspace(model)
-        batch_args_i = _batched_args(batch_args, batch_index)
-        batch_constraints_i = _batched_constraints(batch_constraints, batch_index)
-        seed = collect(view(params, :, batch_index))
-        objective = theta -> _logjoint_unconstrained_with_workspace!(model, workspace, theta, batch_args_i, batch_constraints_i)
-        config = ForwardDiff.GradientConfig(objective, seed)
-        buffer = similar(seed)
-        column_caches[batch_index] = BatchedGradientColumnCache(objective, config, buffer, workspace)
+    first_cache = _batched_gradient_column_cache(model, gradient_buffer, params, batch_args, batch_constraints, 1)
+    column_caches = Vector{typeof(first_cache)}(undef, batch_size)
+    column_caches[1] = first_cache
+    for batch_index in 2:batch_size
+        column_caches[batch_index] = _batched_gradient_column_cache(
+            model,
+            gradient_buffer,
+            params,
+            batch_args,
+            batch_constraints,
+            batch_index,
+        )
     end
 
     return BatchedLogjointGradientCache(model, column_caches, gradient_buffer, parameter_count, batch_size)
@@ -356,7 +398,6 @@ function batched_logjoint_gradient_unconstrained!(
     for batch_index in 1:cache.batch_size
         column_cache = cache.column_caches[batch_index]
         ForwardDiff.gradient!(column_cache.buffer, column_cache.objective, view(params, :, batch_index), column_cache.config)
-        cache.gradient_buffer[:, batch_index] = column_cache.buffer
     end
     return cache.gradient_buffer
 end

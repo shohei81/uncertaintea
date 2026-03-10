@@ -364,6 +364,13 @@ using UncertainTea
         choicemap((:y => 1, 0.1f0), (:y => 2, -0.2f0)),
         choicemap((:y => 1, 0.5f0), (:y => 2, 0.2f0), (:y => 3, -0.1f0)),
     ]
+    heterogeneous_iid_args = Any[(Int32(2),), (3,)]
+    heterogeneous_iid_gradient_cache = BatchedLogjointGradientCache(
+        iid_model,
+        iid_batch_params,
+        heterogeneous_iid_args,
+        iid_batch_constraints,
+    )
     iid_batch_logjoint = batched_logjoint(iid_model, iid_batch_params, iid_batch_args, iid_batch_constraints)
     iid_shared_batch_params = reshape(Float64[-0.15, 0.25], 1, 2)
     iid_shared_batch_constraints = [
@@ -499,6 +506,8 @@ using UncertainTea
     ]...) atol=1e-8
     @test batched_logjoint_gradient_unconstrained!(gaussian_batch_gradient_cache, gaussian_batch_params) ≈
         gaussian_batch_gradient atol=1e-8
+    @test eltype(gaussian_batch_gradient_cache.column_caches) !== Any
+    @test parent(gaussian_batch_gradient_cache.column_caches[1].buffer) === gaussian_batch_gradient_cache.gradient_buffer
     @test gaussian_batch_gradient_shifted ≈ hcat([
         logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for
         index in 1:3
@@ -525,6 +534,18 @@ using UncertainTea
     @test iid_batch_logjoint ≈ [
         logjoint(iid_model, iid_batch_params[:, index], iid_batch_args[index], iid_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
+    @test batched_logjoint_gradient_unconstrained!(
+        heterogeneous_iid_gradient_cache,
+        iid_batch_params,
+    ) ≈ hcat([
+        logjoint_gradient_unconstrained(
+            iid_model,
+            iid_batch_params[:, index],
+            heterogeneous_iid_args[index],
+            iid_batch_constraints[index],
+        ) for index in 1:2
+    ]...) atol=1e-8
+    @test eltype(heterogeneous_iid_gradient_cache.column_caches) !== Any
     @test iid_shared_batch_logjoint ≈ [
         logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
     ] atol=1e-8

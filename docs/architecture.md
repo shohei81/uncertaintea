@@ -97,6 +97,8 @@ Current backend-lowering subset:
   generic body scorer
 - batched backend workspaces now reuse their environment and temporary buffers
   across repeated evaluations with the same batch shape
+- batched gradient caches now keep monomorphic column caches and write gradients
+  directly into the shared output matrix
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

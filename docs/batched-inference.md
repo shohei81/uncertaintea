@@ -107,6 +107,8 @@ The next lowering layer is now explicit:
   iterator
 - batched backend evaluation now reuses its environment, totals buffer, and
   unconstrained temporary buffers when the batch shape stays fixed
+- batched gradient caches now reuse typed column caches and let `ForwardDiff`
+  write directly into the shared gradient matrix
 
 ## Phase 2 Execution Strategy
 
