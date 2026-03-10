@@ -104,14 +104,11 @@ function _score_plan_step!(
     params::AbstractVector,
     constraints::ChoiceMap,
 )
-    if step.rhs isa DistributionSpec
-        if isempty(step.scopes)
-            return _score_distribution_instance!(model, step, env, params, constraints)
-        end
+    isempty(step.scopes) ||
+        throw(ArgumentError("ChoicePlanStep scopes must be lowered into LoopPlanStep before evaluation"))
 
-        return _score_scoped_distribution!(model, step, env, params, constraints, 1)
-    elseif step.rhs isa GenerativeCallSpec
-        throw(ArgumentError("lower-level logjoint does not yet support generative call steps in $(model.name)"))
+    if step.rhs isa DistributionSpec
+        return _score_distribution_instance!(model, step, env, params, constraints)
     end
 
     throw(ArgumentError("lower-level logjoint does not support RHS type $(typeof(step.rhs))"))
@@ -128,26 +125,29 @@ function _score_plan_step!(
     return 0.0
 end
 
-function _score_scoped_distribution!(
+function _score_plan_step!(
     model::TeaModel,
-    step::ChoicePlanStep,
+    step::LoopPlanStep,
     env::Dict{Symbol,Any},
     params::AbstractVector,
     constraints::ChoiceMap,
-    scope_index::Int,
 )
-    if scope_index > length(step.scopes)
-        local_env = copy(env)
-        return _score_distribution_instance!(model, step, local_env, params, constraints)
+    iterable = _eval_plan_expr(model, env, step.iterable)
+    had_previous = haskey(env, step.iterator)
+    previous_value = had_previous ? env[step.iterator] : nothing
+    total = 0.0
+
+    for item in iterable
+        env[step.iterator] = item
+        for body_step in step.body
+            total += _score_plan_step!(model, body_step, env, params, constraints)
+        end
     end
 
-    scope = step.scopes[scope_index]
-    iterable = _eval_plan_expr(model, env, scope.iterable)
-    total = 0.0
-    for item in iterable
-        local_env = copy(env)
-        local_env[scope.iterator] = item
-        total += _score_scoped_distribution!(model, step, local_env, params, constraints, scope_index + 1)
+    if had_previous
+        env[step.iterator] = previous_value
+    else
+        delete!(env, step.iterator)
     end
     return total
 end

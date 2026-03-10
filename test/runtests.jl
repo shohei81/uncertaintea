@@ -86,8 +86,12 @@ using UncertainTea
     @test spec2.parameter_layout.slots[1].binding == :mu
     @test spec2.parameter_layout.slots[1].transform isa IdentityTransform
     @test plan2.steps[1].parameter_slot == 1
-    @test isnothing(plan2.steps[2].parameter_slot)
-    @test length(plan2.steps[2].scopes) == 1
+    @test plan2.steps[2] isa LoopPlanStep
+    @test plan2.steps[2].iterator == :i
+    @test plan2.steps[2].iterable == :(1:n)
+    @test length(plan2.steps[2].body) == 1
+    @test plan2.steps[2].body[1] isa ChoicePlanStep
+    @test isempty(plan2.steps[2].body[1].scopes)
 
     params2 = [Float64(trace2[:mu])]
     expected_joint2 = UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace2[:mu]) +
@@ -131,18 +135,30 @@ using UncertainTea
     @test isstaticaddress(spec3.choices[1].address)
     @test isaddresstemplate(spec3.choices[2].address)
     @test spec3.choices[1].rhs isa GenerativeCallSpec
-    @test spec3.choices[1].rhs.callee == :step
+    @test spec3.choices[1].rhs.callee === step
     @test spec3.choices[2].rhs isa GenerativeCallSpec
     @test !isrepeatedchoice(spec3.choices[1])
     @test isrepeatedchoice(spec3.choices[2])
     @test spec3.choices[2].scopes[1].iterator == :t
     @test spec3.choices[2].scopes[1].iterable == :(2:T)
     @test parametercount(spec3.parameter_layout) == 0
-    @test isnothing(plan3.steps[1].parameter_slot)
-    @test isnothing(plan3.steps[2].parameter_slot)
-    @test length(plan3.steps[2].scopes) == 1
+    @test length(plan3.steps) == 3
+    @test plan3.steps[1] isa ChoicePlanStep
+    @test plan3.steps[2] isa DeterministicPlanStep
+    @test plan3.steps[2].binding == :z
+    @test plan3.steps[3] isa LoopPlanStep
+    @test plan3.steps[3].iterator == :t
+    @test length(plan3.steps[3].body) == 2
+    @test plan3.steps[3].body[1] isa ChoicePlanStep
+    @test plan3.steps[3].body[2] isa DeterministicPlanStep
     @test parameter_vector(trace3) == Float64[]
-    @test_throws ArgumentError logjoint(chain_model, Float64[], (3,), choicemap(); rng=MersenneTwister(10))
+    chain_constraints = choicemap(
+        (:z => 1 => :z, trace3[:z => 1 => :z]),
+        (:z => 2 => :z, trace3[:z => 2 => :z]),
+        (:z => 3 => :z, trace3[:z => 3 => :z]),
+    )
+    @test logjoint(chain_model, Float64[], (3,), chain_constraints; rng=MersenneTwister(10)) ≈
+        assess(chain_model, (3,), chain_constraints) atol=1e-6
 
     @tea static function nested_loop_model(n, m)
         z ~ normal(0.0f0, 1.0f0)
@@ -166,7 +182,13 @@ using UncertainTea
     @test spec4.parameter_layout.slots[1].binding == :z
     @test length(plan4.steps) == 2
     @test plan4.steps[1].parameter_slot == 1
-    @test length(plan4.steps[2].scopes) == 2
+    @test plan4.steps[2] isa LoopPlanStep
+    @test plan4.steps[2].iterator == :i
+    @test length(plan4.steps[2].body) == 1
+    @test plan4.steps[2].body[1] isa LoopPlanStep
+    @test plan4.steps[2].body[1].iterator == :j
+    @test length(plan4.steps[2].body[1].body) == 1
+    @test plan4.steps[2].body[1].body[1] isa ChoicePlanStep
 
     @tea static function deterministic_scale()
         mu ~ normal(0.0f0, 1.0f0)

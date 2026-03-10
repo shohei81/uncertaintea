@@ -88,16 +88,17 @@ function _address_spec_expr(lhs)
 end
 
 function _choice_spec_expr(expr)
-    return _choice_spec_expr(expr, ())
+    return _choice_spec_expr(expr, (), nothing)
 end
 
-function _choice_spec_expr(expr, loop_scopes)
+function _choice_spec_expr(expr, loop_scopes, binding_override=nothing)
     expr isa Expr && expr.head == :call && expr.args[1] === :~ ||
         throw(ArgumentError("expected a choice expression, got $expr"))
 
     lhs = expr.args[2]
     rhs = expr.args[3]
-    binding = lhs isa Symbol ? QuoteNode(lhs) : :(nothing)
+    binding_symbol = isnothing(binding_override) ? (lhs isa Symbol ? lhs : nothing) : binding_override
+    binding = isnothing(binding_symbol) ? :(nothing) : QuoteNode(binding_symbol)
     address = _address_spec_expr(lhs)
     rhs_spec = _rhs_spec_expr(rhs)
     scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, loop_scopes)...)
@@ -113,7 +114,7 @@ function _rhs_spec_expr(rhs)
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
         end
 
-        return :($(_qualify(:GenerativeCallSpec))($(QuoteNode(callee)), $arguments))
+        return :($(_qualify(:GenerativeCallSpec))($callee, $arguments))
     end
 
     return :($(_qualify(:RawChoiceRhsSpec))($(QuoteNode(rhs))))
@@ -134,16 +135,17 @@ function _parameter_layout_expr(choice_nodes)
     slot_index = 1
 
     for (choice_index, node) in enumerate(choice_nodes)
-        choice_expr, loop_scopes = node
+        choice_expr, loop_scopes, binding_override = node
         lhs = choice_expr.args[2]
         rhs = choice_expr.args[3]
+        binding_symbol = isnothing(binding_override) ? (lhs isa Symbol ? lhs : nothing) : binding_override
 
-        if lhs isa Symbol && isempty(loop_scopes) && _supports_parameter_slot(rhs)
+        if !isnothing(binding_symbol) && isempty(loop_scopes) && _supports_parameter_slot(rhs)
             address = _address_spec_expr(lhs)
             transform = _parameter_transform_expr(rhs)
             push!(slot_exprs, :($(_qualify(:ParameterSlotSpec))(
                 $choice_index,
-                $(QuoteNode(lhs)),
+                $(QuoteNode(binding_symbol)),
                 $address,
                 $slot_index,
                 $transform,
@@ -256,7 +258,7 @@ function _collect_choice_spec_exprs!(expr, specs::Vector{Tuple{Expr,Tuple}}, loo
     end
 
     if expr.head == :call && !isempty(expr.args) && expr.args[1] === :~
-        push!(specs, (expr, loop_scopes))
+        push!(specs, (expr, loop_scopes, nothing))
         return specs
     end
 
@@ -289,7 +291,8 @@ function _collect_plan_nodes!(expr, nodes::Vector{Tuple}, loop_scopes::Tuple=())
     if expr.head == :(=) && length(expr.args) == 2
         lhs, rhs = expr.args
         if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :~
-            push!(nodes, (:choice, rhs, loop_scopes))
+            binding_override = lhs isa Symbol ? lhs : nothing
+            push!(nodes, (:choice, rhs, loop_scopes, binding_override))
         elseif lhs isa Symbol && isempty(loop_scopes)
             push!(nodes, (:deterministic, lhs, rhs))
         end
@@ -297,7 +300,7 @@ function _collect_plan_nodes!(expr, nodes::Vector{Tuple}, loop_scopes::Tuple=())
     end
 
     if expr.head == :call && !isempty(expr.args) && expr.args[1] === :~
-        push!(nodes, (:choice, expr, loop_scopes))
+        push!(nodes, (:choice, expr, loop_scopes, nothing))
         return nodes
     end
 
@@ -317,8 +320,10 @@ function _execution_plan_steps_expr(plan_nodes, slot_lookup)
             choice_index += 1
             choice_expr = node[2]
             loop_scopes = node[3]
+            binding_override = node[4]
             lhs = choice_expr.args[2]
-            binding = lhs isa Symbol ? QuoteNode(lhs) : :(nothing)
+            binding_symbol = isnothing(binding_override) ? (lhs isa Symbol ? lhs : nothing) : binding_override
+            binding = isnothing(binding_symbol) ? :(nothing) : QuoteNode(binding_symbol)
             address = _address_spec_expr(lhs)
             rhs_spec = _rhs_spec_expr(choice_expr.args[3])
             scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, loop_scopes)...)
@@ -348,12 +353,13 @@ function _model_spec_expr(mode_expr, signature, body)
     argument_expr = Expr(:vect, map(QuoteNode, arguments)...)
     plan_nodes = Tuple[]
     _collect_plan_nodes!(body, plan_nodes)
-    choice_nodes = Tuple{Expr,Tuple}[ (node[2], node[3]) for node in plan_nodes if node[1] === :choice ]
-    choice_exprs = map(node -> _choice_spec_expr(node[1], node[2]), choice_nodes)
+    choice_nodes = Tuple{Expr,Tuple,Any}[ (node[2], node[3], node[4]) for node in plan_nodes if node[1] === :choice ]
+    choice_exprs = map(node -> _choice_spec_expr(node[1], node[2], node[3]), choice_nodes)
     choices_expr = Expr(:vect, choice_exprs...)
     shape_specialized = any(node -> _address_has_dynamic_parts(node[1].args[2]) || any(scope -> _expr_has_dynamic_content(scope[2]), node[2]), choice_nodes)
     parameter_layout_expr, slot_lookup = _parameter_layout_expr(choice_nodes)
     plan_steps_expr = _execution_plan_steps_expr(plan_nodes, slot_lookup)
+    return_expr = _return_expr_expr(body)
 
     return :($(_qualify(:ModelSpec))(
         $(QuoteNode(name)),
@@ -362,8 +368,23 @@ function _model_spec_expr(mode_expr, signature, body)
         $choices_expr,
         $shape_specialized,
         $parameter_layout_expr,
+        $return_expr,
         $plan_steps_expr,
     ))
+end
+
+function _return_expr_expr(body)
+    body isa Expr && body.head == :block || return QuoteNode(body)
+
+    for arg in reverse(body.args)
+        arg isa LineNumberNode && continue
+        if arg isa Expr && arg.head == :return
+            return QuoteNode(arg.args[1])
+        end
+        return QuoteNode(arg)
+    end
+
+    return QuoteNode(nothing)
 end
 
 function _expand_tea(mode_expr, definition)

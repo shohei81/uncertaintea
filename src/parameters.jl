@@ -13,15 +13,13 @@ to_constrained(::LogTransform, value) = exp(Float64(value))
 to_unconstrained(::LogTransform, value) = log(Float64(value))
 
 function parameterchoicemap(model::TeaModel, params::AbstractVector)
-    plan = executionplan(model)
-    expected = parametercount(plan.parameter_layout)
+    layout = parameterlayout(model)
+    expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
     cm = ChoiceMap()
-    for step in plan.steps
-        slot = step.parameter_slot
-        isnothing(slot) && continue
-        _pushchoice!(cm, _static_address(step.address), params[slot])
+    for slot in layout.slots
+        _pushchoice!(cm, _static_address(slot.address), params[slot.index])
     end
     return cm
 end

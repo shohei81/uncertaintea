@@ -74,6 +74,12 @@ struct DeterministicPlanStep <: AbstractPlanStep
     expr::Any
 end
 
+struct LoopPlanStep <: AbstractPlanStep
+    iterator::Symbol
+    iterable::Any
+    body::Vector{AbstractPlanStep}
+end
+
 struct ExecutionPlan
     model_name::Symbol
     steps::Vector{AbstractPlanStep}
@@ -87,6 +93,7 @@ struct ModelSpec
     choices::Vector{ChoiceSpec}
     shape_specialized::Bool
     parameter_layout::ParameterLayout
+    return_expr::Any
     execution_plan::ExecutionPlan
 end
 
@@ -97,10 +104,11 @@ function ModelSpec(
     choices::Vector{ChoiceSpec},
     shape_specialized::Bool,
     parameter_layout::ParameterLayout,
+    return_expr::Any,
 )
     argument_symbols = Symbol[arg for arg in arguments]
-    plan = build_execution_plan(name, choices, parameter_layout)
-    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, plan)
+    plan = build_execution_plan(name, AbstractPlanStep[], parameter_layout, return_expr)
+    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, return_expr, plan)
 end
 
 function ModelSpec(
@@ -110,12 +118,13 @@ function ModelSpec(
     choices::Vector{ChoiceSpec},
     shape_specialized::Bool,
     parameter_layout::ParameterLayout,
+    return_expr::Any,
     plan_steps,
 )
     argument_symbols = Symbol[arg for arg in arguments]
-    steps = AbstractPlanStep[step for step in plan_steps]
-    plan = ExecutionPlan(name, steps, parameter_layout)
-    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, plan)
+    raw_steps = AbstractPlanStep[step for step in plan_steps]
+    plan = build_execution_plan(name, raw_steps, parameter_layout, return_expr)
+    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, return_expr, plan)
 end
 
 function modelspec(model)
@@ -145,21 +154,183 @@ function _parameter_slot_index(layout::ParameterLayout, choice_index::Int)
     return nothing
 end
 
-function build_execution_plan(name::Symbol, choices::Vector{ChoiceSpec}, layout::ParameterLayout)
-    steps = AbstractPlanStep[]
-    for (choice_index, choice) in enumerate(choices)
-        push!(
-            steps,
-            ChoicePlanStep(
-                choice_index,
-                choice.binding,
-                choice.address,
-                choice.rhs,
-                choice.scopes,
-                _parameter_slot_index(layout, choice_index),
-            ),
-        )
+function _substitute_expr(expr, substitutions::Dict{Symbol,Any})
+    if expr isa QuoteNode
+        return expr
+    elseif expr isa Symbol
+        return get(substitutions, expr, expr)
+    elseif expr isa Expr
+        return Expr(expr.head, map(arg -> _substitute_expr(arg, substitutions), expr.args)...)
+    elseif expr isa Tuple
+        return tuple((_substitute_expr(arg, substitutions) for arg in expr)...)
     end
+    return expr
+end
+
+function _substitute_address(address::AddressSpec, substitutions::Dict{Symbol,Any})
+    parts = map(address.parts) do part
+        if part isa AddressLiteralPart
+            return part
+        end
+        return AddressDynamicPart(_substitute_expr(part.value, substitutions))
+    end
+    return AddressSpec(tuple(parts...))
+end
+
+function _prefix_address(prefix::AddressSpec, address::AddressSpec)
+    return AddressSpec((prefix.parts..., address.parts...))
+end
+
+function _collect_bound_symbols!(steps::Vector{AbstractPlanStep}, bindings::Set{Symbol}, iterators::Set{Symbol})
+    for step in steps
+        if step isa ChoicePlanStep
+            isnothing(step.binding) || push!(bindings, step.binding)
+        elseif step isa DeterministicPlanStep
+            push!(bindings, step.binding)
+        elseif step isa LoopPlanStep
+            push!(iterators, step.iterator)
+            _collect_bound_symbols!(step.body, bindings, iterators)
+        end
+    end
+    return nothing
+end
+
+function _substitute_rhs(rhs::DistributionSpec, substitutions::Dict{Symbol,Any})
+    return DistributionSpec(rhs.family, Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments])
+end
+
+function _substitute_rhs(rhs::GenerativeCallSpec, substitutions::Dict{Symbol,Any})
+    callee = rhs.callee isa TeaModel ? rhs.callee : _substitute_expr(rhs.callee, substitutions)
+    arguments = Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments]
+    return GenerativeCallSpec(callee, arguments)
+end
+
+_substitute_rhs(rhs::RawChoiceRhsSpec, substitutions::Dict{Symbol,Any}) = RawChoiceRhsSpec(_substitute_expr(rhs.expr, substitutions))
+
+function _substitute_loop_scopes(scopes::Vector{LoopScopeSpec}, substitutions::Dict{Symbol,Any})
+    replaced = LoopScopeSpec[]
+    for scope in scopes
+        iterator = get(substitutions, scope.iterator, scope.iterator)
+        iterator isa Symbol || throw(ArgumentError("loop iterator substitution must stay a Symbol"))
+        push!(replaced, LoopScopeSpec(iterator, _substitute_expr(scope.iterable, substitutions), scope.shape_specialized))
+    end
+    return replaced
+end
+
+function _substitute_step(step::ChoicePlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
+    address = _substitute_address(step.address, substitutions)
+    prefixed = isnothing(prefix) ? address : _prefix_address(prefix, address)
+    binding = isnothing(step.binding) ? nothing : get(substitutions, step.binding, step.binding)
+    if !isnothing(binding) && !(binding isa Symbol)
+        throw(ArgumentError("choice binding substitution must stay a Symbol"))
+    end
+    return ChoicePlanStep(
+        step.choice_index,
+        binding,
+        prefixed,
+        _substitute_rhs(step.rhs, substitutions),
+        _substitute_loop_scopes(step.scopes, substitutions),
+        parameter_slot,
+    )
+end
+
+function _substitute_step(step::DeterministicPlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
+    binding = get(substitutions, step.binding, step.binding)
+    binding isa Symbol || throw(ArgumentError("deterministic binding substitution must stay a Symbol"))
+    return DeterministicPlanStep(binding, _substitute_expr(step.expr, substitutions))
+end
+
+function _substitute_step(step::LoopPlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
+    iterator = get(substitutions, step.iterator, step.iterator)
+    iterator isa Symbol || throw(ArgumentError("loop iterator substitution must stay a Symbol"))
+    body = AbstractPlanStep[_substitute_step(inner, substitutions; prefix=prefix, parameter_slot=nothing) for inner in step.body]
+    return LoopPlanStep(iterator, _substitute_expr(step.iterable, substitutions), body)
+end
+
+function _wrap_steps_with_scopes(steps::Vector{AbstractPlanStep}, scopes::Vector{LoopScopeSpec})
+    result = steps
+    for scope in reverse(scopes)
+        result = AbstractPlanStep[LoopPlanStep(scope.iterator, scope.iterable, result)]
+    end
+    return result
+end
+
+function _merge_loop_steps(steps::Vector{AbstractPlanStep})
+    merged = AbstractPlanStep[]
+    for step in steps
+        if step isa LoopPlanStep
+            body = _merge_loop_steps(step.body)
+            if !isempty(merged) && merged[end] isa LoopPlanStep
+                previous = merged[end]
+                if previous.iterator == step.iterator && previous.iterable == step.iterable
+                    merged[end] = LoopPlanStep(previous.iterator, previous.iterable, vcat(previous.body, body))
+                    continue
+                end
+            end
+            push!(merged, LoopPlanStep(step.iterator, step.iterable, body))
+        else
+            push!(merged, step)
+        end
+    end
+    return merged
+end
+
+function _inline_plan_steps(steps::Vector{AbstractPlanStep})
+    expanded = AbstractPlanStep[]
+    for step in steps
+        append!(expanded, _inline_plan_step(step))
+    end
+    return _merge_loop_steps(expanded)
+end
+
+function _inline_plan_step(step::DeterministicPlanStep)
+    return AbstractPlanStep[step]
+end
+
+function _inline_plan_step(step::LoopPlanStep)
+    body = _inline_plan_steps(step.body)
+    return AbstractPlanStep[LoopPlanStep(step.iterator, step.iterable, body)]
+end
+
+function _inline_plan_step(step::ChoicePlanStep)
+    if step.rhs isa DistributionSpec || step.rhs isa RawChoiceRhsSpec
+        return _wrap_steps_with_scopes(AbstractPlanStep[ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, LoopScopeSpec[], step.parameter_slot)], step.scopes)
+    elseif step.rhs isa GenerativeCallSpec
+        callee = step.rhs.callee
+        callee isa TeaModel || throw(ArgumentError("generative call inlining requires a TeaModel callee, got $(typeof(callee))"))
+
+        callee_spec = modelspec(callee)
+        substitutions = Dict{Symbol,Any}()
+        for (argname, argexpr) in zip(callee_spec.arguments, step.rhs.arguments)
+            substitutions[argname] = argexpr
+        end
+
+        bound_symbols = Set{Symbol}()
+        iterators = Set{Symbol}()
+        _collect_bound_symbols!(executionplan(callee).steps, bound_symbols, iterators)
+        for sym in union(bound_symbols, iterators)
+            substitutions[sym] = gensym(sym)
+        end
+
+        inlined = AbstractPlanStep[]
+        for inner_step in executionplan(callee).steps
+            substituted = _substitute_step(inner_step, substitutions; prefix=step.address, parameter_slot=nothing)
+            append!(inlined, _inline_plan_step(substituted))
+        end
+
+        if !isnothing(step.binding)
+            return_expr = _substitute_expr(callee_spec.return_expr, substitutions)
+            push!(inlined, DeterministicPlanStep(step.binding, return_expr))
+        end
+
+        return _wrap_steps_with_scopes(inlined, step.scopes)
+    end
+
+    throw(ArgumentError("unsupported choice RHS in execution-plan inlining: $(typeof(step.rhs))"))
+end
+
+function build_execution_plan(name::Symbol, raw_steps::Vector{AbstractPlanStep}, layout::ParameterLayout, return_expr::Any)
+    steps = _inline_plan_steps(raw_steps)
     return ExecutionPlan(name, steps, layout)
 end
 
@@ -218,6 +389,10 @@ end
 
 function Base.show(io::IO, step::DeterministicPlanStep)
     print(io, "DeterministicPlanStep(binding=", step.binding, ")")
+end
+
+function Base.show(io::IO, step::LoopPlanStep)
+    print(io, "LoopPlanStep(iterator=", step.iterator, ", body=", length(step.body), ")")
 end
 
 function Base.show(io::IO, plan::ExecutionPlan)
