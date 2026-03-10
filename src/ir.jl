@@ -41,22 +41,39 @@ struct ChoiceSpec
     scopes::Vector{LoopScopeSpec}
 end
 
+struct ParameterSlotSpec
+    choice_index::Int
+    binding::Symbol
+    address::AddressSpec
+    index::Int
+end
+
+struct ParameterLayout
+    slots::Vector{ParameterSlotSpec}
+end
+
 struct ModelSpec
     name::Symbol
     mode::Symbol
     arguments::Vector{Symbol}
     choices::Vector{ChoiceSpec}
     shape_specialized::Bool
+    parameter_layout::ParameterLayout
 end
 
 function modelspec(model)
     return model.spec
 end
 
+function parameterlayout(model)
+    return model.spec.parameter_layout
+end
+
 isstaticaddress(address::AddressSpec) = all(part -> part isa AddressLiteralPart, address.parts)
 isaddresstemplate(address::AddressSpec) = !isstaticaddress(address)
 isrepeatedchoice(choice::ChoiceSpec) = !isempty(choice.scopes)
 hasrepeatedchoices(spec::ModelSpec) = any(isrepeatedchoice, spec.choices)
+parametercount(layout::ParameterLayout) = length(layout.slots)
 
 function Base.show(io::IO, part::AddressLiteralPart)
     print(io, repr(part.value))
@@ -83,6 +100,14 @@ function Base.show(io::IO, spec::ChoiceSpec)
     print(io, ", rhs=", nameof(typeof(spec.rhs)))
     isempty(spec.scopes) || print(io, ", scopes=", length(spec.scopes))
     print(io, ")")
+end
+
+function Base.show(io::IO, spec::ParameterSlotSpec)
+    print(io, "ParameterSlotSpec(index=", spec.index, ", binding=", spec.binding, ", choice=", spec.choice_index, ")")
+end
+
+function Base.show(io::IO, layout::ParameterLayout)
+    print(io, "ParameterLayout(", length(layout.slots), " slots)")
 end
 
 function Base.show(io::IO, spec::ModelSpec)

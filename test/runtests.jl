@@ -31,6 +31,9 @@ using UncertainTea
     @test spec.choices[2].rhs isa DistributionSpec
     @test !isrepeatedchoice(spec.choices[1])
     @test !hasrepeatedchoices(spec)
+    @test parametercount(spec.parameter_layout) == 1
+    @test parameterlayout(gaussian_mean).slots[1].binding == :mu
+    @test parameterlayout(gaussian_mean).slots[1].choice_index == 1
 
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
@@ -60,11 +63,17 @@ using UncertainTea
     @test spec2.choices[2].scopes[1].iterator == :i
     @test spec2.choices[2].scopes[1].iterable == :(1:n)
     @test spec2.choices[2].scopes[1].shape_specialized
+    @test parametercount(spec2.parameter_layout) == 1
+    @test spec2.parameter_layout.slots[1].binding == :mu
 
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
         return z
     end
+
+    step_spec = modelspec(step)
+    @test parametercount(step_spec.parameter_layout) == 1
+    @test step_spec.parameter_layout.slots[1].binding == :z
 
     @tea static function chain_model(T)
         z = ({:z => 1} ~ step(0.0f0))
@@ -89,6 +98,7 @@ using UncertainTea
     @test isrepeatedchoice(spec3.choices[2])
     @test spec3.choices[2].scopes[1].iterator == :t
     @test spec3.choices[2].scopes[1].iterable == :(2:T)
+    @test parametercount(spec3.parameter_layout) == 0
 
     @tea static function nested_loop_model(n, m)
         z ~ normal(0.0f0, 1.0f0)
@@ -107,4 +117,6 @@ using UncertainTea
     @test length(spec4.choices[2].scopes) == 2
     @test spec4.choices[2].scopes[1].iterator == :i
     @test spec4.choices[2].scopes[2].iterator == :j
+    @test parametercount(spec4.parameter_layout) == 1
+    @test spec4.parameter_layout.slots[1].binding == :z
 end

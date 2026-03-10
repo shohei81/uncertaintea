@@ -128,6 +128,29 @@ function _loop_scope_spec_expr(scope)
     ))
 end
 
+function _parameter_layout_expr(choice_nodes)
+    slot_exprs = Expr[]
+    slot_index = 1
+
+    for (choice_index, node) in enumerate(choice_nodes)
+        choice_expr, loop_scopes = node
+        lhs = choice_expr.args[2]
+
+        if lhs isa Symbol && isempty(loop_scopes)
+            address = _address_spec_expr(lhs)
+            push!(slot_exprs, :($(_qualify(:ParameterSlotSpec))(
+                $choice_index,
+                $(QuoteNode(lhs)),
+                $address,
+                $slot_index,
+            )))
+            slot_index += 1
+        end
+    end
+
+    return :($(_qualify(:ParameterLayout))($(Expr(:vect, slot_exprs...))))
+end
+
 function _address_has_dynamic_parts(lhs)
     if lhs isa Symbol
         return false
@@ -224,6 +247,7 @@ function _model_spec_expr(mode_expr, signature, body)
     choice_exprs = map(node -> _choice_spec_expr(node[1], node[2]), choice_nodes)
     choices_expr = Expr(:vect, choice_exprs...)
     shape_specialized = any(node -> _address_has_dynamic_parts(node[1].args[2]) || any(scope -> _expr_has_dynamic_content(scope[2]), node[2]), choice_nodes)
+    parameter_layout_expr = _parameter_layout_expr(choice_nodes)
 
     return :($(_qualify(:ModelSpec))(
         $(QuoteNode(name)),
@@ -231,6 +255,7 @@ function _model_spec_expr(mode_expr, signature, body)
         $argument_expr,
         $choices_expr,
         $shape_specialized,
+        $parameter_layout_expr,
     ))
 end
 
