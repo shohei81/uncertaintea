@@ -97,7 +97,13 @@ function _prepare_batched_environment!(
     args,
     batch_size::Int,
 )
-    env = BatchedPlanEnvironment(layout, backend_plan.numeric_slots, backend_plan.generic_slots, batch_size)
+    env = BatchedPlanEnvironment(
+        layout,
+        backend_plan.numeric_slots,
+        backend_plan.index_slots,
+        backend_plan.generic_slots,
+        batch_size,
+    )
     fill!(env.assigned, false)
 
     if args isa Tuple

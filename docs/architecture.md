@@ -81,7 +81,7 @@ Current backend-lowering subset:
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
   `log1p`, `sqrt`, `abs`, `min`, `max`
 - batched backend execution assumes synchronized loop iterables across the batch
-- backend environments separate numeric slots from generic/index slots
+- backend environments separate numeric slots, index slots, and generic slots
 - backend score evaluation uses direct family kernels for supported distributions
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path

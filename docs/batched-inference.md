@@ -87,8 +87,9 @@ The next lowering layer is now explicit:
 - unsupported models keep working through the compiled CPU fallback path
 - batched backend execution currently requires synchronized loop iterables across
   the batch; divergent loop shapes fall back to the compiled CPU path
-- backend-plan environments now split numeric slots from generic/index slots so
-  arithmetic-heavy bindings can live in dense `Float64` storage
+- backend-plan environments now split numeric slots, index slots, and true
+  generic slots so arithmetic-heavy bindings can live in dense `Float64`
+  storage and loop/address state can live in dense integer storage
 - backend-plan distribution scoring now uses family-specific direct score kernels
   instead of constructing distribution objects on the hot path
 

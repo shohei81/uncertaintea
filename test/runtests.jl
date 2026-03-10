@@ -454,15 +454,18 @@ using UncertainTea
     @test length(gaussian_backend_plan.steps) == 2
     @test gaussian_backend_plan.steps[1] isa UncertainTea.BackendChoicePlanStep
     @test gaussian_backend_plan.numeric_slots == BitVector([true])
+    @test gaussian_backend_plan.index_slots == BitVector([false])
     @test gaussian_backend_plan.generic_slots == BitVector([false])
     @test iid_backend_report.supported
     @test count(identity, iid_backend_plan.numeric_slots) == 1
-    @test count(identity, iid_backend_plan.generic_slots) == 2
-    @test iid_backend_plan.generic_slots[1]
+    @test count(identity, iid_backend_plan.index_slots) == 2
+    @test !any(iid_backend_plan.generic_slots)
+    @test iid_backend_plan.index_slots[1]
     @test iid_backend_plan.numeric_slots[2]
-    @test iid_backend_plan.generic_slots[3]
+    @test iid_backend_plan.index_slots[3]
     @test coin_backend_report.supported
     @test isempty(coin_backend_plan.numeric_slots)
+    @test isempty(coin_backend_plan.index_slots)
     @test isempty(coin_backend_plan.generic_slots)
     @test coin_batch_logjoint ≈ [
         logjoint(observed_coin, Float64[], (), choicemap((:y, true))),
@@ -473,6 +476,7 @@ using UncertainTea
     @test length(deterministic_backend_plan.steps) == 4
     @test deterministic_backend_plan.steps[3] isa UncertainTea.BackendDeterministicPlanStep
     @test all(deterministic_backend_plan.numeric_slots)
+    @test !any(deterministic_backend_plan.index_slots)
     @test !any(deterministic_backend_plan.generic_slots)
     @test !unsupported_backend_report.supported
     @test any(occursin("sin", issue) for issue in unsupported_backend_report.issues)
