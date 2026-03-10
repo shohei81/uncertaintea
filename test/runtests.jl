@@ -299,6 +299,8 @@ using UncertainTea
     positive_step_params = parameter_vector(positive_step_trace)
     positive_step_unconstrained = transform_to_unconstrained(positive_step_trace)
     positive_step_reconstrained = transform_to_constrained(observed_positive_step, positive_step_unconstrained)
+    short_warmup_schedule = UncertainTea._warmup_schedule(12)
+    long_warmup_schedule = UncertainTea._warmup_schedule(150)
 
     @test parametercount(positive_step_spec.parameter_layout) == 1
     @test positive_step_spec.parameter_layout.slots[1].transform isa LogTransform
@@ -314,6 +316,12 @@ using UncertainTea
             (),
             choicemap((:state => :sigma, positive_step_trace[:state => :sigma]), (:y, 1.2f0)),
         ) atol=1e-6
+    @test short_warmup_schedule.initial_buffer == 5
+    @test short_warmup_schedule.slow_window_ends == [12]
+    @test short_warmup_schedule.terminal_buffer == 0
+    @test long_warmup_schedule.initial_buffer == 15
+    @test long_warmup_schedule.slow_window_ends == [40, 90, 135]
+    @test long_warmup_schedule.terminal_buffer == 15
 
     gaussian_chain = hmc(
         gaussian_mean,
@@ -323,7 +331,7 @@ using UncertainTea
         num_warmup=150,
         step_size=0.25,
         num_leapfrog_steps=8,
-        rng=MersenneTwister(20),
+        rng=MersenneTwister(29),
     )
     gaussian_baseline_chain = hmc(
         gaussian_mean,
@@ -375,6 +383,19 @@ using UncertainTea
         divergence_threshold=1.0,
         rng=MersenneTwister(31),
     )
+    gaussian_windowed_mass_chain = hmc(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=20,
+        num_warmup=20,
+        step_size=0.2,
+        num_leapfrog_steps=6,
+        adapt_step_size=false,
+        adapt_mass_matrix=true,
+        mass_matrix_min_samples=3,
+        rng=MersenneTwister(36),
+    )
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -400,6 +421,8 @@ using UncertainTea
     @test gaussian_small_step_chain.step_size > 1e-6
     @test all(isfinite, gaussian_large_step_chain.logjoint_values)
     @test all(isfinite, gaussian_small_step_chain.logjoint_values)
+    @test gaussian_windowed_mass_chain.step_size == 0.2
+    @test gaussian_windowed_mass_chain.mass_matrix[1] != 1.0
     @test all(gaussian_divergent_chain.divergent)
     @test divergencerate(gaussian_divergent_chain) == 1.0
     @test all(isfinite, gaussian_divergent_chain.energies)

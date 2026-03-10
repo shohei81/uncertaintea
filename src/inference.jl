@@ -33,6 +33,12 @@ mutable struct RunningVarianceState
     count::Int
 end
 
+struct WarmupSchedule
+    initial_buffer::Int
+    slow_window_ends::Vector{Int}
+    terminal_buffer::Int
+end
+
 Base.length(chain::HMCChain) = size(chain.unconstrained_samples, 2)
 
 function Base.show(io::IO, chain::HMCChain)
@@ -181,6 +187,41 @@ end
 
 function _running_variance_state(num_params::Int)
     return RunningVarianceState(zeros(num_params), zeros(num_params), 0)
+end
+
+function _warmup_schedule(num_warmup::Int)
+    num_warmup < 0 && throw(ArgumentError("warmup schedule requires num_warmup >= 0"))
+    num_warmup == 0 && return WarmupSchedule(0, Int[], 0)
+
+    if num_warmup < 20
+        initial_buffer = min(5, max(num_warmup - 1, 0))
+        if initial_buffer == num_warmup
+            return WarmupSchedule(num_warmup, Int[], 0)
+        end
+        return WarmupSchedule(initial_buffer, [num_warmup], 0)
+    end
+
+    initial_buffer = min(max(5, fld(num_warmup, 10)), num_warmup)
+    terminal_buffer = min(max(5, fld(num_warmup, 10)), max(num_warmup - initial_buffer, 0))
+    slow_budget = num_warmup - initial_buffer - terminal_buffer
+    if slow_budget <= 0
+        return WarmupSchedule(num_warmup, Int[], 0)
+    end
+
+    window_ends = Int[]
+    next_window_size = min(25, slow_budget)
+    window_start = initial_buffer + 1
+    remaining = slow_budget
+    while remaining > 0
+        window_size = remaining <= fld(3 * next_window_size, 2) ? remaining : next_window_size
+        window_end = window_start + window_size - 1
+        push!(window_ends, window_end)
+        remaining -= window_size
+        window_start = window_end + 1
+        next_window_size *= 2
+    end
+
+    return WarmupSchedule(initial_buffer, window_ends, terminal_buffer)
 end
 
 function _update_running_variance!(state::RunningVarianceState, sample::AbstractVector)
@@ -352,6 +393,8 @@ function hmc(
     hmc_target_accept = Float64(target_accept)
     hmc_divergence_threshold = Float64(divergence_threshold)
     inverse_mass_matrix = ones(num_params)
+    warmup_schedule = _warmup_schedule(num_warmup)
+    mass_window_index = 1
     if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
         hmc_step_size = _find_reasonable_step_size(
             model,
@@ -413,10 +456,30 @@ function hmc(
                 hmc_step_size = _update_step_size!(dual_state, accept_prob)
             end
 
-            if adapt_mass_matrix
+            if adapt_mass_matrix &&
+               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
+               iteration > warmup_schedule.initial_buffer
                 _update_running_variance!(variance_state, position)
-                if variance_state.count >= mass_matrix_min_samples
-                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
+                    if variance_state.count >= mass_matrix_min_samples
+                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                    end
+                    variance_state = _running_variance_state(num_params)
+                    mass_window_index += 1
+                    if adapt_step_size && iteration < num_warmup
+                        hmc_step_size = _find_reasonable_step_size(
+                            model,
+                            position,
+                            current_logjoint,
+                            gradient_cache,
+                            inverse_mass_matrix,
+                            args,
+                            constraints,
+                            hmc_step_size,
+                            rng,
+                        )
+                        dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
+                    end
                 end
             end
 
