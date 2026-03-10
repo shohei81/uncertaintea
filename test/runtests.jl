@@ -80,6 +80,14 @@ using UncertainTea
         return mu
     end
 
+    @tea static function offset_iid_model(n, offset)
+        mu ~ normal(0.0f0, 1.0f0)
+        for i in 1:n
+            {:y => i + offset} ~ normal(mu, 1.0f0)
+        end
+        return mu
+    end
+
     @tea static function indexed_scale_model(n)
         mu ~ normal(0.0f0, 1.0f0)
         for i in 1:n
@@ -378,6 +386,18 @@ using UncertainTea
         (3,),
         shifted_batch_constraints,
     )
+    offset_batch_params = reshape(Float64[-0.25, 0.15], 1, 2)
+    offset_batch_args = [(3, 1), (3, 2)]
+    offset_batch_constraints = [
+        choicemap((:y => 2, 0.0f0), (:y => 3, -0.1f0), (:y => 4, 0.2f0)),
+        choicemap((:y => 3, 0.5f0), (:y => 4, 0.1f0), (:y => 5, -0.3f0)),
+    ]
+    offset_batch_logjoint = batched_logjoint(
+        offset_iid_model,
+        offset_batch_params,
+        offset_batch_args,
+        offset_batch_constraints,
+    )
     indexed_scale_batch_params = reshape(Float64[-0.2, 0.35], 1, 2)
     indexed_scale_batch_constraints = [
         choicemap((:y => 1, 0.2f0), (:y => 2, -0.1f0), (:y => 3, 0.5f0)),
@@ -432,6 +452,8 @@ using UncertainTea
     iid_backend_plan = backend_execution_plan(iid_model)
     shifted_backend_report = backend_report(shifted_iid_model)
     shifted_backend_plan = backend_execution_plan(shifted_iid_model)
+    offset_backend_report = backend_report(offset_iid_model)
+    offset_backend_plan = backend_execution_plan(offset_iid_model)
     indexed_scale_plan = executionplan(indexed_scale_model)
     indexed_scale_backend_report = backend_report(indexed_scale_model)
     indexed_scale_backend_plan = backend_execution_plan(indexed_scale_model)
@@ -489,6 +511,10 @@ using UncertainTea
     @test shifted_batch_logjoint ≈ [
         logjoint(shifted_iid_model, shifted_batch_params[:, index], (3,), shifted_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
+    @test offset_batch_logjoint ≈ [
+        logjoint(offset_iid_model, offset_batch_params[:, index], offset_batch_args[index], offset_batch_constraints[index]) for
+        index in 1:2
+    ] atol=1e-8
     @test indexed_scale_batch_logjoint ≈ [
         logjoint(
             indexed_scale_model,
@@ -529,11 +555,16 @@ using UncertainTea
     @test shifted_backend_report.supported
     @test shifted_backend_plan.numeric_slots == iid_backend_plan.numeric_slots
     @test shifted_backend_plan.index_slots == iid_backend_plan.index_slots
+    @test offset_backend_report.supported
     @test indexed_scale_backend_report.supported
     @test indexed_scale_backend_plan.numeric_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:mu]]
     @test indexed_scale_backend_plan.index_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:n]]
     @test indexed_scale_backend_plan.index_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:i]]
     @test !any(indexed_scale_backend_plan.generic_slots)
+    @test !isnothing(UncertainTea._backend_loop_observed_choice(iid_backend_plan.steps[2]))
+    @test !isnothing(UncertainTea._backend_loop_observed_choice(shifted_backend_plan.steps[2]))
+    @test isnothing(UncertainTea._backend_loop_observed_choice(offset_backend_plan.steps[2]))
+    @test isnothing(UncertainTea._backend_loop_observed_choice(backend_execution_plan(chain_model).steps[3]))
     @test coin_backend_report.supported
     @test coin_backend_plan.steps[1] isa UncertainTea.BackendBernoulliChoicePlanStep
     @test isempty(coin_backend_plan.numeric_slots)

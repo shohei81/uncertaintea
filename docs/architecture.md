@@ -92,6 +92,9 @@ Current backend-lowering subset:
   recursion and use normalized direct `ChoiceMap` lookup on the hot path
 - `ChoiceMap` now maintains an address index so normalized lookup no longer
   scans linearly through stored entries
+- synchronized backend loops with a single observed choice whose address depends
+  only on the loop iterator now use a loop-local fast path instead of the
+  generic body scorer
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

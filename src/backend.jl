@@ -645,6 +645,41 @@ function _collect_backend_slot_kinds!(
     return nothing
 end
 
+_backend_iterator_only_index_expr(::BackendLiteralExpr, iterator_slot::Int) = true
+_backend_iterator_only_index_expr(expr::BackendSlotExpr, iterator_slot::Int) = expr.slot == iterator_slot
+
+function _backend_iterator_only_index_expr(expr::BackendPrimitiveExpr, iterator_slot::Int)
+    expr.op === Symbol(":") && return false
+    expr.op === Symbol("=>") && return false
+    return all(arg -> _backend_iterator_only_index_expr(arg, iterator_slot), expr.arguments)
+end
+
+_backend_iterator_only_index_expr(::BackendTupleExpr, iterator_slot::Int) = false
+
+function _backend_iterator_only_index_expr(expr::BackendBlockExpr, iterator_slot::Int)
+    return all(arg -> _backend_iterator_only_index_expr(arg, iterator_slot), expr.arguments)
+end
+
+function _backend_iterator_only_address(address::BackendAddressSpec, iterator_slot::Int)
+    for part in address.parts
+        if part isa BackendAddressExprPart &&
+           !_backend_iterator_only_index_expr(part.expr, iterator_slot)
+            return false
+        end
+    end
+    return true
+end
+
+function _backend_loop_observed_choice(step::BackendLoopPlanStep)
+    length(step.body) == 1 || return nothing
+    choice = first(step.body)
+    choice isa BackendChoicePlanStep || return nothing
+    isnothing(choice.parameter_slot) || return nothing
+    isnothing(choice.binding_slot) || return nothing
+    _backend_iterator_only_address(choice.address, step.iterator_slot) || return nothing
+    return choice
+end
+
 function _derive_backend_slot_kinds(layout::EnvironmentLayout, steps::Tuple)
     numeric_slots = falses(length(layout.symbols))
     index_slots = falses(length(layout.symbols))
@@ -1057,6 +1092,12 @@ function _backend_choice_value(
     throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
 end
 
+function _backend_observed_choice_value(constraint_map::ChoiceMap, address)
+    found, constrained_value = _choice_tryget_normalized(constraint_map, address)
+    found && return constrained_value
+    throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+end
+
 _score_backend_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
 _score_backend_steps!(totals::AbstractVector, ::Tuple{}, env::BatchedPlanEnvironment, params::AbstractMatrix, constraints) = totals
 
@@ -1296,6 +1337,59 @@ function _score_backend_step!(
     return totals
 end
 
+function _score_backend_observed_loop_choice!(
+    step::BackendNormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    for batch_index in 1:env.batch_size
+        constraint_map = _batched_constraint(constraints, batch_index)
+        value = _backend_observed_choice_value(constraint_map, address)
+        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
+        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
+    step::BackendLognormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    for batch_index in 1:env.batch_size
+        constraint_map = _batched_constraint(constraints, batch_index)
+        value = _backend_observed_choice_value(constraint_map, address)
+        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
+        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
+    step::BackendBernoulliChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    for batch_index in 1:env.batch_size
+        constraint_map = _batched_constraint(constraints, batch_index)
+        value = _backend_observed_choice_value(constraint_map, address)
+        probability = _eval_backend_numeric_expr(env, step.probability, batch_index)
+        totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
+    end
+    return totals
+end
+
 function _score_backend_step!(
     step::BackendDeterministicPlanStep,
     totals::AbstractVector,
@@ -1377,9 +1471,18 @@ function _score_backend_step!(
     else
         Int[]
     end
-    for item in reference_iterable
-        _batched_environment_set_shared!(env, step.iterator_slot, item)
-        _score_backend_steps!(totals, step.body, env, params, constraints)
+    loop_choice = _backend_loop_observed_choice(step)
+    if !isnothing(loop_choice)
+        for item in reference_iterable
+            _batched_environment_set_shared!(env, step.iterator_slot, item)
+            address = _concrete_address(env, loop_choice.address, 1)
+            _score_backend_observed_loop_choice!(loop_choice, totals, env, params, constraints, address)
+        end
+    else
+        for item in reference_iterable
+            _batched_environment_set_shared!(env, step.iterator_slot, item)
+            _score_backend_steps!(totals, step.body, env, params, constraints)
+        end
     end
 
     _batched_environment_restore!(env, step.iterator_slot, previous_value, had_previous)

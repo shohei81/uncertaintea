@@ -102,6 +102,9 @@ The next lowering layer is now explicit:
   addresses are assembled with tuple recursion instead of `Any[]` accumulation
 - `ChoiceMap` itself now keeps an address index, so normalized lookup is no
   longer linear in the number of stored constraints
+- synchronized repeated-observation loops now have a narrow fast path when the
+  loop body is a single observed choice and the address depends only on the
+  iterator
 
 ## Phase 2 Execution Strategy
 
