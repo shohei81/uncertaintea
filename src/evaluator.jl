@@ -56,60 +56,60 @@ abstract type AbstractCompiledExpr end
 abstract type AbstractCompiledAddressPart end
 abstract type AbstractCompiledPlanStep end
 
-struct CompiledLiteralExpr <: AbstractCompiledExpr
-    value::Any
+struct CompiledLiteralExpr{T} <: AbstractCompiledExpr
+    value::T
 end
 
 struct CompiledSlotExpr <: AbstractCompiledExpr
     slot::Int
 end
 
-struct CompiledCallExpr <: AbstractCompiledExpr
-    callee::AbstractCompiledExpr
-    arguments::Vector{AbstractCompiledExpr}
+struct CompiledCallExpr{C<:AbstractCompiledExpr,A<:Tuple} <: AbstractCompiledExpr
+    callee::C
+    arguments::A
 end
 
-struct CompiledTupleExpr <: AbstractCompiledExpr
-    arguments::Vector{AbstractCompiledExpr}
+struct CompiledTupleExpr{A<:Tuple} <: AbstractCompiledExpr
+    arguments::A
 end
 
-struct CompiledBlockExpr <: AbstractCompiledExpr
-    arguments::Vector{AbstractCompiledExpr}
+struct CompiledBlockExpr{A<:Tuple} <: AbstractCompiledExpr
+    arguments::A
 end
 
-struct CompiledAddressLiteralPart <: AbstractCompiledAddressPart
-    value::Any
+struct CompiledAddressLiteralPart{T} <: AbstractCompiledAddressPart
+    value::T
 end
 
-struct CompiledAddressDynamicPart <: AbstractCompiledAddressPart
-    expr::AbstractCompiledExpr
+struct CompiledAddressDynamicPart{E<:AbstractCompiledExpr} <: AbstractCompiledAddressPart
+    expr::E
 end
 
-struct CompiledAddressSpec
-    parts::Tuple{Vararg{AbstractCompiledAddressPart}}
+struct CompiledAddressSpec{P<:Tuple}
+    parts::P
 end
 
-struct CompiledChoicePlanStep <: AbstractCompiledPlanStep
+struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCompiledPlanStep
     binding_slot::Union{Nothing,Int}
-    address::CompiledAddressSpec
-    constructor::Any
-    arguments::Vector{AbstractCompiledExpr}
+    address::AD
+    constructor::C
+    arguments::A
     parameter_slot::Union{Nothing,Int}
 end
 
-struct CompiledDeterministicPlanStep <: AbstractCompiledPlanStep
+struct CompiledDeterministicPlanStep{E<:AbstractCompiledExpr} <: AbstractCompiledPlanStep
     binding_slot::Int
-    expr::AbstractCompiledExpr
+    expr::E
 end
 
-struct CompiledLoopPlanStep <: AbstractCompiledPlanStep
+struct CompiledLoopPlanStep{I<:AbstractCompiledExpr,B<:Tuple} <: AbstractCompiledPlanStep
     iterator_slot::Int
-    iterable::AbstractCompiledExpr
-    body::Vector{AbstractCompiledPlanStep}
+    iterable::I
+    body::B
 end
 
-struct CompiledExecutionPlan
-    steps::Vector{AbstractCompiledPlanStep}
+struct CompiledExecutionPlan{S<:Tuple}
+    steps::S
 end
 
 function _resolve_compile_symbol(model::TeaModel, layout::EnvironmentLayout, sym::Symbol)
@@ -144,15 +144,15 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
     elseif expr isa Expr
         if expr.head == :call
             callee = _compile_plan_expr(model, layout, expr.args[1])
-            arguments = AbstractCompiledExpr[_compile_plan_expr(model, layout, arg) for arg in expr.args[2:end]]
+            arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args[2:end])...)
             return CompiledCallExpr(callee, arguments)
         elseif expr.head == :block
-            arguments = AbstractCompiledExpr[
+            arguments = tuple((
                 _compile_plan_expr(model, layout, arg) for arg in expr.args if !(arg isa LineNumberNode)
-            ]
+            )...)
             return CompiledBlockExpr(arguments)
         elseif expr.head == :tuple
-            arguments = AbstractCompiledExpr[_compile_plan_expr(model, layout, arg) for arg in expr.args]
+            arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args)...)
             return CompiledTupleExpr(arguments)
         end
 
@@ -163,19 +163,20 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
 end
 
 function _compile_address(layout::EnvironmentLayout, model::TeaModel, address::AddressSpec)
-    parts = map(address.parts) do part
+    parts = tuple((begin
         if part isa AddressLiteralPart
-            return CompiledAddressLiteralPart(part.value)
+            CompiledAddressLiteralPart(part.value)
+        else
+            CompiledAddressDynamicPart(_compile_plan_expr(model, layout, part.value))
         end
-        return CompiledAddressDynamicPart(_compile_plan_expr(model, layout, part.value))
-    end
-    return CompiledAddressSpec(tuple(parts...))
+    end for part in address.parts)...)
+    return CompiledAddressSpec(parts)
 end
 
 function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep)
     step.rhs isa DistributionSpec ||
         throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
-    arguments = AbstractCompiledExpr[_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments]
+    arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments)...)
     constructor = getfield(@__MODULE__, step.rhs.family)
     return CompiledChoicePlanStep(step.binding_slot, _compile_address(layout, model, step.address), constructor, arguments, step.parameter_slot)
 end
@@ -185,15 +186,13 @@ function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::De
 end
 
 function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::LoopPlanStep)
-    body = AbstractCompiledPlanStep[_compile_plan_step(model, layout, inner) for inner in step.body]
+    body = tuple((_compile_plan_step(model, layout, inner) for inner in step.body)...)
     return CompiledLoopPlanStep(step.iterator_slot, _compile_plan_expr(model, layout, step.iterable), body)
 end
 
 function _compile_execution_plan(model::TeaModel)
     raw_plan = executionplan(model)
-    compiled_steps = AbstractCompiledPlanStep[
-        _compile_plan_step(model, raw_plan.environment_layout, step) for step in raw_plan.steps
-    ]
+    compiled_steps = tuple((_compile_plan_step(model, raw_plan.environment_layout, step) for step in raw_plan.steps)...)
     return CompiledExecutionPlan(compiled_steps)
 end
 
@@ -272,7 +271,7 @@ end
 
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledCallExpr)
     callee = _eval_compiled_expr(env, expr.callee)
-    arguments = map(arg -> _eval_compiled_expr(env, arg), expr.arguments)
+    arguments = tuple((_eval_compiled_expr(env, arg) for arg in expr.arguments)...)
     return callee(arguments...)
 end
 
@@ -319,8 +318,15 @@ function _distribution_from_spec(model::TeaModel, env::PlanEnvironment, rhs::Dis
 end
 
 function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
-    arguments = map(arg -> _eval_compiled_expr(env, arg), step.arguments)
+    arguments = tuple((_eval_compiled_expr(env, arg) for arg in step.arguments)...)
     return step.constructor(arguments...)
+end
+
+_score_compiled_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
+
+function _score_compiled_steps(steps::Tuple, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap)
+    return _score_plan_step!(first(steps), env, params, constraints) +
+           _score_compiled_steps(Base.tail(steps), env, params, constraints)
 end
 
 function _score_distribution_instance!(
@@ -438,9 +444,7 @@ function _score_plan_step!(
 
     for item in iterable
         _environment_set!(env, step.iterator_slot, item)
-        for body_step in step.body
-            total += _score_plan_step!(body_step, env, params, constraints)
-        end
+        total += _score_compiled_steps(step.body, env, params, constraints)
     end
 
     _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
@@ -466,11 +470,7 @@ function logjoint(
         _environment_set!(env, slot, value)
     end
 
-    total = 0.0
-    for step in compiled_plan.steps
-        total += _score_plan_step!(step, env, params, constraints)
-    end
-    return total
+    return _score_compiled_steps(compiled_plan.steps, env, params, constraints)
 end
 
 function logjoint_unconstrained(
