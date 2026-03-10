@@ -396,6 +396,48 @@ using UncertainTea
         mass_matrix_min_samples=3,
         rng=MersenneTwister(36),
     )
+    gaussian_multichain = hmc_chains(
+        gaussian_mean,
+        (),
+        constraints;
+        num_chains=3,
+        num_samples=40,
+        num_warmup=20,
+        step_size=0.2,
+        num_leapfrog_steps=6,
+        rng=MersenneTwister(40),
+    )
+    gaussian_multichain_replay = hmc_chains(
+        gaussian_mean,
+        (),
+        constraints;
+        num_chains=3,
+        num_samples=40,
+        num_warmup=20,
+        step_size=0.2,
+        num_leapfrog_steps=6,
+        rng=MersenneTwister(40),
+    )
+    positive_multichain = hmc_chains(
+        observed_positive_step,
+        (),
+        choicemap((:y, 1.2f0));
+        num_chains=3,
+        num_samples=20,
+        num_warmup=10,
+        step_size=0.1,
+        num_leapfrog_steps=6,
+        initial_params=reshape(
+            [
+                positive_step_unconstrained[1] - 0.2,
+                positive_step_unconstrained[1],
+                positive_step_unconstrained[1] + 0.2,
+            ],
+            1,
+            3,
+        ),
+        rng=MersenneTwister(41),
+    )
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -423,6 +465,15 @@ using UncertainTea
     @test all(isfinite, gaussian_small_step_chain.logjoint_values)
     @test gaussian_windowed_mass_chain.step_size == 0.2
     @test gaussian_windowed_mass_chain.mass_matrix[1] != 1.0
+    @test nchains(gaussian_multichain) == 3
+    @test numsamples(gaussian_multichain) == 40
+    @test gaussian_multichain[1] isa HMCChain
+    @test 0.0 <= acceptancerate(gaussian_multichain) <= 1.0
+    @test 0.0 <= divergencerate(gaussian_multichain) <= 1.0
+    @test gaussian_multichain[1].unconstrained_samples[:, 1] ==
+        gaussian_multichain_replay[1].unconstrained_samples[:, 1]
+    @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
+    @test gaussian_multichain[1].unconstrained_samples[:, 1] != gaussian_multichain[2].unconstrained_samples[:, 1]
     @test all(gaussian_divergent_chain.divergent)
     @test divergencerate(gaussian_divergent_chain) == 1.0
     @test all(isfinite, gaussian_divergent_chain.energies)
@@ -454,6 +505,8 @@ using UncertainTea
     @test any(positive_chain.accepted)
     @test positive_chain.step_size > 0
     @test positive_chain.mass_matrix[1] > 0
+    @test nchains(positive_multichain) == 3
+    @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_multichain)
     @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
         positive_chain.constrained_samples[1, 1]
 
@@ -466,4 +519,13 @@ using UncertainTea
     @test_throws DimensionMismatch logjoint(iid_model, params2, (), repeated)
     @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
     @test_throws ArgumentError hmc(gaussian_mean, (), constraints; num_samples=10, divergence_threshold=0.0)
+    @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
+    @test_throws DimensionMismatch hmc_chains(
+        gaussian_mean,
+        (),
+        constraints;
+        num_chains=3,
+        num_samples=10,
+        initial_params=zeros(1, 2),
+    )
 end

@@ -15,6 +15,13 @@ struct HMCChain
     target_accept::Float64
 end
 
+struct HMCChains
+    model::TeaModel
+    args::Tuple
+    constraints::ChoiceMap
+    chains::Vector{HMCChain}
+end
+
 mutable struct DualAveragingState
     target_accept::Float64
     gamma::Float64
@@ -40,6 +47,11 @@ struct WarmupSchedule
 end
 
 Base.length(chain::HMCChain) = size(chain.unconstrained_samples, 2)
+Base.length(chains::HMCChains) = length(chains.chains)
+Base.getindex(chains::HMCChains, index::Int) = chains.chains[index]
+Base.firstindex(chains::HMCChains) = firstindex(chains.chains)
+Base.lastindex(chains::HMCChains) = lastindex(chains.chains)
+Base.iterate(chains::HMCChains, state...) = iterate(chains.chains, state...)
 
 function Base.show(io::IO, chain::HMCChain)
     print(
@@ -58,14 +70,52 @@ function Base.show(io::IO, chain::HMCChain)
     )
 end
 
+function Base.show(io::IO, chains::HMCChains)
+    print(
+        io,
+        "HMCChains(",
+        chains.model.name,
+        ", chains=",
+        length(chains),
+        ", samples=",
+        numsamples(chains),
+        ", acceptance_rate=",
+        round(acceptancerate(chains); digits=3),
+        ", divergences=",
+        sum(count(identity, chain.divergent) for chain in chains.chains),
+        ")",
+    )
+end
+
 function acceptancerate(chain::HMCChain)
     isempty(chain.accepted) && return 0.0
     return count(identity, chain.accepted) / length(chain.accepted)
 end
 
+function acceptancerate(chains::HMCChains)
+    total_samples = sum(length(chain.accepted) for chain in chains.chains)
+    total_samples == 0 && return 0.0
+    return sum(count(identity, chain.accepted) for chain in chains.chains) / total_samples
+end
+
 function divergencerate(chain::HMCChain)
     isempty(chain.divergent) && return 0.0
     return count(identity, chain.divergent) / length(chain.divergent)
+end
+
+function divergencerate(chains::HMCChains)
+    total_samples = sum(length(chain.divergent) for chain in chains.chains)
+    total_samples == 0 && return 0.0
+    return sum(count(identity, chain.divergent) for chain in chains.chains) / total_samples
+end
+
+function nchains(chains::HMCChains)
+    return length(chains)
+end
+
+function numsamples(chains::HMCChains)
+    isempty(chains.chains) && return 0
+    return length(first(chains.chains))
 end
 
 function _validate_hmc_arguments(
@@ -88,6 +138,11 @@ function _validate_hmc_arguments(
     divergence_threshold > 0 || throw(ArgumentError("HMC requires divergence_threshold > 0"))
     mass_matrix_regularization > 0 || throw(ArgumentError("HMC requires mass_matrix_regularization > 0"))
     mass_matrix_min_samples > 0 || throw(ArgumentError("HMC requires mass_matrix_min_samples > 0"))
+    return nothing
+end
+
+function _validate_hmc_chains_arguments(num_chains::Int)
+    num_chains > 0 || throw(ArgumentError("HMC requires num_chains > 0"))
     return nothing
 end
 
@@ -344,6 +399,29 @@ function _find_reasonable_step_size(
     return clamp(reasonable_step_size, min_step_size, max_step_size)
 end
 
+function _chain_initial_params(initial_params, chain_index::Int, num_params::Int, num_chains::Int)
+    if isnothing(initial_params)
+        return nothing
+    elseif initial_params isa AbstractMatrix
+        size(initial_params) == (num_params, num_chains) ||
+            throw(DimensionMismatch("expected initial_params matrix of size ($num_params, $num_chains), got $(size(initial_params))"))
+        return collect(Float64, view(initial_params, :, chain_index))
+    elseif initial_params isa AbstractVector && !isempty(initial_params) && first(initial_params) isa AbstractVector
+        length(initial_params) == num_chains ||
+            throw(DimensionMismatch("expected $num_chains initial parameter vectors, got $(length(initial_params))"))
+        chain_params = initial_params[chain_index]
+        length(chain_params) == num_params ||
+            throw(DimensionMismatch("expected $num_params initial parameters for chain $chain_index, got $(length(chain_params))"))
+        return Float64[value for value in chain_params]
+    elseif initial_params isa AbstractVector
+        length(initial_params) == num_params ||
+            throw(DimensionMismatch("expected $num_params initial parameters, got $(length(initial_params))"))
+        return Float64[value for value in initial_params]
+    end
+
+    throw(ArgumentError("unsupported initial_params container for multi-chain HMC"))
+end
+
 function hmc(
     model::TeaModel,
     args::Tuple=(),
@@ -519,4 +597,54 @@ function hmc(
         num_leapfrog_steps,
         hmc_target_accept,
     )
+end
+
+function hmc_chains(
+    model::TeaModel,
+    args::Tuple=(),
+    constraints::ChoiceMap=choicemap();
+    num_chains::Int,
+    num_samples::Int,
+    num_warmup::Int=0,
+    step_size::Real=0.1,
+    num_leapfrog_steps::Int=10,
+    initial_params=nothing,
+    target_accept::Real=0.8,
+    adapt_step_size::Bool=true,
+    adapt_mass_matrix::Bool=true,
+    find_reasonable_step_size::Bool=false,
+    divergence_threshold::Real=1000.0,
+    mass_matrix_regularization::Real=1e-3,
+    mass_matrix_min_samples::Int=10,
+    rng::AbstractRNG=Random.default_rng(),
+)
+    _validate_hmc_chains_arguments(num_chains)
+    num_params = parametercount(parameterlayout(model))
+    seeds = rand(rng, UInt, num_chains)
+    chains = Vector{HMCChain}(undef, num_chains)
+
+    for chain_index in 1:num_chains
+        chain_rng = MersenneTwister(seeds[chain_index])
+        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, num_chains)
+        chains[chain_index] = hmc(
+            model,
+            args,
+            constraints;
+            num_samples=num_samples,
+            num_warmup=num_warmup,
+            step_size=step_size,
+            num_leapfrog_steps=num_leapfrog_steps,
+            initial_params=chain_initial_params,
+            target_accept=target_accept,
+            adapt_step_size=adapt_step_size,
+            adapt_mass_matrix=adapt_mass_matrix,
+            find_reasonable_step_size=find_reasonable_step_size,
+            divergence_threshold=divergence_threshold,
+            mass_matrix_regularization=mass_matrix_regularization,
+            mass_matrix_min_samples=mass_matrix_min_samples,
+            rng=chain_rng,
+        )
+    end
+
+    return HMCChains(model, args, constraints, chains)
 end
