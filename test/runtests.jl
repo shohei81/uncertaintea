@@ -361,6 +361,20 @@ using UncertainTea
         find_reasonable_step_size=true,
         rng=MersenneTwister(24),
     )
+    gaussian_divergent_chain = hmc(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=20,
+        num_warmup=0,
+        step_size=2.0,
+        num_leapfrog_steps=8,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        find_reasonable_step_size=false,
+        divergence_threshold=1.0,
+        rng=MersenneTwister(31),
+    )
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -369,7 +383,13 @@ using UncertainTea
     @test all(isfinite, gaussian_chain.unconstrained_samples)
     @test all(isfinite, gaussian_chain.constrained_samples)
     @test all(isfinite, gaussian_chain.logjoint_values)
+    @test size(gaussian_chain.energies) == (250,)
+    @test size(gaussian_chain.energy_errors) == (250,)
+    @test size(gaussian_chain.divergent) == (250,)
+    @test all(isfinite, gaussian_chain.energies)
+    @test all(isfinite, gaussian_chain.energy_errors[.!gaussian_chain.divergent])
     @test 0.0 <= acceptancerate(gaussian_chain) <= 1.0
+    @test 0.0 <= divergencerate(gaussian_chain) <= 1.0
     @test any(gaussian_chain.accepted)
     @test gaussian_chain.step_size > 0
     @test gaussian_chain.mass_matrix[1] > 0
@@ -380,6 +400,10 @@ using UncertainTea
     @test gaussian_small_step_chain.step_size > 1e-6
     @test all(isfinite, gaussian_large_step_chain.logjoint_values)
     @test all(isfinite, gaussian_small_step_chain.logjoint_values)
+    @test all(gaussian_divergent_chain.divergent)
+    @test divergencerate(gaussian_divergent_chain) == 1.0
+    @test all(isfinite, gaussian_divergent_chain.energies)
+    @test maximum(abs, gaussian_divergent_chain.energy_errors) > 1.0
     @test !(isapprox(gaussian_chain.step_size, gaussian_baseline_chain.step_size; atol=1e-8) &&
         isapprox(gaussian_chain.mass_matrix[1], gaussian_baseline_chain.mass_matrix[1]; atol=1e-8))
     @test abs(gaussian_chain_mean - 0.15) < 0.2
@@ -402,6 +426,8 @@ using UncertainTea
     @test size(positive_chain.unconstrained_samples) == (1, 120)
     @test size(positive_chain.constrained_samples) == (1, 120)
     @test all(x -> x > 0, positive_chain.constrained_samples)
+    @test all(isfinite, positive_chain.energies)
+    @test all(isfinite, positive_chain.energy_errors[.!positive_chain.divergent])
     @test any(positive_chain.accepted)
     @test positive_chain.step_size > 0
     @test positive_chain.mass_matrix[1] > 0
@@ -416,4 +442,5 @@ using UncertainTea
     @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
     @test_throws DimensionMismatch logjoint(iid_model, params2, (), repeated)
     @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
+    @test_throws ArgumentError hmc(gaussian_mean, (), constraints; num_samples=10, divergence_threshold=0.0)
 end

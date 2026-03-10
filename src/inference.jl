@@ -5,7 +5,10 @@ struct HMCChain
     unconstrained_samples::Matrix{Float64}
     constrained_samples::Matrix{Float64}
     logjoint_values::Vector{Float64}
+    energies::Vector{Float64}
+    energy_errors::Vector{Float64}
     accepted::BitVector
+    divergent::BitVector
     step_size::Float64
     mass_matrix::Vector{Float64}
     num_leapfrog_steps::Int
@@ -41,6 +44,8 @@ function Base.show(io::IO, chain::HMCChain)
         length(chain),
         ", acceptance_rate=",
         round(acceptancerate(chain); digits=3),
+        ", divergences=",
+        count(identity, chain.divergent),
         ", step_size=",
         round(chain.step_size; digits=4),
         ")",
@@ -52,6 +57,11 @@ function acceptancerate(chain::HMCChain)
     return count(identity, chain.accepted) / length(chain.accepted)
 end
 
+function divergencerate(chain::HMCChain)
+    isempty(chain.divergent) && return 0.0
+    return count(identity, chain.divergent) / length(chain.divergent)
+end
+
 function _validate_hmc_arguments(
     num_params::Int,
     num_samples::Int,
@@ -59,6 +69,7 @@ function _validate_hmc_arguments(
     step_size::Real,
     num_leapfrog_steps::Int,
     target_accept::Real,
+    divergence_threshold::Real,
     mass_matrix_regularization::Real,
     mass_matrix_min_samples::Int,
 )
@@ -68,6 +79,7 @@ function _validate_hmc_arguments(
     step_size > 0 || throw(ArgumentError("HMC requires step_size > 0"))
     num_leapfrog_steps > 0 || throw(ArgumentError("HMC requires num_leapfrog_steps > 0"))
     0 < target_accept < 1 || throw(ArgumentError("HMC requires 0 < target_accept < 1"))
+    divergence_threshold > 0 || throw(ArgumentError("HMC requires divergence_threshold > 0"))
     mass_matrix_regularization > 0 || throw(ArgumentError("HMC requires mass_matrix_regularization > 0"))
     mass_matrix_min_samples > 0 || throw(ArgumentError("HMC requires mass_matrix_min_samples > 0"))
     return nothing
@@ -213,6 +225,25 @@ function _proposal_log_accept_ratio(
     return current_hamiltonian - proposed_hamiltonian
 end
 
+function _proposal_diagnostics(
+    current_logjoint::Float64,
+    current_momentum::AbstractVector,
+    proposal,
+    inverse_mass_matrix::AbstractVector,
+    divergence_threshold::Float64,
+)
+    current_hamiltonian = _hamiltonian(current_logjoint, current_momentum, inverse_mass_matrix)
+    if isnothing(proposal)
+        return current_hamiltonian, Inf, true
+    end
+
+    _, proposed_momentum, proposed_logjoint = proposal
+    proposed_hamiltonian = _hamiltonian(proposed_logjoint, proposed_momentum, inverse_mass_matrix)
+    energy_error = proposed_hamiltonian - current_hamiltonian
+    divergent = !isfinite(energy_error) || abs(energy_error) > divergence_threshold
+    return proposed_hamiltonian, energy_error, divergent
+end
+
 function _find_reasonable_step_size(
     model::TeaModel,
     position::Vector{Float64},
@@ -285,6 +316,7 @@ function hmc(
     adapt_step_size::Bool=true,
     adapt_mass_matrix::Bool=true,
     find_reasonable_step_size::Bool=false,
+    divergence_threshold::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
     rng::AbstractRNG=Random.default_rng(),
@@ -297,6 +329,7 @@ function hmc(
         step_size,
         num_leapfrog_steps,
         target_accept,
+        divergence_threshold,
         mass_matrix_regularization,
         mass_matrix_min_samples,
     )
@@ -310,10 +343,14 @@ function hmc(
     unconstrained_samples = Matrix{Float64}(undef, num_params, num_samples)
     constrained_samples = Matrix{Float64}(undef, num_params, num_samples)
     logjoint_values = Vector{Float64}(undef, num_samples)
+    energies = Vector{Float64}(undef, num_samples)
+    energy_errors = Vector{Float64}(undef, num_samples)
     accepted = falses(num_samples)
+    divergent = falses(num_samples)
     total_iterations = num_warmup + num_samples
     hmc_step_size = Float64(step_size)
     hmc_target_accept = Float64(target_accept)
+    hmc_divergence_threshold = Float64(divergence_threshold)
     inverse_mass_matrix = ones(num_params)
     if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
         hmc_step_size = _find_reasonable_step_size(
@@ -349,6 +386,14 @@ function hmc(
         accepted_step = false
         log_accept_ratio = _proposal_log_accept_ratio(current_logjoint, momentum, proposal, inverse_mass_matrix)
         accept_prob = _acceptance_probability(log_accept_ratio)
+        proposal_energy, energy_error, divergent_step = _proposal_diagnostics(
+            current_logjoint,
+            momentum,
+            proposal,
+            inverse_mass_matrix,
+            hmc_divergence_threshold,
+        )
+        sample_energy = isnothing(proposal) ? _hamiltonian(current_logjoint, momentum, inverse_mass_matrix) : proposal_energy
         if !isnothing(proposal)
             proposed_position, _, proposed_logjoint = proposal
 
@@ -357,6 +402,10 @@ function hmc(
                 current_logjoint = proposed_logjoint
                 accepted_step = true
             end
+        end
+
+        if !accepted_step
+            sample_energy = _hamiltonian(current_logjoint, momentum, inverse_mass_matrix)
         end
 
         if iteration <= num_warmup
@@ -384,7 +433,10 @@ function hmc(
             unconstrained_samples[:, sample_index] = position
             constrained_samples[:, sample_index] = transform_to_constrained(model, position)
             logjoint_values[sample_index] = current_logjoint
+            energies[sample_index] = sample_energy
+            energy_errors[sample_index] = energy_error
             accepted[sample_index] = accepted_step
+            divergent[sample_index] = divergent_step
         end
     end
 
@@ -395,7 +447,10 @@ function hmc(
         unconstrained_samples,
         constrained_samples,
         logjoint_values,
+        energies,
+        energy_errors,
         accepted,
+        divergent,
         hmc_step_size,
         1 ./ inverse_mass_matrix,
         num_leapfrog_steps,
