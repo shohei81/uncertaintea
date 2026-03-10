@@ -65,22 +65,3 @@ function initialparameters(model::TeaModel, args::Tuple=(); rng::AbstractRNG=Ran
     trace, _ = generate(model, args, choicemap(); rng=rng)
     return parameter_vector(trace)
 end
-
-function logjoint(
-    model::TeaModel,
-    params::AbstractVector,
-    args::Tuple=(),
-    constraints::ChoiceMap=choicemap();
-    rng::AbstractRNG=Random.default_rng(),
-)
-    overrides = parameterchoicemap(model, params)
-    _, value = _run_model(
-        model,
-        args,
-        constraints;
-        rng=rng,
-        overrides=overrides,
-        require_all_choices_scored=true,
-    )
-    return value
-end

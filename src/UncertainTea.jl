@@ -26,6 +26,7 @@ include("choicemaps.jl")
 include("distributions.jl")
 include("runtime.jl")
 include("parameters.jl")
+include("evaluator.jl")
 include("frontend.jl")
 
 end

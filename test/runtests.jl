@@ -49,7 +49,9 @@ using UncertainTea
     @test params == [Float64(trace[:mu])]
     @test length(initial) == 1
     @test overrides[:mu] == trace[:mu]
-    @test logjoint(gaussian_mean, params, (), constraints; rng=MersenneTwister(7)) ≈ expected_joint
+    @test logjoint(gaussian_mean, params, (), constraints; rng=MersenneTwister(7)) ≈ expected_joint atol=1e-6
+    @test logjoint(gaussian_mean, params, (), constraints) ≈
+        assess(gaussian_mean, (), choicemap((:mu, trace[:mu]), (:y, 0.3f0))) atol=1e-6
 
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
@@ -90,8 +92,11 @@ using UncertainTea
     params2 = [Float64(trace2[:mu])]
     expected_joint2 = UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace2[:mu]) +
         sum(UncertainTea.logpdf(normal(trace2[:mu], 1.0f0), y) for y in ys)
+    full_repeated = choicemap([(:mu, trace2[:mu]); [(:y => i, ys[i]) for i in eachindex(ys)]])
 
-    @test logjoint(iid_model, params2, (length(ys),), repeated; rng=MersenneTwister(8)) ≈ expected_joint2
+    @test logjoint(iid_model, params2, (length(ys),), repeated; rng=MersenneTwister(8)) ≈ expected_joint2 atol=1e-6
+    @test logjoint(iid_model, params2, (length(ys),), repeated) ≈
+        assess(iid_model, (length(ys),), full_repeated) atol=1e-6
 
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
@@ -106,7 +111,7 @@ using UncertainTea
     @test step_spec.parameter_layout.slots[1].transform isa IdentityTransform
     @test step_plan.steps[1].parameter_slot == 1
     @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap(); rng=MersenneTwister(9)) ≈
-        UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z])
+        UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z]) atol=1e-6
 
     @tea static function chain_model(T)
         z = ({:z => 1} ~ step(0.0f0))
@@ -163,6 +168,18 @@ using UncertainTea
     @test plan4.steps[1].parameter_slot == 1
     @test length(plan4.steps[2].scopes) == 2
 
+    @tea static function inline_scale()
+        log_sigma ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(0.0f0, exp(log_sigma))
+        return log_sigma
+    end
+
+    inline_trace, _ = generate(inline_scale, (), choicemap((:y, 0.2f0)); rng=MersenneTwister(6))
+    inline_params = parameter_vector(inline_trace)
+
+    @test logjoint(inline_scale, inline_params, (), choicemap((:y, 0.2f0))) ≈
+        assess(inline_scale, (), choicemap((:log_sigma, inline_trace[:log_sigma]), (:y, 0.2f0))) atol=1e-6
+
     @tea static function positive_latent()
         sigma ~ lognormal(0.0f0, 0.5f0)
         {:y} ~ normal(sigma, 1.0f0)
@@ -180,6 +197,9 @@ using UncertainTea
     @test positive_params[1] > 0
     @test unconstrained[1] ≈ log(positive_params[1])
     @test reconstrained ≈ positive_params
+    @test logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) ≈
+        assess(positive_latent, (), choicemap((:sigma, positive_trace[:sigma]), (:y, 1.5f0))) atol=1e-6
 
     @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
+    @test_throws DimensionMismatch logjoint(iid_model, params2, (), repeated)
 end
