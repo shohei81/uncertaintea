@@ -46,6 +46,7 @@ The initial API should be:
 - `batched_logjoint(model, params, args, constraints)`
 - `batched_logjoint_unconstrained(model, params, args, constraints)`
 - `batched_logjoint_gradient_unconstrained(model, params, args, constraints)`
+- `batched_hmc(model, args, constraints; ...)`
 
 For repeated gradient evaluations on a fixed batch shape, phase 1 also supports
 an explicit cache:
@@ -59,6 +60,13 @@ Accepted batching modes:
 - `Vector{<:Tuple}` for per-batch arguments
 - shared `ChoiceMap` for every batch element
 - `Vector{ChoiceMap}` for per-batch constraints
+
+The first `batched_hmc` implementation is intentionally narrow:
+
+- fixed-step HMC only
+- shared diagonal mass matrix across the whole batch
+- warmup as burn-in only
+- CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.
 That gives us:

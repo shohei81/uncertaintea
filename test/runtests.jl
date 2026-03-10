@@ -513,12 +513,61 @@ using UncertainTea
         ),
         rng=MersenneTwister(41),
     )
+    gaussian_batched_chain = batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=40,
+        num_warmup=20,
+        step_size=0.18,
+        num_leapfrog_steps=6,
+        initial_params=gaussian_batch_params,
+        rng=MersenneTwister(52),
+    )
+    gaussian_batched_chain_replay = batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=40,
+        num_warmup=20,
+        step_size=0.18,
+        num_leapfrog_steps=6,
+        initial_params=gaussian_batch_params,
+        rng=MersenneTwister(52),
+    )
+    iid_batched_chain = batched_hmc(
+        iid_model,
+        iid_batch_args,
+        iid_batch_constraints;
+        num_chains=2,
+        num_samples=24,
+        num_warmup=12,
+        step_size=0.12,
+        num_leapfrog_steps=5,
+        initial_params=iid_batch_params,
+        rng=MersenneTwister(53),
+    )
+    positive_batched_chain = batched_hmc(
+        observed_positive_step,
+        (),
+        positive_batch_constraints;
+        num_chains=3,
+        num_samples=30,
+        num_warmup=15,
+        step_size=0.1,
+        num_leapfrog_steps=6,
+        initial_params=positive_batch_unconstrained,
+        rng=MersenneTwister(54),
+    )
     gaussian_rhat = rhat(gaussian_multichain)
     gaussian_rhat_unconstrained = rhat(gaussian_multichain; space=:unconstrained)
     gaussian_ess = ess(gaussian_multichain)
     gaussian_ess_unconstrained = ess(gaussian_multichain; space=:unconstrained)
     positive_rhat = rhat(positive_multichain)
     positive_ess = ess(positive_multichain)
+    gaussian_batched_rhat = rhat(gaussian_batched_chain)
     gaussian_summary = summarize(gaussian_multichain)
     gaussian_summary_unconstrained = summarize(gaussian_multichain; space=:unconstrained)
     positive_summary = summarize(positive_multichain; quantiles=(0.25, 0.5, 0.75))
@@ -578,6 +627,28 @@ using UncertainTea
         gaussian_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
     @test gaussian_multichain[1].unconstrained_samples[:, 1] != gaussian_multichain[2].unconstrained_samples[:, 1]
+    @test nchains(gaussian_batched_chain) == 3
+    @test numsamples(gaussian_batched_chain) == 40
+    @test gaussian_batched_chain.args == ()
+    @test length(gaussian_batched_chain.constraints) == 3
+    @test gaussian_batched_chain[1].constraints[:y] == gaussian_batch_constraints[1][:y]
+    @test gaussian_batched_chain[2].constraints[:y] == gaussian_batch_constraints[2][:y]
+    @test all(chain.step_size == 0.18 for chain in gaussian_batched_chain)
+    @test all(chain.mass_matrix == [1.0] for chain in gaussian_batched_chain)
+    @test 0.0 <= acceptancerate(gaussian_batched_chain) <= 1.0
+    @test 0.0 <= divergencerate(gaussian_batched_chain) <= 1.0
+    @test length(gaussian_batched_rhat) == 1
+    @test isfinite(gaussian_batched_rhat[1])
+    @test gaussian_batched_chain[1].unconstrained_samples[:, 1] ==
+        gaussian_batched_chain_replay[1].unconstrained_samples[:, 1]
+    @test gaussian_batched_chain[1].accepted == gaussian_batched_chain_replay[1].accepted
+    @test nchains(iid_batched_chain) == 2
+    @test numsamples(iid_batched_chain) == 24
+    @test iid_batched_chain.args == iid_batch_args
+    @test length(iid_batched_chain.constraints) == 2
+    @test iid_batched_chain[1].args == iid_batch_args[1]
+    @test iid_batched_chain[2].constraints[:y => 3] == iid_batch_constraints[2][:y => 3]
+    @test all(all(isfinite, chain.logjoint_values) for chain in iid_batched_chain)
     @test all(gaussian_divergent_chain.divergent)
     @test divergencerate(gaussian_divergent_chain) == 1.0
     @test all(isfinite, gaussian_divergent_chain.energies)
@@ -624,6 +695,10 @@ using UncertainTea
     @test positive_summary[1].rhat == positive_rhat[1]
     @test positive_summary[1].ess == positive_ess[1]
     @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_multichain)
+    @test nchains(positive_batched_chain) == 3
+    @test numsamples(positive_batched_chain) == 30
+    @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_batched_chain)
+    @test all(chain.mass_matrix == [1.0] for chain in positive_batched_chain)
     @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
         positive_chain.constrained_samples[1, 1]
 
@@ -637,10 +712,25 @@ using UncertainTea
     @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
     @test_throws ArgumentError hmc(gaussian_mean, (), constraints; num_samples=10, divergence_threshold=0.0)
     @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
+    @test_throws ArgumentError batched_hmc(gaussian_mean, (), gaussian_batch_constraints; num_chains=0, num_samples=10)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, zeros(2, 3), (), gaussian_batch_constraints)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints[1:2])
     @test_throws ArgumentError batched_logjoint(gaussian_mean, gaussian_batch_params, [1, 2, 3], gaussian_batch_constraints)
     @test_throws DimensionMismatch batched_logjoint_gradient_unconstrained(gaussian_batch_gradient_cache, zeros(1, 2))
+    @test_throws DimensionMismatch batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints[1:2];
+        num_chains=3,
+        num_samples=10,
+    )
+    @test_throws DimensionMismatch batched_hmc(
+        iid_model,
+        iid_batch_args[1:1],
+        iid_batch_constraints;
+        num_chains=2,
+        num_samples=10,
+    )
     @test_throws ArgumentError rhat(HMCChains(gaussian_mean, (), constraints, [gaussian_baseline_chain]))
     @test_throws ArgumentError ess(gaussian_multichain; space=:energy)
     @test_throws ArgumentError summarize(gaussian_multichain; quantiles=())
@@ -649,6 +739,14 @@ using UncertainTea
         gaussian_mean,
         (),
         constraints;
+        num_chains=3,
+        num_samples=10,
+        initial_params=zeros(1, 2),
+    )
+    @test_throws DimensionMismatch batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
         num_chains=3,
         num_samples=10,
         initial_params=zeros(1, 2),
