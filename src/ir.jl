@@ -107,7 +107,7 @@ function ModelSpec(
     return_expr::Any,
 )
     argument_symbols = Symbol[arg for arg in arguments]
-    plan = build_execution_plan(name, AbstractPlanStep[], parameter_layout, return_expr)
+    plan = ExecutionPlan(name, AbstractPlanStep[], parameter_layout)
     return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, return_expr, plan)
 end
 
@@ -124,7 +124,7 @@ function ModelSpec(
     argument_symbols = Symbol[arg for arg in arguments]
     raw_steps = AbstractPlanStep[step for step in plan_steps]
     plan = build_execution_plan(name, raw_steps, parameter_layout, return_expr)
-    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, return_expr, plan)
+    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, plan.parameter_layout, return_expr, plan)
 end
 
 function modelspec(model)
@@ -275,6 +275,67 @@ function _merge_loop_steps(steps::Vector{AbstractPlanStep})
     return merged
 end
 
+function _parameter_transform(rhs::DistributionSpec)
+    if rhs.family === :normal
+        return IdentityTransform()
+    elseif rhs.family === :lognormal
+        return LogTransform()
+    end
+    return nothing
+end
+
+_parameter_transform(::AbstractChoiceRhsSpec) = nothing
+
+function _parameterize_step(
+    step::ChoicePlanStep,
+    slots::Vector{ParameterSlotSpec},
+    step_counter::Base.RefValue{Int},
+    slot_counter::Base.RefValue{Int},
+)
+    step_index = step_counter[]
+    step_counter[] += 1
+    transform = isnothing(step.binding) ? nothing : _parameter_transform(step.rhs)
+
+    if isnothing(transform) || !isempty(step.scopes) || !isstaticaddress(step.address)
+        return ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, step.scopes, nothing)
+    end
+
+    slot_index = slot_counter[]
+    slot_counter[] += 1
+    push!(slots, ParameterSlotSpec(step_index, step.binding, step.address, slot_index, transform))
+    return ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, step.scopes, slot_index)
+end
+
+function _parameterize_plan_steps(
+    steps::Vector{AbstractPlanStep},
+    slots::Vector{ParameterSlotSpec},
+    step_counter::Base.RefValue{Int},
+    slot_counter::Base.RefValue{Int},
+)
+    parameterized = AbstractPlanStep[]
+    for step in steps
+        if step isa ChoicePlanStep
+            push!(parameterized, _parameterize_step(step, slots, step_counter, slot_counter))
+        elseif step isa DeterministicPlanStep
+            push!(parameterized, step)
+        elseif step isa LoopPlanStep
+            body = _parameterize_plan_steps(step.body, slots, step_counter, slot_counter)
+            push!(parameterized, LoopPlanStep(step.iterator, step.iterable, body))
+        else
+            throw(ArgumentError("unsupported plan step in parameterization: $(typeof(step))"))
+        end
+    end
+    return parameterized
+end
+
+function _assign_parameter_layout(steps::Vector{AbstractPlanStep})
+    slots = ParameterSlotSpec[]
+    step_counter = Ref(1)
+    slot_counter = Ref(1)
+    parameterized = _parameterize_plan_steps(steps, slots, step_counter, slot_counter)
+    return parameterized, ParameterLayout(slots)
+end
+
 function _inline_plan_steps(steps::Vector{AbstractPlanStep})
     expanded = AbstractPlanStep[]
     for step in steps
@@ -330,8 +391,13 @@ function _inline_plan_step(step::ChoicePlanStep)
 end
 
 function build_execution_plan(name::Symbol, raw_steps::Vector{AbstractPlanStep}, layout::ParameterLayout, return_expr::Any)
+    if isempty(raw_steps)
+        return ExecutionPlan(name, AbstractPlanStep[], layout)
+    end
+
     steps = _inline_plan_steps(raw_steps)
-    return ExecutionPlan(name, steps, layout)
+    parameterized_steps, parameterized_layout = _assign_parameter_layout(steps)
+    return ExecutionPlan(name, parameterized_steps, parameterized_layout)
 end
 
 function Base.show(io::IO, part::AddressLiteralPart)

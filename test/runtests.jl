@@ -141,9 +141,10 @@ using UncertainTea
     @test isrepeatedchoice(spec3.choices[2])
     @test spec3.choices[2].scopes[1].iterator == :t
     @test spec3.choices[2].scopes[1].iterable == :(2:T)
-    @test parametercount(spec3.parameter_layout) == 0
+    @test parametercount(spec3.parameter_layout) == 1
     @test length(plan3.steps) == 3
     @test plan3.steps[1] isa ChoicePlanStep
+    @test plan3.steps[1].parameter_slot == 1
     @test plan3.steps[2] isa DeterministicPlanStep
     @test plan3.steps[2].binding == :z
     @test plan3.steps[3] isa LoopPlanStep
@@ -151,14 +152,46 @@ using UncertainTea
     @test length(plan3.steps[3].body) == 2
     @test plan3.steps[3].body[1] isa ChoicePlanStep
     @test plan3.steps[3].body[2] isa DeterministicPlanStep
-    @test parameter_vector(trace3) == Float64[]
+    params3 = parameter_vector(trace3)
+    chain_overrides = parameterchoicemap(chain_model, params3)
+    @test params3 == [Float64(trace3[:z => 1 => :z])]
+    @test chain_overrides[:z => 1 => :z] == trace3[:z => 1 => :z]
     chain_constraints = choicemap(
-        (:z => 1 => :z, trace3[:z => 1 => :z]),
         (:z => 2 => :z, trace3[:z => 2 => :z]),
         (:z => 3 => :z, trace3[:z => 3 => :z]),
     )
-    @test logjoint(chain_model, Float64[], (3,), chain_constraints; rng=MersenneTwister(10)) ≈
-        assess(chain_model, (3,), chain_constraints) atol=1e-6
+    @test logjoint(chain_model, params3, (3,), chain_constraints; rng=MersenneTwister(10)) ≈
+        assess(
+            chain_model,
+            (3,),
+            choicemap(
+                (:z => 1 => :z, trace3[:z => 1 => :z]),
+                (:z => 2 => :z, trace3[:z => 2 => :z]),
+                (:z => 3 => :z, trace3[:z => 3 => :z]),
+            ),
+        ) atol=1e-6
+
+    @tea static function observed_step()
+        z = ({:state} ~ step(1.5f0))
+        {:y} ~ normal(z, 1.0f0)
+        return z
+    end
+
+    observed_trace, _ = generate(observed_step, (), choicemap((:y, 0.25f0)); rng=MersenneTwister(13))
+    observed_spec = modelspec(observed_step)
+    observed_plan = executionplan(observed_step)
+    observed_params = parameter_vector(observed_trace)
+    observed_overrides = parameterchoicemap(observed_step, observed_params)
+
+    @test parametercount(observed_spec.parameter_layout) == 1
+    @test observed_plan.steps[1] isa ChoicePlanStep
+    @test observed_plan.steps[1].parameter_slot == 1
+    @test observed_plan.steps[2] isa DeterministicPlanStep
+    @test observed_plan.steps[3] isa ChoicePlanStep
+    @test observed_params == [Float64(observed_trace[:state => :z])]
+    @test observed_overrides[:state => :z] == observed_trace[:state => :z]
+    @test logjoint(observed_step, observed_params, (), choicemap((:y, 0.25f0))) ≈
+        assess(observed_step, (), choicemap((:state => :z, observed_trace[:state => :z]), (:y, 0.25f0))) atol=1e-6
 
     @tea static function nested_loop_model(n, m)
         z ~ normal(0.0f0, 1.0f0)
@@ -244,6 +277,35 @@ using UncertainTea
     @test reconstrained ≈ positive_params
     @test logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) ≈
         assess(positive_latent, (), choicemap((:sigma, positive_trace[:sigma]), (:y, 1.5f0))) atol=1e-6
+
+    @tea static function positive_step()
+        sigma ~ lognormal(0.0f0, 0.5f0)
+        return sigma
+    end
+
+    @tea static function observed_positive_step()
+        sigma = ({:state} ~ positive_step())
+        {:y} ~ normal(sigma, 1.0f0)
+        return sigma
+    end
+
+    positive_step_trace, _ = generate(observed_positive_step, (), choicemap((:y, 1.2f0)); rng=MersenneTwister(14))
+    positive_step_spec = modelspec(observed_positive_step)
+    positive_step_params = parameter_vector(positive_step_trace)
+    positive_step_unconstrained = transform_to_unconstrained(positive_step_trace)
+    positive_step_reconstrained = transform_to_constrained(observed_positive_step, positive_step_unconstrained)
+
+    @test parametercount(positive_step_spec.parameter_layout) == 1
+    @test positive_step_spec.parameter_layout.slots[1].transform isa LogTransform
+    @test positive_step_params[1] == Float64(positive_step_trace[:state => :sigma])
+    @test positive_step_unconstrained[1] ≈ log(positive_step_params[1])
+    @test positive_step_reconstrained ≈ positive_step_params
+    @test logjoint(observed_positive_step, positive_step_params, (), choicemap((:y, 1.2f0))) ≈
+        assess(
+            observed_positive_step,
+            (),
+            choicemap((:state => :sigma, positive_step_trace[:state => :sigma]), (:y, 1.2f0)),
+        ) atol=1e-6
 
     @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
     @test_throws DimensionMismatch logjoint(iid_model, params2, (), repeated)
