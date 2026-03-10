@@ -109,6 +109,16 @@ function divergencerate(chains::HMCChains)
     return sum(count(identity, chain.divergent) for chain in chains.chains) / total_samples
 end
 
+function _diagnostic_space_samples(chain::HMCChain, space::Symbol)
+    if space === :constrained
+        return chain.constrained_samples
+    elseif space === :unconstrained
+        return chain.unconstrained_samples
+    end
+
+    throw(ArgumentError("diagnostic space must be :constrained or :unconstrained"))
+end
+
 function nchains(chains::HMCChains)
     return length(chains)
 end
@@ -116,6 +126,137 @@ end
 function numsamples(chains::HMCChains)
     isempty(chains.chains) && return 0
     return length(first(chains.chains))
+end
+
+function _validate_hmc_diagnostics(chains::HMCChains, space::Symbol)
+    length(chains) >= 2 || throw(ArgumentError("multi-chain diagnostics require at least 2 chains"))
+    num_samples = numsamples(chains)
+    num_samples >= 4 || throw(ArgumentError("multi-chain diagnostics require at least 4 samples per chain"))
+
+    first_samples = _diagnostic_space_samples(first(chains.chains), space)
+    num_params = size(first_samples, 1)
+    for chain in chains.chains
+        chain_samples = _diagnostic_space_samples(chain, space)
+        size(chain_samples, 1) == num_params ||
+            throw(DimensionMismatch("all chains must have the same parameter dimension"))
+        size(chain_samples, 2) == num_samples ||
+            throw(DimensionMismatch("all chains must have the same number of samples"))
+    end
+
+    return num_params, num_samples
+end
+
+function _sample_mean(values::AbstractVector)
+    return sum(values) / length(values)
+end
+
+function _sample_variance(values::AbstractVector, mean_value::Real=_sample_mean(values))
+    length(values) > 1 || return 0.0
+    return sum((value - mean_value)^2 for value in values) / (length(values) - 1)
+end
+
+function _split_chain_parameter_draws(chains::HMCChains, parameter_index::Int, space::Symbol)
+    _, num_samples = _validate_hmc_diagnostics(chains, space)
+    split_samples = fld(num_samples, 2)
+    even_samples = 2 * split_samples
+    split_draws = Matrix{Float64}(undef, 2 * length(chains), split_samples)
+
+    for (chain_index, chain) in enumerate(chains.chains)
+        samples = _diagnostic_space_samples(chain, space)
+        split_draws[2 * chain_index - 1, :] = samples[parameter_index, 1:split_samples]
+        split_draws[2 * chain_index, :] = samples[parameter_index, split_samples + 1:even_samples]
+    end
+
+    return split_draws
+end
+
+function _chain_draw_statistics(draws::AbstractMatrix)
+    num_chains, num_samples = size(draws)
+    chain_means = Vector{Float64}(undef, num_chains)
+    chain_variances = Vector{Float64}(undef, num_chains)
+    for chain_index in 1:num_chains
+        chain_draws = view(draws, chain_index, :)
+        chain_means[chain_index] = _sample_mean(chain_draws)
+        chain_variances[chain_index] = _sample_variance(chain_draws, chain_means[chain_index])
+    end
+
+    within_variance = _sample_mean(chain_variances)
+    between_variance = num_samples > 1 ? num_samples * _sample_variance(chain_means) : 0.0
+    var_plus = ((num_samples - 1) / num_samples) * within_variance + between_variance / num_samples
+    return chain_means, chain_variances, within_variance, between_variance, var_plus
+end
+
+function _split_rhat(draws::AbstractMatrix)
+    _, _, within_variance, _, var_plus = _chain_draw_statistics(draws)
+    if within_variance == 0
+        return var_plus == 0 ? 1.0 : Inf
+    end
+
+    return sqrt(max(var_plus / within_variance, 1.0))
+end
+
+function _autocovariance(draws::AbstractVector, lag::Int, mean_value::Real)
+    num_samples = length(draws)
+    total = 0.0
+    for index in 1:(num_samples - lag)
+        total += (draws[index] - mean_value) * (draws[index + lag] - mean_value)
+    end
+    return total / num_samples
+end
+
+function _split_ess(draws::AbstractMatrix)
+    num_chains, num_samples = size(draws)
+    chain_means, _, within_variance, _, var_plus = _chain_draw_statistics(draws)
+    total_draws = num_chains * num_samples
+
+    if within_variance == 0 && var_plus == 0
+        return Float64(total_draws)
+    elseif var_plus <= 0
+        return 0.0
+    end
+
+    pair_sums = Float64[]
+    autocovariance_means = Vector{Float64}(undef, num_chains)
+    for pair_start in 0:2:(num_samples - 1)
+        pair_sum = 0.0
+        for lag in pair_start:min(pair_start + 1, num_samples - 1)
+            for chain_index in 1:num_chains
+                autocovariance_means[chain_index] = _autocovariance(view(draws, chain_index, :), lag, chain_means[chain_index])
+            end
+            mean_autocovariance = _sample_mean(autocovariance_means)
+            rho_hat = lag == 0 ? 1.0 : 1 - (within_variance - mean_autocovariance) / var_plus
+            pair_sum += min(rho_hat, 1.0)
+        end
+
+        pair_sum > 0 || break
+        push!(pair_sums, pair_sum)
+    end
+
+    for index in 2:length(pair_sums)
+        pair_sums[index] = min(pair_sums[index], pair_sums[index - 1])
+    end
+
+    tau_hat = -1 + 2 * sum(pair_sums)
+    tau_hat = max(tau_hat, 1.0)
+    return min(Float64(total_draws), Float64(total_draws) / tau_hat)
+end
+
+function rhat(chains::HMCChains; space::Symbol=:constrained)
+    num_params, _ = _validate_hmc_diagnostics(chains, space)
+    values = Vector{Float64}(undef, num_params)
+    for parameter_index in 1:num_params
+        values[parameter_index] = _split_rhat(_split_chain_parameter_draws(chains, parameter_index, space))
+    end
+    return values
+end
+
+function ess(chains::HMCChains; space::Symbol=:constrained)
+    num_params, _ = _validate_hmc_diagnostics(chains, space)
+    values = Vector{Float64}(undef, num_params)
+    for parameter_index in 1:num_params
+        values[parameter_index] = _split_ess(_split_chain_parameter_draws(chains, parameter_index, space))
+    end
+    return values
 end
 
 function _validate_hmc_arguments(

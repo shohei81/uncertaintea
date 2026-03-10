@@ -20,7 +20,7 @@ export executionplan
 export choicemap, generate, assess, logjoint, logjoint_unconstrained, logjoint_gradient_unconstrained
 export initialparameters, parameter_vector, parameterchoicemap
 export transform_to_constrained, transform_to_unconstrained, transform_to_constrained_with_logabsdet
-export HMCChain, HMCChains, hmc, hmc_chains, acceptancerate, divergencerate, nchains, numsamples
+export HMCChain, HMCChains, hmc, hmc_chains, acceptancerate, divergencerate, nchains, numsamples, rhat, ess
 export normal, lognormal, bernoulli
 
 include("ir.jl")

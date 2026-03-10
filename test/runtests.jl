@@ -401,22 +401,22 @@ using UncertainTea
         (),
         constraints;
         num_chains=3,
-        num_samples=40,
-        num_warmup=20,
+        num_samples=60,
+        num_warmup=30,
         step_size=0.2,
         num_leapfrog_steps=6,
-        rng=MersenneTwister(40),
+        rng=MersenneTwister(45),
     )
     gaussian_multichain_replay = hmc_chains(
         gaussian_mean,
         (),
         constraints;
         num_chains=3,
-        num_samples=40,
-        num_warmup=20,
+        num_samples=60,
+        num_warmup=30,
         step_size=0.2,
         num_leapfrog_steps=6,
-        rng=MersenneTwister(40),
+        rng=MersenneTwister(45),
     )
     positive_multichain = hmc_chains(
         observed_positive_step,
@@ -438,6 +438,12 @@ using UncertainTea
         ),
         rng=MersenneTwister(41),
     )
+    gaussian_rhat = rhat(gaussian_multichain)
+    gaussian_rhat_unconstrained = rhat(gaussian_multichain; space=:unconstrained)
+    gaussian_ess = ess(gaussian_multichain)
+    gaussian_ess_unconstrained = ess(gaussian_multichain; space=:unconstrained)
+    positive_rhat = rhat(positive_multichain)
+    positive_ess = ess(positive_multichain)
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -466,10 +472,17 @@ using UncertainTea
     @test gaussian_windowed_mass_chain.step_size == 0.2
     @test gaussian_windowed_mass_chain.mass_matrix[1] != 1.0
     @test nchains(gaussian_multichain) == 3
-    @test numsamples(gaussian_multichain) == 40
+    @test numsamples(gaussian_multichain) == 60
     @test gaussian_multichain[1] isa HMCChain
     @test 0.0 <= acceptancerate(gaussian_multichain) <= 1.0
     @test 0.0 <= divergencerate(gaussian_multichain) <= 1.0
+    @test length(gaussian_rhat) == 1
+    @test length(gaussian_ess) == 1
+    @test isfinite(gaussian_rhat[1])
+    @test 1.0 <= gaussian_rhat[1] < 1.1
+    @test gaussian_rhat ≈ gaussian_rhat_unconstrained atol=1e-8
+    @test 1.0 <= gaussian_ess[1] <= nchains(gaussian_multichain) * numsamples(gaussian_multichain)
+    @test gaussian_ess ≈ gaussian_ess_unconstrained atol=1e-8
     @test gaussian_multichain[1].unconstrained_samples[:, 1] ==
         gaussian_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
@@ -506,6 +519,11 @@ using UncertainTea
     @test positive_chain.step_size > 0
     @test positive_chain.mass_matrix[1] > 0
     @test nchains(positive_multichain) == 3
+    @test length(positive_rhat) == 1
+    @test length(positive_ess) == 1
+    @test isfinite(positive_rhat[1])
+    @test positive_rhat[1] >= 1.0
+    @test 1.0 <= positive_ess[1] <= nchains(positive_multichain) * numsamples(positive_multichain)
     @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_multichain)
     @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
         positive_chain.constrained_samples[1, 1]
@@ -520,6 +538,8 @@ using UncertainTea
     @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
     @test_throws ArgumentError hmc(gaussian_mean, (), constraints; num_samples=10, divergence_threshold=0.0)
     @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
+    @test_throws ArgumentError rhat(HMCChains(gaussian_mean, (), constraints, [gaussian_baseline_chain]))
+    @test_throws ArgumentError ess(gaussian_multichain; space=:energy)
     @test_throws DimensionMismatch hmc_chains(
         gaussian_mean,
         (),
