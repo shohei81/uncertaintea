@@ -108,6 +108,9 @@ Current backend-lowering subset:
 - backend index expressions and dynamic address parts now use reusable integer
   scratch buffers, so batched address evaluation no longer reinterprets each
   index expression independently for every column
+- synchronized backend loops now derive their reference iterable from
+  batch-wide evaluated range endpoints instead of building one iterable per
+  batch element before comparison
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

@@ -115,6 +115,8 @@ The next lowering layer is now explicit:
   reusable scratch buffers instead of recursing separately for each column
 - backend index expressions and dynamic address parts now use reusable integer
   scratch buffers on the batched path, reducing per-column address evaluation
+- synchronized loop iterables now compare batch-wide evaluated range endpoints
+  instead of materializing one iterable object per column before checking
 
 ## Phase 2 Execution Strategy
 

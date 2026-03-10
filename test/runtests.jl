@@ -358,6 +358,7 @@ using UncertainTea
         gaussian_batch_params_shifted,
     )
     gaussian_workspace = UncertainTea.BatchedLogjointWorkspace(gaussian_mean)
+    iid_shared_workspace = UncertainTea.BatchedLogjointWorkspace(iid_model)
     iid_batch_params = reshape(Float64[-0.2, 0.4], 1, 2)
     iid_batch_args = [(2,), (3,)]
     iid_batch_constraints = [
@@ -566,6 +567,27 @@ using UncertainTea
     @test iid_shared_batch_logjoint ≈ [
         logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
+    iid_shared_workspace_values = UncertainTea._logjoint_with_batched_backend!(
+        iid_shared_workspace,
+        iid_shared_batch_params,
+        (3,),
+        iid_shared_batch_constraints,
+    )
+    iid_shared_workspace_env = iid_shared_workspace.batched_environment[]
+    iid_shared_iterable_scratch = iid_shared_workspace_env.index_scratch[1]
+    @test iid_shared_workspace_values ≈ iid_shared_batch_logjoint atol=1e-8
+    @test !isempty(iid_shared_workspace_env.index_scratch)
+    @test UncertainTea._logjoint_with_batched_backend!(
+        iid_shared_workspace,
+        iid_shared_batch_params .+ 0.1,
+        (3,),
+        iid_shared_batch_constraints,
+    ) ≈ [
+        logjoint(iid_model, (iid_shared_batch_params .+ 0.1)[:, index], (3,), iid_shared_batch_constraints[index]) for
+        index in 1:2
+    ] atol=1e-8
+    @test iid_shared_workspace.batched_environment[] === iid_shared_workspace_env
+    @test iid_shared_workspace_env.index_scratch[1] === iid_shared_iterable_scratch
     @test shifted_batch_logjoint ≈ [
         logjoint(shifted_iid_model, shifted_batch_params[:, index], (3,), shifted_batch_constraints[index]) for index in 1:2
     ] atol=1e-8

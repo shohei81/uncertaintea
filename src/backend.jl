@@ -1255,6 +1255,50 @@ function _eval_backend_index_iterable_expr(env::BatchedPlanEnvironment, expr::Ba
     return value
 end
 
+function _batched_index_iterable_reference(
+    env::BatchedPlanEnvironment,
+    expr::BackendPrimitiveExpr,
+    depth::Int=1,
+)
+    expr.op === Symbol(":") || _backend_index_error(env, "batched backend loop iterable must lower to `:`")
+    reserved_depth = depth + length(expr.arguments)
+    argument_buffers = ntuple(length(expr.arguments)) do argument_index
+        buffer = _batched_index_scratch!(env, depth + argument_index - 1)
+        _eval_backend_index_value_expr!(buffer, env, expr.arguments[argument_index], reserved_depth)
+        buffer
+    end
+
+    reference_arguments = ntuple(length(argument_buffers)) do argument_index
+        values = argument_buffers[argument_index]
+        reference_value = values[1]
+        for batch_index in 2:env.batch_size
+            values[batch_index] == reference_value || throw(
+                BatchedBackendFallback(
+                    "batched backend evaluation requires synchronized loop iterables across the batch",
+                ),
+            )
+        end
+        reference_value
+    end
+    return getfield(Base, Symbol(":"))(reference_arguments...)
+end
+
+function _batched_index_iterable_reference(
+    env::BatchedPlanEnvironment,
+    expr::BackendBlockExpr,
+    depth::Int=1,
+)
+    value = nothing
+    for arg in expr.arguments
+        value = if arg isa BackendPrimitiveExpr
+            _batched_index_iterable_reference(env, arg, depth)
+        else
+            _backend_index_error(env, "batched backend loop iterable block must end in `:`")
+        end
+    end
+    return value
+end
+
 _concrete_backend_address_parts(env::PlanEnvironment, ::Tuple{}) = ()
 
 function _concrete_backend_address_parts(env::PlanEnvironment, parts::Tuple)
@@ -1729,19 +1773,7 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
-    iterables = Vector{Any}(undef, env.batch_size)
-    for batch_index in 1:env.batch_size
-        iterables[batch_index] = _eval_backend_index_iterable_expr(env, step.iterable, batch_index)
-    end
-
-    reference_iterable = first(iterables)
-    for batch_index in 2:env.batch_size
-        iterables[batch_index] == reference_iterable || throw(
-            BatchedBackendFallback(
-                "batched backend evaluation requires synchronized loop iterables across the batch",
-            ),
-        )
-    end
+    reference_iterable = _batched_index_iterable_reference(env, step.iterable)
 
     had_previous = env.assigned[step.iterator_slot]
     previous_value = if had_previous
