@@ -94,7 +94,7 @@ function _score_distribution_instance!(
 
     dist = _distribution_from_spec(model, env, step.rhs)
     isnothing(step.binding) || (env[step.binding] = value)
-    return Float64(logpdf(dist, value))
+    return logpdf(dist, value)
 end
 
 function _score_plan_step!(
@@ -186,4 +186,13 @@ function logjoint_unconstrained(
 )
     constrained, logabsdet = transform_to_constrained_with_logabsdet(model, params)
     return logjoint(model, constrained, args, constraints; rng=rng) + logabsdet
+end
+
+function logjoint_gradient_unconstrained(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple=(),
+    constraints::ChoiceMap=choicemap(),
+)
+    return ForwardDiff.gradient(theta -> logjoint_unconstrained(model, theta, args, constraints), collect(params))
 end

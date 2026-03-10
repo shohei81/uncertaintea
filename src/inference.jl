@@ -9,7 +9,6 @@ struct HMCChain
     step_size::Float64
     mass_matrix::Vector{Float64}
     num_leapfrog_steps::Int
-    gradient_eps::Float64
     target_accept::Float64
 end
 
@@ -59,7 +58,6 @@ function _validate_hmc_arguments(
     num_warmup::Int,
     step_size::Real,
     num_leapfrog_steps::Int,
-    gradient_eps::Real,
     target_accept::Real,
     mass_matrix_regularization::Real,
     mass_matrix_min_samples::Int,
@@ -69,7 +67,6 @@ function _validate_hmc_arguments(
     num_warmup >= 0 || throw(ArgumentError("HMC requires num_warmup >= 0"))
     step_size > 0 || throw(ArgumentError("HMC requires step_size > 0"))
     num_leapfrog_steps > 0 || throw(ArgumentError("HMC requires num_leapfrog_steps > 0"))
-    gradient_eps > 0 || throw(ArgumentError("HMC requires gradient_eps > 0"))
     0 < target_accept < 1 || throw(ArgumentError("HMC requires 0 < target_accept < 1"))
     mass_matrix_regularization > 0 || throw(ArgumentError("HMC requires mass_matrix_regularization > 0"))
     mass_matrix_min_samples > 0 || throw(ArgumentError("HMC requires mass_matrix_min_samples > 0"))
@@ -93,27 +90,6 @@ function _initial_hmc_position(
     return Float64[value for value in initial_params]
 end
 
-function _finite_difference_gradient(
-    model::TeaModel,
-    position::AbstractVector,
-    args::Tuple,
-    constraints::ChoiceMap,
-    gradient_eps::Float64,
-)
-    gradient = Vector{Float64}(undef, length(position))
-    for idx in eachindex(position)
-        delta = gradient_eps * max(1.0, abs(position[idx]))
-        forward = copy(position)
-        backward = copy(position)
-        forward[idx] += delta
-        backward[idx] -= delta
-        f_plus = logjoint_unconstrained(model, forward, args, constraints)
-        f_minus = logjoint_unconstrained(model, backward, args, constraints)
-        gradient[idx] = (f_plus - f_minus) / (2 * delta)
-    end
-    return gradient
-end
-
 function _sample_momentum(rng::AbstractRNG, inverse_mass_matrix::AbstractVector)
     return randn(rng, length(inverse_mass_matrix)) ./ sqrt.(inverse_mass_matrix)
 end
@@ -127,18 +103,17 @@ function _leapfrog(
     constraints::ChoiceMap,
     step_size::Float64,
     num_leapfrog_steps::Int,
-    gradient_eps::Float64,
 )
     q = copy(position)
     p = copy(momentum)
 
-    gradient = _finite_difference_gradient(model, q, args, constraints, gradient_eps)
+    gradient = logjoint_gradient_unconstrained(model, q, args, constraints)
     all(isfinite, gradient) || return nothing
     p .+= (step_size / 2) .* gradient
 
     for leapfrog_step in 1:num_leapfrog_steps
         q .+= step_size .* (inverse_mass_matrix .* p)
-        gradient = _finite_difference_gradient(model, q, args, constraints, gradient_eps)
+        gradient = logjoint_gradient_unconstrained(model, q, args, constraints)
         all(isfinite, gradient) || return nothing
 
         if leapfrog_step < num_leapfrog_steps
@@ -233,7 +208,6 @@ function hmc(
     step_size::Real=0.1,
     num_leapfrog_steps::Int=10,
     initial_params=nothing,
-    gradient_eps::Real=1e-4,
     target_accept::Real=0.8,
     adapt_step_size::Bool=true,
     adapt_mass_matrix::Bool=true,
@@ -248,7 +222,6 @@ function hmc(
         num_warmup,
         step_size,
         num_leapfrog_steps,
-        gradient_eps,
         target_accept,
         mass_matrix_regularization,
         mass_matrix_min_samples,
@@ -265,7 +238,6 @@ function hmc(
     accepted = falses(num_samples)
     total_iterations = num_warmup + num_samples
     hmc_step_size = Float64(step_size)
-    hmc_gradient_eps = Float64(gradient_eps)
     hmc_target_accept = Float64(target_accept)
     inverse_mass_matrix = ones(num_params)
     dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
@@ -283,7 +255,6 @@ function hmc(
             constraints,
             hmc_step_size,
             num_leapfrog_steps,
-            hmc_gradient_eps,
         )
 
         accepted_step = false
@@ -342,7 +313,6 @@ function hmc(
         hmc_step_size,
         1 ./ inverse_mass_matrix,
         num_leapfrog_steps,
-        hmc_gradient_eps,
         hmc_target_accept,
     )
 end

@@ -51,6 +51,8 @@ using UncertainTea
     @test overrides[:mu] == trace[:mu]
     @test logjoint(gaussian_mean, params, (), constraints; rng=MersenneTwister(7)) ≈ expected_joint atol=1e-6
     @test logjoint_unconstrained(gaussian_mean, params, (), constraints; rng=MersenneTwister(15)) ≈ expected_joint atol=1e-6
+    @test logjoint_gradient_unconstrained(gaussian_mean, params, (), constraints)[1] ≈
+        (0.3f0 - 2 * trace[:mu]) atol=1e-5
     @test logjoint(gaussian_mean, params, (), constraints) ≈
         assess(gaussian_mean, (), choicemap((:mu, trace[:mu]), (:y, 0.3f0))) atol=1e-6
 

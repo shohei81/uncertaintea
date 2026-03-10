@@ -7,12 +7,12 @@ function _static_address(address::AddressSpec)
     return Tuple(parts)
 end
 
-to_constrained(::IdentityTransform, value) = Float64(value)
-to_unconstrained(::IdentityTransform, value) = Float64(value)
-to_constrained(::LogTransform, value) = exp(Float64(value))
-to_unconstrained(::LogTransform, value) = log(Float64(value))
-logabsdetjac(::IdentityTransform, value) = 0.0
-logabsdetjac(::LogTransform, value) = Float64(value)
+to_constrained(::IdentityTransform, value) = value
+to_unconstrained(::IdentityTransform, value) = value
+to_constrained(::LogTransform, value) = exp(value)
+to_unconstrained(::LogTransform, value) = log(value)
+logabsdetjac(::IdentityTransform, value) = zero(value)
+logabsdetjac(::LogTransform, value) = value
 
 function parameterchoicemap(model::TeaModel, params::AbstractVector)
     layout = parameterlayout(model)
@@ -40,7 +40,7 @@ function transform_to_constrained(model::TeaModel, params::AbstractVector)
     expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
-    constrained = Vector{Float64}(undef, expected)
+    constrained = similar(params, expected)
     for slot in layout.slots
         constrained[slot.index] = to_constrained(slot.transform, params[slot.index])
     end
@@ -52,8 +52,8 @@ function transform_to_constrained_with_logabsdet(model::TeaModel, params::Abstra
     expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
-    constrained = Vector{Float64}(undef, expected)
-    logabsdet = 0.0
+    constrained = similar(params, expected)
+    logabsdet = expected == 0 ? 0.0 : zero(params[firstindex(params)])
     for slot in layout.slots
         unconstrained_value = params[slot.index]
         constrained[slot.index] = to_constrained(slot.transform, unconstrained_value)
@@ -67,7 +67,7 @@ function transform_to_unconstrained(model::TeaModel, params::AbstractVector)
     expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
-    unconstrained = Vector{Float64}(undef, expected)
+    unconstrained = similar(params, expected)
     for slot in layout.slots
         unconstrained[slot.index] = to_unconstrained(slot.transform, params[slot.index])
     end

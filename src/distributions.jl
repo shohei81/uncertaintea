@@ -1,50 +1,49 @@
 abstract type AbstractTeaDistribution end
 
-struct NormalDist{T<:AbstractFloat} <: AbstractTeaDistribution
+struct NormalDist{T<:Real} <: AbstractTeaDistribution
     mu::T
     sigma::T
 
-    function NormalDist(mu::T, sigma::T) where {T<:AbstractFloat}
+    function NormalDist(mu::T, sigma::T) where {T<:Real}
         sigma > zero(T) || throw(ArgumentError("normal requires sigma > 0"))
         new{T}(mu, sigma)
     end
 end
 
-struct BernoulliDist{T<:AbstractFloat} <: AbstractTeaDistribution
+struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     p::T
 
-    function BernoulliDist(p::T) where {T<:AbstractFloat}
+    function BernoulliDist(p::T) where {T<:Real}
         zero(T) <= p <= one(T) || throw(ArgumentError("bernoulli requires 0 <= p <= 1"))
         new{T}(p)
     end
 end
 
-struct LogNormalDist{T<:AbstractFloat} <: AbstractTeaDistribution
+struct LogNormalDist{T<:Real} <: AbstractTeaDistribution
     mu::T
     sigma::T
 
-    function LogNormalDist(mu::T, sigma::T) where {T<:AbstractFloat}
+    function LogNormalDist(mu::T, sigma::T) where {T<:Real}
         sigma > zero(T) || throw(ArgumentError("lognormal requires sigma > 0"))
         new{T}(mu, sigma)
     end
 end
 
 function normal(mu, sigma)
-    T = float(promote_type(typeof(mu), typeof(sigma)))
-    return NormalDist(convert(T, mu), convert(T, sigma))
+    promoted_mu, promoted_sigma = promote(mu, sigma)
+    return NormalDist(promoted_mu, promoted_sigma)
 end
 
 function lognormal(mu, sigma)
-    T = float(promote_type(typeof(mu), typeof(sigma)))
-    return LogNormalDist(convert(T, mu), convert(T, sigma))
+    promoted_mu, promoted_sigma = promote(mu, sigma)
+    return LogNormalDist(promoted_mu, promoted_sigma)
 end
 
 function bernoulli(p)
-    T = float(typeof(p))
-    return BernoulliDist(convert(T, p))
+    return BernoulliDist(p)
 end
 
-function Random.rand(rng::AbstractRNG, dist::NormalDist{T}) where {T}
+function Random.rand(rng::AbstractRNG, dist::NormalDist{T}) where {T<:AbstractFloat}
     return dist.mu + dist.sigma * randn(rng, T)
 end
 
@@ -52,17 +51,14 @@ function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
     return rand(rng) < dist.p
 end
 
-function Random.rand(rng::AbstractRNG, dist::LogNormalDist{T}) where {T}
+function Random.rand(rng::AbstractRNG, dist::LogNormalDist{T}) where {T<:AbstractFloat}
     return exp(dist.mu + dist.sigma * randn(rng, T))
 end
 
 function logpdf(dist::NormalDist, x)
-    T = float(promote_type(typeof(x), typeof(dist.mu), typeof(dist.sigma)))
-    xx = convert(T, x)
-    mu = convert(T, dist.mu)
-    sigma = convert(T, dist.sigma)
+    xx, mu, sigma = promote(x, dist.mu, dist.sigma)
     z = (xx - mu) / sigma
-    return -log(sigma) - T(log(2 * pi)) / 2 - z * z / 2
+    return -log(sigma) - log(2 * pi) / 2 - z * z / 2
 end
 
 function logpdf(dist::BernoulliDist, x)
@@ -71,8 +67,7 @@ function logpdf(dist::BernoulliDist, x)
 end
 
 function logpdf(dist::LogNormalDist, x)
-    T = float(promote_type(typeof(x), typeof(dist.mu), typeof(dist.sigma)))
-    xx = convert(T, x)
-    xx > zero(T) || return T(-Inf)
-    return logpdf(normal(dist.mu, dist.sigma), log(xx)) - log(xx)
+    xx, mu, sigma = promote(x, dist.mu, dist.sigma)
+    xx > zero(xx) || return oftype(xx, -Inf)
+    return logpdf(normal(mu, sigma), log(xx)) - log(xx)
 end
