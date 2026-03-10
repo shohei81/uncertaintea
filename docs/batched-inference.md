@@ -79,6 +79,13 @@ The current implementation already moves part of this work into a compiled
 batched evaluator and a reusable gradient cache, but it is still a CPU
 reference path rather than a GPU kernel design.
 
+The next lowering layer is now explicit:
+
+- `backend_execution_plan(model)` produces a symbolic primitive-only plan for
+  the GPU-friendly subset
+- `backend_report(model)` reports whether a model stays inside that subset
+- unsupported models keep working through the compiled CPU fallback path
+
 ## Phase 2 Execution Strategy
 
 After the public API lands, the next step is a compiled batched evaluator.
@@ -89,6 +96,7 @@ Requirements:
 - one compiled execution plan reused across the whole batch
 - batched environments represented with dense arrays
 - deterministic assignments and distribution arguments lowered once
+- a symbolic backend plan that avoids arbitrary Julia callables on the hot path
 
 The target abstraction is not "run the single evaluator in a loop on GPU".
 The target abstraction is "evaluate one static execution plan over batched

@@ -73,6 +73,15 @@ GPU backend:
 - use high-level array operations first
 - use `KernelAbstractions.jl` or backend-specific kernels only for hotspots
 - make chain, particle, and minibatch dimensions first-class
+- lower the static execution plan into a symbolic primitive-only backend plan
+
+Current backend-lowering subset:
+
+- distribution families: `normal`, `lognormal`, `bernoulli`
+- primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
+  `log1p`, `sqrt`, `abs`, `min`, `max`
+- unsupported expressions fall back to the compiled CPU evaluator on the
+  batched path
 
 ### 4. Inference
 

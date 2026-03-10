@@ -261,6 +261,13 @@ using UncertainTea
     @test logjoint(inline_scale, inline_params, (), choicemap((:y, 0.2f0))) ≈
         assess(inline_scale, (), choicemap((:log_sigma, inline_trace[:log_sigma]), (:y, 0.2f0))) atol=1e-6
 
+    @tea static function unsupported_backend_model()
+        mu ~ normal(0.0f0, 1.0f0)
+        sigma = sin(mu)
+        {:y} ~ normal(mu, 1.0f0)
+        return sigma
+    end
+
     @tea static function positive_latent()
         sigma ~ lognormal(0.0f0, 0.5f0)
         {:y} ~ normal(sigma, 1.0f0)
@@ -346,6 +353,22 @@ using UncertainTea
         (),
         positive_batch_constraints,
     )
+    unsupported_backend_params = reshape(Float64[-0.3, 0.2], 1, 2)
+    unsupported_backend_constraints = [
+        choicemap((:y, -0.1f0)),
+        choicemap((:y, 0.4f0)),
+    ]
+    unsupported_backend_logjoint = batched_logjoint(
+        unsupported_backend_model,
+        unsupported_backend_params,
+        (),
+        unsupported_backend_constraints,
+    )
+    gaussian_backend_report = backend_report(gaussian_mean)
+    gaussian_backend_plan = backend_execution_plan(gaussian_mean)
+    deterministic_backend_report = backend_report(deterministic_scale)
+    deterministic_backend_plan = backend_execution_plan(deterministic_scale)
+    unsupported_backend_report = backend_report(unsupported_backend_model)
     short_warmup_schedule = UncertainTea._warmup_schedule(12)
     long_warmup_schedule = UncertainTea._warmup_schedule(150)
 
@@ -391,6 +414,25 @@ using UncertainTea
             positive_batch_constraints[index],
         ) for index in 1:3
     ]...) atol=1e-8
+    @test gaussian_backend_report.supported
+    @test gaussian_backend_report.target == :gpu
+    @test isempty(gaussian_backend_report.issues)
+    @test gaussian_backend_plan.target == :gpu
+    @test length(gaussian_backend_plan.steps) == 2
+    @test gaussian_backend_plan.steps[1] isa UncertainTea.BackendChoicePlanStep
+    @test deterministic_backend_report.supported
+    @test length(deterministic_backend_plan.steps) == 4
+    @test deterministic_backend_plan.steps[3] isa UncertainTea.BackendDeterministicPlanStep
+    @test !unsupported_backend_report.supported
+    @test any(occursin("sin", issue) for issue in unsupported_backend_report.issues)
+    @test unsupported_backend_logjoint ≈ [
+        logjoint(
+            unsupported_backend_model,
+            unsupported_backend_params[:, index],
+            (),
+            unsupported_backend_constraints[index],
+        ) for index in 1:2
+    ] atol=1e-8
     @test short_warmup_schedule.initial_buffer == 5
     @test short_warmup_schedule.slow_window_ends == [12]
     @test short_warmup_schedule.terminal_buffer == 0
@@ -717,6 +759,7 @@ using UncertainTea
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints[1:2])
     @test_throws ArgumentError batched_logjoint(gaussian_mean, gaussian_batch_params, [1, 2, 3], gaussian_batch_constraints)
     @test_throws DimensionMismatch batched_logjoint_gradient_unconstrained(gaussian_batch_gradient_cache, zeros(1, 2))
+    @test_throws ArgumentError backend_execution_plan(unsupported_backend_model)
     @test_throws DimensionMismatch batched_hmc(
         gaussian_mean,
         (),

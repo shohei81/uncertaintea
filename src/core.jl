@@ -12,10 +12,11 @@ struct TeaModel{M<:TeaMode,F,S}
     impl::F
     spec::S
     evaluator_cache::Base.RefValue{Any}
+    backend_cache::Base.RefValue{Any}
 end
 
 function TeaModel(mode::M, name::Symbol, impl::F, spec::S) where {M<:TeaMode,F,S}
-    return TeaModel{M,F,S}(mode, name, impl, spec, Ref{Any}(nothing))
+    return TeaModel{M,F,S}(mode, name, impl, spec, Ref{Any}(nothing), Ref{Any}(nothing))
 end
 
 struct TeaCall{M<:TeaModel,A<:Tuple}

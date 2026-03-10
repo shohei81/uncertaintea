@@ -1,5 +1,6 @@
-mutable struct BatchedLogjointWorkspace{P,E,B}
-    compiled_plan::P
+mutable struct BatchedLogjointWorkspace{BP,CP,E,B}
+    backend_plan::BP
+    compiled_plan::CP
     environment::E
     parameter_count::Int
     argument_count::Int
@@ -25,6 +26,7 @@ end
 function BatchedLogjointWorkspace(model::TeaModel)
     plan = executionplan(model)
     return BatchedLogjointWorkspace(
+        _backend_execution_plan(model),
         _compiled_execution_plan(model),
         PlanEnvironment(plan.environment_layout),
         parametercount(plan.parameter_layout),
@@ -105,6 +107,9 @@ function _logjoint_with_workspace!(
     length(params) == workspace.parameter_count ||
         throw(DimensionMismatch("expected $(workspace.parameter_count) parameters, got $(length(params))"))
     env = _prepare_environment!(workspace, args)
+    if !isnothing(workspace.backend_plan)
+        return _score_backend_steps(workspace.backend_plan.steps, env, params, constraints)
+    end
     return _score_compiled_steps(workspace.compiled_plan.steps, env, params, constraints)
 end
 

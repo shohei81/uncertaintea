@@ -18,6 +18,7 @@ export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepea
 export parameterlayout, parametercount
 export executionplan
 export choicemap, generate, assess, logjoint, logjoint_unconstrained, logjoint_gradient_unconstrained
+export BackendExecutionPlan, BackendLoweringReport, backend_report, backend_execution_plan
 export batched_logjoint, batched_logjoint_unconstrained, batched_logjoint_gradient_unconstrained
 export BatchedLogjointGradientCache, batched_logjoint_gradient_unconstrained!
 export initialparameters, parameter_vector, parameterchoicemap
@@ -33,6 +34,7 @@ include("distributions.jl")
 include("runtime.jl")
 include("parameters.jl")
 include("evaluator.jl")
+include("backend.jl")
 include("batched.jl")
 include("inference.jl")
 include("frontend.jl")
