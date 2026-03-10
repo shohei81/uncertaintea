@@ -2,6 +2,15 @@ const Address = Tuple{Vararg{Any}}
 
 mutable struct ChoiceMap
     entries::Vector{Pair{Address,Any}}
+    index_by_address::Dict{Address,Int}
+end
+
+function ChoiceMap(entries::Vector{Pair{Address,Any}})
+    index_by_address = Dict{Address,Int}()
+    for (index, entry) in enumerate(entries)
+        index_by_address[first(entry)] = index
+    end
+    return ChoiceMap(entries, index_by_address)
 end
 
 ChoiceMap() = ChoiceMap(Pair{Address,Any}[])
@@ -56,16 +65,13 @@ function _pushchoice!(cm::ChoiceMap, address, value)
         return cm
     end
     push!(cm.entries, normalized => value)
+    cm.index_by_address[normalized] = length(cm.entries)
     return cm
 end
 
 function _choice_index_normalized(cm::ChoiceMap, normalized::Address)
-    for idx in eachindex(cm.entries)
-        if first(cm.entries[idx]) == normalized
-            return idx
-        end
-    end
-    return nothing
+    index = get(cm.index_by_address, normalized, 0)
+    return index == 0 ? nothing : index
 end
 
 function _choice_get_normalized(cm::ChoiceMap, normalized::Address)

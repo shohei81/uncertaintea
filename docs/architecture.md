@@ -90,6 +90,8 @@ Current backend-lowering subset:
   rather than a symbol-dispatched generic choice node
 - compiled and backend evaluators now build concrete addresses through tuple
   recursion and use normalized direct `ChoiceMap` lookup on the hot path
+- `ChoiceMap` now maintains an address index so normalized lookup no longer
+  scans linearly through stored entries
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

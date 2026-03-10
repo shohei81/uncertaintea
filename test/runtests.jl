@@ -60,6 +60,9 @@ using UncertainTea
     @test nested_choices[:state => 1 => :z] == 2.5f0
     @test nested_choices[(:state, 1, :z)] == 2.5f0
     @test haskey(nested_choices, (:state, 1, :z))
+    duplicate_choices = choicemap((:y, 0.1f0), (:y, 0.2f0))
+    @test length(duplicate_choices) == 1
+    @test duplicate_choices[:y] == 0.2f0
 
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)

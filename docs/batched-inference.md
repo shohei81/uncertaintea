@@ -100,6 +100,8 @@ The next lowering layer is now explicit:
   scoring no longer branches on a distribution family symbol
 - normalized address lookup now uses a direct `ChoiceMap` helper, and concrete
   addresses are assembled with tuple recursion instead of `Any[]` accumulation
+- `ChoiceMap` itself now keeps an address index, so normalized lookup is no
+  longer linear in the number of stored constraints
 
 ## Phase 2 Execution Strategy
 
