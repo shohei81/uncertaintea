@@ -29,6 +29,8 @@ using UncertainTea
     @test spec.choices[1].rhs isa DistributionSpec
     @test spec.choices[1].rhs.family == :normal
     @test spec.choices[2].rhs isa DistributionSpec
+    @test !isrepeatedchoice(spec.choices[1])
+    @test !hasrepeatedchoices(spec)
 
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
@@ -51,6 +53,13 @@ using UncertainTea
     @test spec2.shape_specialized
     @test isaddresstemplate(spec2.choices[2].address)
     @test spec2.choices[2].rhs isa DistributionSpec
+    @test hasrepeatedchoices(spec2)
+    @test !isrepeatedchoice(spec2.choices[1])
+    @test isrepeatedchoice(spec2.choices[2])
+    @test length(spec2.choices[2].scopes) == 1
+    @test spec2.choices[2].scopes[1].iterator == :i
+    @test spec2.choices[2].scopes[1].iterable == :(1:n)
+    @test spec2.choices[2].scopes[1].shape_specialized
 
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
@@ -76,4 +85,26 @@ using UncertainTea
     @test spec3.choices[1].rhs isa GenerativeCallSpec
     @test spec3.choices[1].rhs.callee == :step
     @test spec3.choices[2].rhs isa GenerativeCallSpec
+    @test !isrepeatedchoice(spec3.choices[1])
+    @test isrepeatedchoice(spec3.choices[2])
+    @test spec3.choices[2].scopes[1].iterator == :t
+    @test spec3.choices[2].scopes[1].iterable == :(2:T)
+
+    @tea static function nested_loop_model(n, m)
+        z ~ normal(0.0f0, 1.0f0)
+        for i in 1:n
+            for j in 1:m
+                {:grid => i => j} ~ bernoulli(0.5f0)
+            end
+        end
+        return z
+    end
+
+    spec4 = modelspec(nested_loop_model)
+
+    @test length(spec4.choices) == 2
+    @test isrepeatedchoice(spec4.choices[2])
+    @test length(spec4.choices[2].scopes) == 2
+    @test spec4.choices[2].scopes[1].iterator == :i
+    @test spec4.choices[2].scopes[2].iterator == :j
 end

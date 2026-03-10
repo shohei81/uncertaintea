@@ -88,6 +88,10 @@ function _address_spec_expr(lhs)
 end
 
 function _choice_spec_expr(expr)
+    return _choice_spec_expr(expr, ())
+end
+
+function _choice_spec_expr(expr, loop_scopes)
     expr isa Expr && expr.head == :call && expr.args[1] === :~ ||
         throw(ArgumentError("expected a choice expression, got $expr"))
 
@@ -96,7 +100,8 @@ function _choice_spec_expr(expr)
     binding = lhs isa Symbol ? QuoteNode(lhs) : :(nothing)
     address = _address_spec_expr(lhs)
     rhs_spec = _rhs_spec_expr(rhs)
-    return :($(_qualify(:ChoiceSpec))($binding, $address, $rhs_spec))
+    scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, loop_scopes)...)
+    return :($(_qualify(:ChoiceSpec))($binding, $address, $rhs_spec, $scopes_expr))
 end
 
 function _rhs_spec_expr(rhs)
@@ -112,6 +117,15 @@ function _rhs_spec_expr(rhs)
     end
 
     return :($(_qualify(:RawChoiceRhsSpec))($(QuoteNode(rhs))))
+end
+
+function _loop_scope_spec_expr(scope)
+    iterator, iterable = scope
+    return :($(_qualify(:LoopScopeSpec))(
+        $(QuoteNode(iterator)),
+        $(QuoteNode(iterable)),
+        $(_expr_has_dynamic_content(iterable)),
+    ))
 end
 
 function _address_has_dynamic_parts(lhs)
@@ -138,18 +152,64 @@ function _address_expr_has_dynamic_parts(expr)
     return true
 end
 
-function _collect_choice_spec_exprs!(expr, specs::Vector{Expr})
+function _expr_has_dynamic_content(expr)
+    if expr isa QuoteNode
+        return false
+    elseif expr isa Symbol
+        return true
+    elseif expr isa Number || expr isa String || expr isa Char
+        return false
+    elseif expr isa Expr
+        if expr.head == :call
+            start = 2
+            if !isempty(expr.args) && expr.args[1] isa Symbol && expr.args[1] in (:, :+, :-, :*, :/, :%, :^, :(=>))
+                start = 2
+            else
+                start = 1
+            end
+            for idx in start:length(expr.args)
+                _expr_has_dynamic_content(expr.args[idx]) && return true
+            end
+            return false
+        end
+
+        return any(_expr_has_dynamic_content, expr.args)
+    end
+
+    return true
+end
+
+function _parse_loop_scope(iteration)
+    if iteration isa Expr && iteration.head in (:(=), :in)
+        iterator = iteration.args[1]
+        iterator isa Symbol || throw(ArgumentError("@tea only supports simple loop iterators, got $iterator"))
+        return iterator, iteration.args[2]
+    end
+
+    throw(ArgumentError("@tea only supports simple `for x in xs` loops in static analysis"))
+end
+
+function _collect_choice_spec_exprs!(expr, specs::Vector{Tuple{Expr,Tuple}})
+    return _collect_choice_spec_exprs!(expr, specs, ())
+end
+
+function _collect_choice_spec_exprs!(expr, specs::Vector{Tuple{Expr,Tuple}}, loop_scopes::Tuple)
     if !(expr isa Expr)
         return specs
     end
 
+    if expr.head == :for && length(expr.args) == 2
+        scope = _parse_loop_scope(expr.args[1])
+        return _collect_choice_spec_exprs!(expr.args[2], specs, (loop_scopes..., scope))
+    end
+
     if expr.head == :call && !isempty(expr.args) && expr.args[1] === :~
-        push!(specs, expr)
+        push!(specs, (expr, loop_scopes))
         return specs
     end
 
     for arg in expr.args
-        _collect_choice_spec_exprs!(arg, specs)
+        _collect_choice_spec_exprs!(arg, specs, loop_scopes)
     end
 
     return specs
@@ -159,11 +219,11 @@ function _model_spec_expr(mode_expr, signature, body)
     name = signature.args[1]
     arguments = [_argument_name(arg) for arg in signature.args[2:end]]
     argument_expr = Expr(:vect, map(QuoteNode, arguments)...)
-    choice_nodes = Expr[]
+    choice_nodes = Tuple{Expr,Tuple}[]
     _collect_choice_spec_exprs!(body, choice_nodes)
-    choice_exprs = map(_choice_spec_expr, choice_nodes)
+    choice_exprs = map(node -> _choice_spec_expr(node[1], node[2]), choice_nodes)
     choices_expr = Expr(:vect, choice_exprs...)
-    shape_specialized = any(choice -> _address_has_dynamic_parts(choice.args[2]), choice_nodes)
+    shape_specialized = any(node -> _address_has_dynamic_parts(node[1].args[2]) || any(scope -> _expr_has_dynamic_content(scope[2]), node[2]), choice_nodes)
 
     return :($(_qualify(:ModelSpec))(
         $(QuoteNode(name)),

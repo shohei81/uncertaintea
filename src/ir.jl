@@ -28,10 +28,17 @@ struct RawChoiceRhsSpec <: AbstractChoiceRhsSpec
     expr::Any
 end
 
+struct LoopScopeSpec
+    iterator::Symbol
+    iterable::Any
+    shape_specialized::Bool
+end
+
 struct ChoiceSpec
     binding::Union{Nothing,Symbol}
     address::AddressSpec
     rhs::AbstractChoiceRhsSpec
+    scopes::Vector{LoopScopeSpec}
 end
 
 struct ModelSpec
@@ -48,6 +55,8 @@ end
 
 isstaticaddress(address::AddressSpec) = all(part -> part isa AddressLiteralPart, address.parts)
 isaddresstemplate(address::AddressSpec) = !isstaticaddress(address)
+isrepeatedchoice(choice::ChoiceSpec) = !isempty(choice.scopes)
+hasrepeatedchoices(spec::ModelSpec) = any(isrepeatedchoice, spec.choices)
 
 function Base.show(io::IO, part::AddressLiteralPart)
     print(io, repr(part.value))
@@ -72,6 +81,7 @@ function Base.show(io::IO, spec::ChoiceSpec)
     print(io, "address=")
     show(io, spec.address)
     print(io, ", rhs=", nameof(typeof(spec.rhs)))
+    isempty(spec.scopes) || print(io, ", scopes=", length(spec.scopes))
     print(io, ")")
 end
 
