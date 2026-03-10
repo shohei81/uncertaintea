@@ -125,6 +125,7 @@ mutable struct BatchedPlanEnvironment
     numeric_values::Matrix{Float64}
     index_values::Matrix{Int}
     generic_values::Vector{Vector{Any}}
+    numeric_scratch::Vector{Vector{Float64}}
     assigned::BitVector
     batch_size::Int
 end
@@ -147,6 +148,7 @@ function BatchedPlanEnvironment(
         numeric_values,
         index_values,
         generic_values,
+        Vector{Vector{Float64}}(),
         falses(length(layout.symbols)),
         batch_size,
     )
@@ -909,6 +911,123 @@ function _eval_backend_numeric_expr(env::BatchedPlanEnvironment, expr::BackendBl
     return value
 end
 
+function _batched_numeric_scratch!(env::BatchedPlanEnvironment, depth::Int)
+    depth > 0 || throw(ArgumentError("batched numeric scratch depth must be positive"))
+    while length(env.numeric_scratch) < depth
+        push!(env.numeric_scratch, Vector{Float64}(undef, env.batch_size))
+    end
+    buffer = env.numeric_scratch[depth]
+    length(buffer) == env.batch_size || resize!(buffer, env.batch_size)
+    return buffer
+end
+
+function _apply_backend_numeric_unary!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    op::Symbol,
+)
+    for batch_index in eachindex(destination)
+        destination[batch_index] = _require_numeric_value(
+            env,
+            _backend_primitive(op, destination[batch_index]),
+            "batched backend numeric primitive",
+        )
+    end
+    return destination
+end
+
+function _apply_backend_numeric_binary!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    op::Symbol,
+    rhs::AbstractVector,
+)
+    length(destination) == length(rhs) ||
+        throw(DimensionMismatch("expected backend numeric vectors of matching length, got $(length(destination)) and $(length(rhs))"))
+    for batch_index in eachindex(destination, rhs)
+        destination[batch_index] = _require_numeric_value(
+            env,
+            _backend_primitive(op, destination[batch_index], rhs[batch_index]),
+            "batched backend numeric primitive",
+        )
+    end
+    return destination
+end
+
+function _eval_backend_numeric_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendLiteralExpr,
+    depth::Int=1,
+)
+    fill!(destination, _require_numeric_value(env, expr.value, "batched backend numeric expression"))
+    return destination
+end
+
+function _eval_backend_numeric_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendSlotExpr,
+    depth::Int=1,
+)
+    env.assigned[expr.slot] || throw(BatchedBackendFallback("environment slot $(expr.slot) is not assigned"))
+    if env.numeric_slots[expr.slot]
+        copyto!(destination, view(env.numeric_values, expr.slot, :))
+        return destination
+    elseif env.index_slots[expr.slot]
+        for batch_index in eachindex(destination)
+            destination[batch_index] = Float64(env.index_values[expr.slot, batch_index])
+        end
+        return destination
+    end
+    _backend_numeric_error(env, "batched backend numeric slot $(expr.slot) is not numeric")
+end
+
+function _eval_backend_numeric_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendPrimitiveExpr,
+    depth::Int=1,
+)
+    if expr.op === Symbol(":") || expr.op === Symbol("=>")
+        _backend_numeric_error(env, "batched backend numeric expression cannot use `$(expr.op)`")
+    end
+    isempty(expr.arguments) && _backend_numeric_error(env, "batched backend numeric primitive requires arguments")
+
+    _eval_backend_numeric_expr!(destination, env, first(expr.arguments), depth + 1)
+    if length(expr.arguments) == 1
+        return _apply_backend_numeric_unary!(destination, env, expr.op)
+    end
+
+    temp = _batched_numeric_scratch!(env, depth)
+    for argument in Base.tail(expr.arguments)
+        _eval_backend_numeric_expr!(temp, env, argument, depth + 1)
+        _apply_backend_numeric_binary!(destination, env, expr.op, temp)
+    end
+    return destination
+end
+
+function _eval_backend_numeric_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendTupleExpr,
+    depth::Int=1,
+)
+    _backend_numeric_error(env, "batched backend numeric expression cannot be a tuple")
+end
+
+function _eval_backend_numeric_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendBlockExpr,
+    depth::Int=1,
+)
+    for arg in expr.arguments
+        _eval_backend_numeric_expr!(destination, env, arg, depth)
+    end
+    return destination
+end
+
 function _backend_index_error(env::PlanEnvironment, message::String)
     throw(ArgumentError(message))
 end
@@ -1252,12 +1371,16 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     for batch_index in 1:env.batch_size
         address = _concrete_address(env, step.address, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
-        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
-        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
@@ -1283,12 +1406,16 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     for batch_index in 1:env.batch_size
         address = _concrete_address(env, step.address, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
-        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
-        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
@@ -1314,11 +1441,13 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
+    probability_values = _batched_numeric_scratch!(env, 1)
+    _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     for batch_index in 1:env.batch_size
         address = _concrete_address(env, step.address, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
-        probability = _eval_backend_numeric_expr(env, step.probability, batch_index)
+        probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
@@ -1345,11 +1474,15 @@ function _score_backend_observed_loop_choice!(
     constraints,
     address,
 )
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     for batch_index in 1:env.batch_size
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_observed_choice_value(constraint_map, address)
-        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
-        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
     end
     return totals
@@ -1363,11 +1496,15 @@ function _score_backend_observed_loop_choice!(
     constraints,
     address,
 )
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     for batch_index in 1:env.batch_size
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_observed_choice_value(constraint_map, address)
-        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
-        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)
     end
     return totals
@@ -1381,10 +1518,12 @@ function _score_backend_observed_loop_choice!(
     constraints,
     address,
 )
+    probability_values = _batched_numeric_scratch!(env, 1)
+    _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     for batch_index in 1:env.batch_size
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_observed_choice_value(constraint_map, address)
-        probability = _eval_backend_numeric_expr(env, step.probability, batch_index)
+        probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
     end
     return totals
@@ -1398,10 +1537,7 @@ function _score_backend_step!(
     constraints,
 )
     if env.numeric_slots[step.binding_slot]
-        for batch_index in 1:env.batch_size
-            env.numeric_values[step.binding_slot, batch_index] =
-                _eval_backend_numeric_expr(env, step.expr, batch_index)
-        end
+        _eval_backend_numeric_expr!(view(env.numeric_values, step.binding_slot, :), env, step.expr)
         env.assigned[step.binding_slot] = true
         return totals
     elseif env.index_slots[step.binding_slot]

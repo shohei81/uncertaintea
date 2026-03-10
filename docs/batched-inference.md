@@ -111,6 +111,8 @@ The next lowering layer is now explicit:
   write directly into the shared gradient matrix
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
+- backend numeric expressions for supported models now evaluate batch-wide into
+  reusable scratch buffers instead of recursing separately for each column
 
 ## Phase 2 Execution Strategy
 

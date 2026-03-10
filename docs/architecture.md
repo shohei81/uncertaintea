@@ -102,6 +102,9 @@ Current backend-lowering subset:
 - batched HMC now keeps a sampler workspace for momentum, proposals,
   diagnostics, and constrained-position scratch so repeated sampling no longer
   rebuilds those buffers every iteration
+- supported backend numeric expressions now evaluate over the whole batch using
+  reusable scratch vectors, reducing per-column recursive interpretation on the
+  batched path
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

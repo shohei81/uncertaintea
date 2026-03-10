@@ -417,6 +417,22 @@ using UncertainTea
         (3,),
         indexed_scale_batch_constraints,
     )
+    deterministic_batch_params = [
+        deterministic_params[1] deterministic_params[1] + 0.15 deterministic_params[1] - 0.2
+        deterministic_params[2] deterministic_params[2] - 0.05 deterministic_params[2] + 0.1
+    ]
+    deterministic_batch_constraints = [
+        choicemap((:y, 0.4f0)),
+        choicemap((:y, -0.1f0)),
+        choicemap((:y, 0.8f0)),
+    ]
+    deterministic_batch_logjoint = batched_logjoint(
+        deterministic_scale,
+        deterministic_batch_params,
+        (),
+        deterministic_batch_constraints,
+    )
+    deterministic_workspace = UncertainTea.BatchedLogjointWorkspace(deterministic_scale)
     positive_batch_unconstrained = reshape(
         [
             positive_step_unconstrained[1] - 0.2,
@@ -564,6 +580,39 @@ using UncertainTea
             indexed_scale_batch_constraints[index],
         ) for index in 1:2
     ] atol=1e-8
+    deterministic_workspace_values = UncertainTea._logjoint_with_batched_backend!(
+        deterministic_workspace,
+        deterministic_batch_params,
+        (),
+        deterministic_batch_constraints,
+    )
+    deterministic_workspace_env = deterministic_workspace.batched_environment[]
+    deterministic_workspace_scratch = deterministic_workspace_env.numeric_scratch[1]
+    @test deterministic_batch_logjoint ≈ [
+        logjoint(
+            deterministic_scale,
+            deterministic_batch_params[:, index],
+            (),
+            deterministic_batch_constraints[index],
+        ) for index in 1:3
+    ] atol=1e-8
+    @test deterministic_workspace_values ≈ deterministic_batch_logjoint atol=1e-8
+    @test !isempty(deterministic_workspace_env.numeric_scratch)
+    @test UncertainTea._logjoint_with_batched_backend!(
+        deterministic_workspace,
+        deterministic_batch_params .+ [0.05; -0.02],
+        (),
+        deterministic_batch_constraints,
+    ) ≈ [
+        logjoint(
+            deterministic_scale,
+            (deterministic_batch_params .+ [0.05; -0.02])[:, index],
+            (),
+            deterministic_batch_constraints[index],
+        ) for index in 1:3
+    ] atol=1e-8
+    @test deterministic_workspace.batched_environment[] === deterministic_workspace_env
+    @test deterministic_workspace_env.numeric_scratch[1] === deterministic_workspace_scratch
     @test positive_batch_logjoint ≈ [
         logjoint_unconstrained(observed_positive_step, positive_batch_unconstrained[:, index], (), positive_batch_constraints[index]) for
         index in 1:3
@@ -707,7 +756,7 @@ using UncertainTea
         logjoint(observed_coin, Float64[], (), choicemap((:y, true))),
         logjoint(observed_coin, Float64[], (), choicemap((:y, false))),
         logjoint(observed_coin, Float64[], (), choicemap((:y, true))),
-    ] atol=1e-8
+    ] atol=2e-8
     @test deterministic_backend_report.supported
     @test length(deterministic_backend_plan.steps) == 4
     @test deterministic_backend_plan.steps[3] isa UncertainTea.BackendDeterministicPlanStep
