@@ -335,6 +335,32 @@ using UncertainTea
         num_leapfrog_steps=8,
         rng=MersenneTwister(22),
     )
+    gaussian_large_step_chain = hmc(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=20,
+        num_warmup=0,
+        step_size=16.0,
+        num_leapfrog_steps=4,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        find_reasonable_step_size=true,
+        rng=MersenneTwister(23),
+    )
+    gaussian_small_step_chain = hmc(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=20,
+        num_warmup=0,
+        step_size=1e-6,
+        num_leapfrog_steps=4,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        find_reasonable_step_size=true,
+        rng=MersenneTwister(24),
+    )
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -350,6 +376,10 @@ using UncertainTea
     @test gaussian_chain.target_accept == 0.8
     @test gaussian_baseline_chain.step_size == 0.25
     @test gaussian_baseline_chain.mass_matrix == [1.0]
+    @test 0 < gaussian_large_step_chain.step_size < 16.0
+    @test gaussian_small_step_chain.step_size > 1e-6
+    @test all(isfinite, gaussian_large_step_chain.logjoint_values)
+    @test all(isfinite, gaussian_small_step_chain.logjoint_values)
     @test !(isapprox(gaussian_chain.step_size, gaussian_baseline_chain.step_size; atol=1e-8) &&
         isapprox(gaussian_chain.mass_matrix[1], gaussian_baseline_chain.mass_matrix[1]; atol=1e-8))
     @test abs(gaussian_chain_mean - 0.15) < 0.2

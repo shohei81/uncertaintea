@@ -200,6 +200,78 @@ function _acceptance_probability(log_accept_ratio::Float64)
     return exp(log_accept_ratio)
 end
 
+function _proposal_log_accept_ratio(
+    current_logjoint::Float64,
+    current_momentum::AbstractVector,
+    proposal,
+    inverse_mass_matrix::AbstractVector,
+)
+    isnothing(proposal) && return -Inf
+    _, proposed_momentum, proposed_logjoint = proposal
+    current_hamiltonian = _hamiltonian(current_logjoint, current_momentum, inverse_mass_matrix)
+    proposed_hamiltonian = _hamiltonian(proposed_logjoint, proposed_momentum, inverse_mass_matrix)
+    return current_hamiltonian - proposed_hamiltonian
+end
+
+function _find_reasonable_step_size(
+    model::TeaModel,
+    position::Vector{Float64},
+    current_logjoint::Float64,
+    gradient_cache::LogjointGradientCache,
+    inverse_mass_matrix::Vector{Float64},
+    args::Tuple,
+    constraints::ChoiceMap,
+    step_size::Float64,
+    rng::AbstractRNG,
+)
+    reasonable_step_size = step_size
+    min_step_size = 1e-8
+    max_step_size = 1e3
+    log_target = log(0.5)
+    momentum = _sample_momentum(rng, inverse_mass_matrix)
+    proposal = _leapfrog(
+        model,
+        position,
+        momentum,
+        gradient_cache,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        reasonable_step_size,
+        1,
+    )
+    log_accept_ratio = _proposal_log_accept_ratio(current_logjoint, momentum, proposal, inverse_mass_matrix)
+    direction = log_accept_ratio > log_target ? 1.0 : -1.0
+
+    for _ in 1:20
+        next_step_size = reasonable_step_size * (2.0 ^ direction)
+        if next_step_size < min_step_size || next_step_size > max_step_size
+            break
+        end
+
+        reasonable_step_size = next_step_size
+        momentum = _sample_momentum(rng, inverse_mass_matrix)
+        proposal = _leapfrog(
+            model,
+            position,
+            momentum,
+            gradient_cache,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            reasonable_step_size,
+            1,
+        )
+        log_accept_ratio = _proposal_log_accept_ratio(current_logjoint, momentum, proposal, inverse_mass_matrix)
+        if (direction > 0 && log_accept_ratio <= log_target) ||
+           (direction < 0 && log_accept_ratio >= log_target)
+            break
+        end
+    end
+
+    return clamp(reasonable_step_size, min_step_size, max_step_size)
+end
+
 function hmc(
     model::TeaModel,
     args::Tuple=(),
@@ -212,6 +284,7 @@ function hmc(
     target_accept::Real=0.8,
     adapt_step_size::Bool=true,
     adapt_mass_matrix::Bool=true,
+    find_reasonable_step_size::Bool=false,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
     rng::AbstractRNG=Random.default_rng(),
@@ -242,6 +315,19 @@ function hmc(
     hmc_step_size = Float64(step_size)
     hmc_target_accept = Float64(target_accept)
     inverse_mass_matrix = ones(num_params)
+    if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
+        hmc_step_size = _find_reasonable_step_size(
+            model,
+            position,
+            current_logjoint,
+            gradient_cache,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            hmc_step_size,
+            rng,
+        )
+    end
     dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
     variance_state = _running_variance_state(num_params)
 
@@ -261,13 +347,10 @@ function hmc(
         )
 
         accepted_step = false
-        accept_prob = 0.0
+        log_accept_ratio = _proposal_log_accept_ratio(current_logjoint, momentum, proposal, inverse_mass_matrix)
+        accept_prob = _acceptance_probability(log_accept_ratio)
         if !isnothing(proposal)
-            proposed_position, proposed_momentum, proposed_logjoint = proposal
-            current_hamiltonian = _hamiltonian(current_logjoint, momentum, inverse_mass_matrix)
-            proposed_hamiltonian = _hamiltonian(proposed_logjoint, proposed_momentum, inverse_mass_matrix)
-            log_accept_ratio = current_hamiltonian - proposed_hamiltonian
-            accept_prob = _acceptance_probability(log_accept_ratio)
+            proposed_position, _, proposed_logjoint = proposal
 
             if log(rand(rng)) < min(0.0, log_accept_ratio)
                 position = proposed_position
