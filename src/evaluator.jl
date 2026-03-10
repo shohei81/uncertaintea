@@ -2,8 +2,58 @@ function _evaluation_module(model::TeaModel)
     return parentmodule(model.impl)
 end
 
-function _resolve_eval_symbol(model::TeaModel, env::Dict{Symbol,Any}, sym::Symbol)
-    haskey(env, sym) && return env[sym]
+mutable struct PlanEnvironment
+    layout::EnvironmentLayout
+    values::Vector{Any}
+    assigned::BitVector
+end
+
+function PlanEnvironment(layout::EnvironmentLayout)
+    return PlanEnvironment(layout, Vector{Any}(undef, length(layout.symbols)), falses(length(layout.symbols)))
+end
+
+function _environment_slot(layout::EnvironmentLayout, symbol::Symbol)
+    return get(layout.slot_by_symbol, symbol, nothing)
+end
+
+function _environment_hasvalue(env::PlanEnvironment, slot::Int)
+    return env.assigned[slot]
+end
+
+function _environment_hasvalue(env::PlanEnvironment, symbol::Symbol)
+    slot = _environment_slot(env.layout, symbol)
+    return !isnothing(slot) && _environment_hasvalue(env, slot)
+end
+
+function _environment_value(env::PlanEnvironment, slot::Int)
+    env.assigned[slot] || throw(ArgumentError("environment slot $slot is not assigned"))
+    return env.values[slot]
+end
+
+function _environment_value(env::PlanEnvironment, symbol::Symbol)
+    slot = _environment_slot(env.layout, symbol)
+    isnothing(slot) && throw(ArgumentError("environment does not track symbol `$symbol`"))
+    return _environment_value(env, slot)
+end
+
+function _environment_set!(env::PlanEnvironment, slot::Int, value)
+    env.values[slot] = value
+    env.assigned[slot] = true
+    return value
+end
+
+function _environment_restore!(env::PlanEnvironment, slot::Int, previous_value, was_assigned::Bool)
+    if was_assigned
+        env.values[slot] = previous_value
+        env.assigned[slot] = true
+    else
+        env.assigned[slot] = false
+    end
+    return nothing
+end
+
+function _resolve_eval_symbol(model::TeaModel, env::PlanEnvironment, sym::Symbol)
+    _environment_hasvalue(env, sym) && return _environment_value(env, sym)
 
     module_ = _evaluation_module(model)
     if isdefined(module_, sym)
@@ -17,7 +67,7 @@ function _resolve_eval_symbol(model::TeaModel, env::Dict{Symbol,Any}, sym::Symbo
     throw(ArgumentError("lower-level logjoint could not resolve symbol `$sym` in model $(model.name)"))
 end
 
-function _resolve_eval_callable(model::TeaModel, env::Dict{Symbol,Any}, callee)
+function _resolve_eval_callable(model::TeaModel, env::PlanEnvironment, callee)
     if callee isa Symbol
         if callee === Symbol(":")
             return getfield(Base, Symbol(":"))
@@ -29,7 +79,7 @@ function _resolve_eval_callable(model::TeaModel, env::Dict{Symbol,Any}, callee)
     return _eval_plan_expr(model, env, callee)
 end
 
-function _eval_plan_expr(model::TeaModel, env::Dict{Symbol,Any}, expr)
+function _eval_plan_expr(model::TeaModel, env::PlanEnvironment, expr)
     if expr isa QuoteNode
         return expr.value
     elseif expr isa Symbol
@@ -58,7 +108,7 @@ function _eval_plan_expr(model::TeaModel, env::Dict{Symbol,Any}, expr)
     return expr
 end
 
-function _concrete_address(model::TeaModel, env::Dict{Symbol,Any}, address::AddressSpec)
+function _concrete_address(model::TeaModel, env::PlanEnvironment, address::AddressSpec)
     parts = Any[]
     for part in address.parts
         if part isa AddressLiteralPart
@@ -70,7 +120,7 @@ function _concrete_address(model::TeaModel, env::Dict{Symbol,Any}, address::Addr
     return Tuple(parts)
 end
 
-function _distribution_from_spec(model::TeaModel, env::Dict{Symbol,Any}, rhs::DistributionSpec)
+function _distribution_from_spec(model::TeaModel, env::PlanEnvironment, rhs::DistributionSpec)
     constructor = getfield(@__MODULE__, rhs.family)
     args = map(arg -> _eval_plan_expr(model, env, arg), rhs.arguments)
     return constructor(args...)
@@ -79,7 +129,7 @@ end
 function _score_distribution_instance!(
     model::TeaModel,
     step::ChoicePlanStep,
-    env::Dict{Symbol,Any},
+    env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
 )
@@ -93,14 +143,14 @@ function _score_distribution_instance!(
     end
 
     dist = _distribution_from_spec(model, env, step.rhs)
-    isnothing(step.binding) || (env[step.binding] = value)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return logpdf(dist, value)
 end
 
 function _score_plan_step!(
     model::TeaModel,
     step::ChoicePlanStep,
-    env::Dict{Symbol,Any},
+    env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
 )
@@ -117,38 +167,34 @@ end
 function _score_plan_step!(
     model::TeaModel,
     step::DeterministicPlanStep,
-    env::Dict{Symbol,Any},
+    env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
 )
-    env[step.binding] = _eval_plan_expr(model, env, step.expr)
+    _environment_set!(env, step.binding_slot, _eval_plan_expr(model, env, step.expr))
     return 0.0
 end
 
 function _score_plan_step!(
     model::TeaModel,
     step::LoopPlanStep,
-    env::Dict{Symbol,Any},
+    env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
 )
     iterable = _eval_plan_expr(model, env, step.iterable)
-    had_previous = haskey(env, step.iterator)
-    previous_value = had_previous ? env[step.iterator] : nothing
+    had_previous = _environment_hasvalue(env, step.iterator_slot)
+    previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
     total = 0.0
 
     for item in iterable
-        env[step.iterator] = item
+        _environment_set!(env, step.iterator_slot, item)
         for body_step in step.body
             total += _score_plan_step!(model, body_step, env, params, constraints)
         end
     end
 
-    if had_previous
-        env[step.iterator] = previous_value
-    else
-        delete!(env, step.iterator)
-    end
+    _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
     return total
 end
 
@@ -165,9 +211,9 @@ function logjoint(
     length(args) == length(modelspec(model).arguments) ||
         throw(DimensionMismatch("expected $(length(modelspec(model).arguments)) model arguments, got $(length(args))"))
 
-    env = Dict{Symbol,Any}()
-    for (name, value) in zip(modelspec(model).arguments, args)
-        env[name] = value
+    env = PlanEnvironment(plan.environment_layout)
+    for (slot, value) in zip(plan.environment_layout.argument_slots, args)
+        _environment_set!(env, slot, value)
     end
 
     total = 0.0

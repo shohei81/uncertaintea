@@ -58,32 +58,54 @@ struct ParameterLayout
     slots::Vector{ParameterSlotSpec}
 end
 
+struct EnvironmentLayout
+    symbols::Vector{Symbol}
+    slot_by_symbol::Dict{Symbol,Int}
+    argument_slots::Vector{Int}
+end
+
 abstract type AbstractPlanStep end
 
 struct ChoicePlanStep <: AbstractPlanStep
     choice_index::Int
     binding::Union{Nothing,Symbol}
+    binding_slot::Union{Nothing,Int}
     address::AddressSpec
     rhs::AbstractChoiceRhsSpec
     scopes::Vector{LoopScopeSpec}
     parameter_slot::Union{Nothing,Int}
 end
 
+function ChoicePlanStep(choice_index::Int, binding, address::AddressSpec, rhs::AbstractChoiceRhsSpec, scopes, parameter_slot)
+    normalized_scopes = LoopScopeSpec[scope for scope in scopes]
+    return ChoicePlanStep(choice_index, binding, nothing, address, rhs, normalized_scopes, parameter_slot)
+end
+
 struct DeterministicPlanStep <: AbstractPlanStep
     binding::Symbol
+    binding_slot::Union{Nothing,Int}
     expr::Any
 end
 
+DeterministicPlanStep(binding::Symbol, expr::Any) = DeterministicPlanStep(binding, nothing, expr)
+
 struct LoopPlanStep <: AbstractPlanStep
     iterator::Symbol
+    iterator_slot::Union{Nothing,Int}
     iterable::Any
     body::Vector{AbstractPlanStep}
+end
+
+function LoopPlanStep(iterator::Symbol, iterable::Any, body)
+    normalized_body = AbstractPlanStep[step for step in body]
+    return LoopPlanStep(iterator, nothing, iterable, normalized_body)
 end
 
 struct ExecutionPlan
     model_name::Symbol
     steps::Vector{AbstractPlanStep}
     parameter_layout::ParameterLayout
+    environment_layout::EnvironmentLayout
 end
 
 struct ModelSpec
@@ -107,7 +129,8 @@ function ModelSpec(
     return_expr::Any,
 )
     argument_symbols = Symbol[arg for arg in arguments]
-    plan = ExecutionPlan(name, AbstractPlanStep[], parameter_layout)
+    environment_layout = EnvironmentLayout(copy(argument_symbols), Dict(arg => idx for (idx, arg) in enumerate(argument_symbols)), collect(eachindex(argument_symbols)))
+    plan = ExecutionPlan(name, AbstractPlanStep[], parameter_layout, environment_layout)
     return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, return_expr, plan)
 end
 
@@ -123,7 +146,7 @@ function ModelSpec(
 )
     argument_symbols = Symbol[arg for arg in arguments]
     raw_steps = AbstractPlanStep[step for step in plan_steps]
-    plan = build_execution_plan(name, raw_steps, parameter_layout, return_expr)
+    plan = build_execution_plan(name, argument_symbols, raw_steps, parameter_layout, return_expr)
     return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, plan.parameter_layout, return_expr, plan)
 end
 
@@ -152,6 +175,61 @@ function _parameter_slot_index(layout::ParameterLayout, choice_index::Int)
         end
     end
     return nothing
+end
+
+function _push_environment_symbol!(symbols::Vector{Symbol}, seen::Set{Symbol}, symbol::Symbol)
+    symbol in seen && return nothing
+    push!(symbols, symbol)
+    push!(seen, symbol)
+    return nothing
+end
+
+function _collect_environment_symbols!(steps::Vector{AbstractPlanStep}, symbols::Vector{Symbol}, seen::Set{Symbol})
+    for step in steps
+        if step isa ChoicePlanStep
+            isnothing(step.binding) || _push_environment_symbol!(symbols, seen, step.binding)
+        elseif step isa DeterministicPlanStep
+            _push_environment_symbol!(symbols, seen, step.binding)
+        elseif step isa LoopPlanStep
+            _push_environment_symbol!(symbols, seen, step.iterator)
+            _collect_environment_symbols!(step.body, symbols, seen)
+        end
+    end
+    return nothing
+end
+
+function _build_environment_layout(arguments::Vector{Symbol}, steps::Vector{AbstractPlanStep})
+    symbols = Symbol[]
+    seen = Set{Symbol}()
+    for argument in arguments
+        _push_environment_symbol!(symbols, seen, argument)
+    end
+    _collect_environment_symbols!(steps, symbols, seen)
+
+    slot_by_symbol = Dict{Symbol,Int}()
+    for (idx, symbol) in enumerate(symbols)
+        slot_by_symbol[symbol] = idx
+    end
+    argument_slots = Int[slot_by_symbol[argument] for argument in arguments]
+    return EnvironmentLayout(symbols, slot_by_symbol, argument_slots)
+end
+
+function _annotate_environment_slots(step::ChoicePlanStep, layout::EnvironmentLayout)
+    binding_slot = isnothing(step.binding) ? nothing : layout.slot_by_symbol[step.binding]
+    return ChoicePlanStep(step.choice_index, step.binding, binding_slot, step.address, step.rhs, step.scopes, step.parameter_slot)
+end
+
+function _annotate_environment_slots(step::DeterministicPlanStep, layout::EnvironmentLayout)
+    return DeterministicPlanStep(step.binding, layout.slot_by_symbol[step.binding], step.expr)
+end
+
+function _annotate_environment_slots(step::LoopPlanStep, layout::EnvironmentLayout)
+    body = AbstractPlanStep[_annotate_environment_slots(inner, layout) for inner in step.body]
+    return LoopPlanStep(step.iterator, layout.slot_by_symbol[step.iterator], step.iterable, body)
+end
+
+function _annotate_environment_slots(steps::Vector{AbstractPlanStep}, layout::EnvironmentLayout)
+    return AbstractPlanStep[_annotate_environment_slots(step, layout) for step in steps]
 end
 
 function _substitute_expr(expr, substitutions::Dict{Symbol,Any})
@@ -390,14 +468,17 @@ function _inline_plan_step(step::ChoicePlanStep)
     throw(ArgumentError("unsupported choice RHS in execution-plan inlining: $(typeof(step.rhs))"))
 end
 
-function build_execution_plan(name::Symbol, raw_steps::Vector{AbstractPlanStep}, layout::ParameterLayout, return_expr::Any)
+function build_execution_plan(name::Symbol, arguments::Vector{Symbol}, raw_steps::Vector{AbstractPlanStep}, layout::ParameterLayout, return_expr::Any)
     if isempty(raw_steps)
-        return ExecutionPlan(name, AbstractPlanStep[], layout)
+        environment_layout = _build_environment_layout(arguments, AbstractPlanStep[])
+        return ExecutionPlan(name, AbstractPlanStep[], layout, environment_layout)
     end
 
     steps = _inline_plan_steps(raw_steps)
     parameterized_steps, parameterized_layout = _assign_parameter_layout(steps)
-    return ExecutionPlan(name, parameterized_steps, parameterized_layout)
+    environment_layout = _build_environment_layout(arguments, parameterized_steps)
+    annotated_steps = _annotate_environment_slots(parameterized_steps, environment_layout)
+    return ExecutionPlan(name, annotated_steps, parameterized_layout, environment_layout)
 end
 
 function Base.show(io::IO, part::AddressLiteralPart)
