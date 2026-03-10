@@ -323,6 +323,16 @@ using UncertainTea
         num_leapfrog_steps=8,
         rng=MersenneTwister(20),
     )
+    gaussian_baseline_chain = hmc(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=25,
+        num_warmup=0,
+        step_size=0.25,
+        num_leapfrog_steps=8,
+        rng=MersenneTwister(22),
+    )
     gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
 
     @test length(gaussian_chain) == 250
@@ -333,6 +343,13 @@ using UncertainTea
     @test all(isfinite, gaussian_chain.logjoint_values)
     @test 0.0 <= acceptancerate(gaussian_chain) <= 1.0
     @test any(gaussian_chain.accepted)
+    @test gaussian_chain.step_size > 0
+    @test gaussian_chain.mass_matrix[1] > 0
+    @test gaussian_chain.target_accept == 0.8
+    @test gaussian_baseline_chain.step_size == 0.25
+    @test gaussian_baseline_chain.mass_matrix == [1.0]
+    @test !(isapprox(gaussian_chain.step_size, gaussian_baseline_chain.step_size; atol=1e-8) &&
+        isapprox(gaussian_chain.mass_matrix[1], gaussian_baseline_chain.mass_matrix[1]; atol=1e-8))
     @test abs(gaussian_chain_mean - 0.15) < 0.2
     @test gaussian_chain.logjoint_values[1] ≈
         logjoint_unconstrained(gaussian_mean, gaussian_chain.unconstrained_samples[:, 1], (), constraints) atol=1e-6
@@ -354,6 +371,8 @@ using UncertainTea
     @test size(positive_chain.constrained_samples) == (1, 120)
     @test all(x -> x > 0, positive_chain.constrained_samples)
     @test any(positive_chain.accepted)
+    @test positive_chain.step_size > 0
+    @test positive_chain.mass_matrix[1] > 0
     @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
         positive_chain.constrained_samples[1, 1]
 
