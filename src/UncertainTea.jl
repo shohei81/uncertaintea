@@ -8,10 +8,12 @@ export AddressLiteralPart, AddressDynamicPart
 export DistributionSpec, GenerativeCallSpec, RawChoiceRhsSpec
 export LoopScopeSpec
 export ParameterLayout, ParameterSlotSpec
+export ExecutionPlan, ChoicePlanStep
 export ChoiceMap, TeaModel, TeaTrace
 export StaticMode, DynamicMode
 export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepeatedchoices
 export parameterlayout, parametercount
+export executionplan
 export choicemap, generate, assess
 export normal, bernoulli
 

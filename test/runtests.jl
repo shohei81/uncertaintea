@@ -12,6 +12,7 @@ using UncertainTea
     constraints = choicemap((:y, 0.3f0))
     trace, logw = generate(gaussian_mean, (), constraints; rng=MersenneTwister(1))
     spec = modelspec(gaussian_mean)
+    plan = executionplan(gaussian_mean)
 
     @test trace.model === gaussian_mean
     @test haskey(trace.choices, :mu)
@@ -34,6 +35,9 @@ using UncertainTea
     @test parametercount(spec.parameter_layout) == 1
     @test parameterlayout(gaussian_mean).slots[1].binding == :mu
     @test parameterlayout(gaussian_mean).slots[1].choice_index == 1
+    @test length(plan.steps) == 2
+    @test plan.steps[1].parameter_slot == 1
+    @test isnothing(plan.steps[2].parameter_slot)
 
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
@@ -47,6 +51,7 @@ using UncertainTea
     repeated = choicemap((:y => i, ys[i]) for i in eachindex(ys))
     trace2, logw2 = generate(iid_model, (length(ys),), repeated; rng=MersenneTwister(2))
     spec2 = modelspec(iid_model)
+    plan2 = executionplan(iid_model)
 
     @test trace2[:y => 1] == ys[1]
     @test trace2[:y => 3] == ys[3]
@@ -65,6 +70,9 @@ using UncertainTea
     @test spec2.choices[2].scopes[1].shape_specialized
     @test parametercount(spec2.parameter_layout) == 1
     @test spec2.parameter_layout.slots[1].binding == :mu
+    @test plan2.steps[1].parameter_slot == 1
+    @test isnothing(plan2.steps[2].parameter_slot)
+    @test length(plan2.steps[2].scopes) == 1
 
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
@@ -72,8 +80,10 @@ using UncertainTea
     end
 
     step_spec = modelspec(step)
+    step_plan = executionplan(step)
     @test parametercount(step_spec.parameter_layout) == 1
     @test step_spec.parameter_layout.slots[1].binding == :z
+    @test step_plan.steps[1].parameter_slot == 1
 
     @tea static function chain_model(T)
         z = ({:z => 1} ~ step(0.0f0))
@@ -85,6 +95,7 @@ using UncertainTea
 
     trace3, _ = generate(chain_model, (3,), choicemap(); rng=MersenneTwister(3))
     spec3 = modelspec(chain_model)
+    plan3 = executionplan(chain_model)
 
     @test haskey(trace3.choices, :z => 1 => :z)
     @test haskey(trace3.choices, :z => 3 => :z)
@@ -99,6 +110,9 @@ using UncertainTea
     @test spec3.choices[2].scopes[1].iterator == :t
     @test spec3.choices[2].scopes[1].iterable == :(2:T)
     @test parametercount(spec3.parameter_layout) == 0
+    @test isnothing(plan3.steps[1].parameter_slot)
+    @test isnothing(plan3.steps[2].parameter_slot)
+    @test length(plan3.steps[2].scopes) == 1
 
     @tea static function nested_loop_model(n, m)
         z ~ normal(0.0f0, 1.0f0)
@@ -111,6 +125,7 @@ using UncertainTea
     end
 
     spec4 = modelspec(nested_loop_model)
+    plan4 = executionplan(nested_loop_model)
 
     @test length(spec4.choices) == 2
     @test isrepeatedchoice(spec4.choices[2])
@@ -119,4 +134,7 @@ using UncertainTea
     @test spec4.choices[2].scopes[2].iterator == :j
     @test parametercount(spec4.parameter_layout) == 1
     @test spec4.parameter_layout.slots[1].binding == :z
+    @test length(plan4.steps) == 2
+    @test plan4.steps[1].parameter_slot == 1
+    @test length(plan4.steps[2].scopes) == 2
 end
