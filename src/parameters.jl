@@ -41,10 +41,20 @@ function transform_to_constrained(model::TeaModel, params::AbstractVector)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
     constrained = similar(params, expected)
-    for slot in layout.slots
-        constrained[slot.index] = to_constrained(slot.transform, params[slot.index])
-    end
+    _transform_to_constrained!(constrained, model, params)
     return constrained
+end
+
+function _transform_to_constrained!(destination::AbstractVector, model::TeaModel, params::AbstractVector)
+    layout = parameterlayout(model)
+    expected = parametercount(layout)
+    length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+    length(destination) == expected || throw(DimensionMismatch("expected constrained destination of length $expected, got $(length(destination))"))
+
+    for slot in layout.slots
+        destination[slot.index] = to_constrained(slot.transform, params[slot.index])
+    end
+    return destination
 end
 
 function transform_to_constrained_with_logabsdet(model::TeaModel, params::AbstractVector)

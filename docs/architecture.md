@@ -99,6 +99,9 @@ Current backend-lowering subset:
   across repeated evaluations with the same batch shape
 - batched gradient caches now keep monomorphic column caches and write gradients
   directly into the shared output matrix
+- batched HMC now keeps a sampler workspace for momentum, proposals,
+  diagnostics, and constrained-position scratch so repeated sampling no longer
+  rebuilds those buffers every iteration
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

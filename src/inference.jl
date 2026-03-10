@@ -64,6 +64,58 @@ struct WarmupSchedule
     terminal_buffer::Int
 end
 
+mutable struct BatchedHMCWorkspace
+    logjoint_workspace::BatchedLogjointWorkspace
+    gradient_cache::BatchedLogjointGradientCache
+    momentum::Matrix{Float64}
+    proposal_position::Matrix{Float64}
+    proposal_momentum::Matrix{Float64}
+    valid::BitVector
+    current_hamiltonian::Vector{Float64}
+    proposed_hamiltonian::Vector{Float64}
+    proposed_logjoint::Vector{Float64}
+    log_accept_ratio::Vector{Float64}
+    energy_error::Vector{Float64}
+    accept_prob::Vector{Float64}
+    accepted_step::BitVector
+    divergent_step::BitVector
+    constrained_position::Matrix{Float64}
+    sqrt_inverse_mass_matrix::Vector{Float64}
+end
+
+function BatchedHMCWorkspace(
+    model::TeaModel,
+    position::AbstractMatrix,
+    args=(),
+    constraints=choicemap(),
+    inverse_mass_matrix::AbstractVector=ones(size(position, 1)),
+)
+    num_params, num_chains = size(position)
+    batch_args = _validate_batched_args(args, num_chains)
+    batch_constraints = _validate_batched_constraints(constraints, num_chains)
+    length(inverse_mass_matrix) == num_params ||
+        throw(DimensionMismatch("expected inverse mass matrix of length $num_params, got $(length(inverse_mass_matrix))"))
+
+    return BatchedHMCWorkspace(
+        BatchedLogjointWorkspace(model),
+        BatchedLogjointGradientCache(model, position, batch_args, batch_constraints),
+        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
+        falses(num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        falses(num_chains),
+        falses(num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
+        sqrt.(Float64.(inverse_mass_matrix)),
+    )
+end
+
 Base.length(chain::HMCChain) = size(chain.unconstrained_samples, 2)
 Base.length(chains::HMCChains) = length(chains.chains)
 Base.length(summary::HMCSummary) = length(summary.parameters)
@@ -485,19 +537,55 @@ function _sample_batched_momentum(
     inverse_mass_matrix::AbstractVector,
     num_chains::Int,
 )
-    return randn(rng, length(inverse_mass_matrix), num_chains) ./ sqrt.(inverse_mass_matrix)
+    momentum = Matrix{Float64}(undef, length(inverse_mass_matrix), num_chains)
+    _sample_batched_momentum!(momentum, rng, sqrt.(Float64.(inverse_mass_matrix)))
+    return momentum
+end
+
+function _sample_batched_momentum!(
+    destination::AbstractMatrix,
+    rng::AbstractRNG,
+    sqrt_inverse_mass_matrix::AbstractVector,
+)
+    size(destination, 1) == length(sqrt_inverse_mass_matrix) ||
+        throw(DimensionMismatch("expected momentum matrix with $(length(sqrt_inverse_mass_matrix)) rows, got $(size(destination, 1))"))
+
+    for chain_index in axes(destination, 2)
+        for parameter_index in eachindex(sqrt_inverse_mass_matrix)
+            destination[parameter_index, chain_index] =
+                randn(rng) / sqrt_inverse_mass_matrix[parameter_index]
+        end
+    end
+    return destination
 end
 
 function _batched_kinetic_energy(
     momentum::AbstractMatrix,
     inverse_mass_matrix::AbstractVector,
 )
-    num_chains = size(momentum, 2)
-    energy = Vector{Float64}(undef, num_chains)
-    for chain_index in 1:num_chains
-        energy[chain_index] = _kinetic_energy(view(momentum, :, chain_index), inverse_mass_matrix)
+    energy = Vector{Float64}(undef, size(momentum, 2))
+    return _batched_kinetic_energy!(energy, momentum, inverse_mass_matrix)
+end
+
+function _batched_kinetic_energy!(
+    destination::AbstractVector,
+    momentum::AbstractMatrix,
+    inverse_mass_matrix::AbstractVector,
+)
+    size(momentum, 1) == length(inverse_mass_matrix) ||
+        throw(DimensionMismatch("expected momentum matrix with $(length(inverse_mass_matrix)) rows, got $(size(momentum, 1))"))
+    size(momentum, 2) == length(destination) ||
+        throw(DimensionMismatch("expected kinetic-energy destination of length $(size(momentum, 2)), got $(length(destination))"))
+
+    for chain_index in axes(momentum, 2)
+        kinetic_energy = 0.0
+        for parameter_index in eachindex(inverse_mass_matrix)
+            momentum_value = momentum[parameter_index, chain_index]
+            kinetic_energy += momentum_value^2 * inverse_mass_matrix[parameter_index]
+        end
+        destination[chain_index] = kinetic_energy / 2
     end
-    return energy
+    return destination
 end
 
 function _batched_hamiltonian(
@@ -505,33 +593,67 @@ function _batched_hamiltonian(
     momentum::AbstractMatrix,
     inverse_mass_matrix::AbstractVector,
 )
-    return (-Float64.(logjoint_values)) .+ _batched_kinetic_energy(momentum, inverse_mass_matrix)
+    hamiltonian = Vector{Float64}(undef, length(logjoint_values))
+    return _batched_hamiltonian!(hamiltonian, logjoint_values, momentum, inverse_mass_matrix)
+end
+
+function _batched_hamiltonian!(
+    destination::AbstractVector,
+    logjoint_values::AbstractVector,
+    momentum::AbstractMatrix,
+    inverse_mass_matrix::AbstractVector,
+)
+    length(logjoint_values) == length(destination) ||
+        throw(DimensionMismatch("expected hamiltonian inputs of length $(length(destination)), got $(length(logjoint_values))"))
+
+    _batched_kinetic_energy!(destination, momentum, inverse_mass_matrix)
+    for chain_index in eachindex(destination)
+        destination[chain_index] -= Float64(logjoint_values[chain_index])
+    end
+    return destination
 end
 
 function _batched_acceptance_probability(log_accept_ratio::AbstractVector)
     probabilities = Vector{Float64}(undef, length(log_accept_ratio))
-    for index in eachindex(log_accept_ratio)
-        probabilities[index] = _acceptance_probability(log_accept_ratio[index])
-    end
-    return probabilities
+    return _batched_acceptance_probability!(probabilities, log_accept_ratio)
 end
 
-function _batched_leapfrog(
+function _batched_acceptance_probability!(
+    destination::AbstractVector,
+    log_accept_ratio::AbstractVector,
+)
+    length(destination) == length(log_accept_ratio) ||
+        throw(DimensionMismatch("expected acceptance-probability destination of length $(length(log_accept_ratio)), got $(length(destination))"))
+
+    for index in eachindex(log_accept_ratio)
+        destination[index] = _acceptance_probability(log_accept_ratio[index])
+    end
+    return destination
+end
+
+function _batched_leapfrog!(
+    workspace::BatchedHMCWorkspace,
     model::TeaModel,
     position::Matrix{Float64},
-    momentum::Matrix{Float64},
-    gradient_cache::BatchedLogjointGradientCache,
     inverse_mass_matrix::Vector{Float64},
     args,
     constraints,
     step_size::Float64,
     num_leapfrog_steps::Int,
 )
-    q = copy(position)
-    p = copy(momentum)
+    q = workspace.proposal_position
+    p = workspace.proposal_momentum
+    valid = workspace.valid
     num_chains = size(q, 2)
-    valid = trues(num_chains)
-    gradient = batched_logjoint_gradient_unconstrained!(gradient_cache, q)
+    size(q) == size(position) ||
+        throw(DimensionMismatch("expected proposal position workspace of size $(size(position)), got $(size(q))"))
+    size(p) == size(position) ||
+        throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
+
+    copyto!(q, position)
+    copyto!(p, workspace.momentum)
+    fill!(valid, true)
+    gradient = batched_logjoint_gradient_unconstrained!(workspace.gradient_cache, q)
 
     for chain_index in 1:num_chains
         if !all(isfinite, view(gradient, :, chain_index))
@@ -547,7 +669,7 @@ function _batched_leapfrog(
             q[:, chain_index] .+= step_size .* (inverse_mass_matrix .* p[:, chain_index])
         end
 
-        gradient = batched_logjoint_gradient_unconstrained!(gradient_cache, q)
+        gradient = batched_logjoint_gradient_unconstrained!(workspace.gradient_cache, q)
         for chain_index in 1:num_chains
             valid[chain_index] || continue
             if !all(isfinite, view(gradient, :, chain_index))
@@ -564,7 +686,14 @@ function _batched_leapfrog(
         p[:, chain_index] .*= -1
     end
 
-    proposed_logjoint = batched_logjoint_unconstrained(model, q, args, constraints)
+    proposed_logjoint = _batched_logjoint_unconstrained_with_workspace!(
+        workspace.proposed_logjoint,
+        model,
+        workspace.logjoint_workspace,
+        q,
+        args,
+        constraints,
+    )
     for chain_index in 1:num_chains
         if valid[chain_index] && !isfinite(proposed_logjoint[chain_index])
             valid[chain_index] = false
@@ -1095,10 +1224,19 @@ function batched_hmc(
         num_params,
         num_chains,
     )
-    current_logjoint = batched_logjoint_unconstrained(model, position, batch_args, batch_constraints)
+    inverse_mass_matrix = ones(num_params)
+    workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
+    current_logjoint = Vector{Float64}(undef, num_chains)
+    _batched_logjoint_unconstrained_with_workspace!(
+        current_logjoint,
+        model,
+        workspace.logjoint_workspace,
+        position,
+        batch_args,
+        batch_constraints,
+    )
     all(isfinite, current_logjoint) ||
         throw(ArgumentError("initial batched HMC parameters produced a non-finite unconstrained logjoint"))
-    gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
 
     unconstrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
     constrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
@@ -1111,16 +1249,14 @@ function batched_hmc(
     hmc_step_size = Float64(step_size)
     hmc_target_accept = Float64(target_accept)
     hmc_divergence_threshold = Float64(divergence_threshold)
-    inverse_mass_matrix = ones(num_params)
 
     sample_index = 0
     for iteration in 1:total_iterations
-        momentum = _sample_batched_momentum(rng, inverse_mass_matrix, num_chains)
-        proposal_position, proposal_momentum, proposed_logjoint, valid = _batched_leapfrog(
+        _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
+        proposal_position, proposal_momentum, proposed_logjoint, valid = _batched_leapfrog!(
+            workspace,
             model,
             position,
-            momentum,
-            gradient_cache,
             inverse_mass_matrix,
             batch_args,
             batch_constraints,
@@ -1128,11 +1264,20 @@ function batched_hmc(
             num_leapfrog_steps,
         )
 
-        current_hamiltonian = _batched_hamiltonian(current_logjoint, momentum, inverse_mass_matrix)
-        proposed_hamiltonian = copy(current_hamiltonian)
-        log_accept_ratio = fill(-Inf, num_chains)
-        energy_error = fill(Inf, num_chains)
-        divergent_step = trues(num_chains)
+        current_hamiltonian = _batched_hamiltonian!(
+            workspace.current_hamiltonian,
+            current_logjoint,
+            workspace.momentum,
+            inverse_mass_matrix,
+        )
+        proposed_hamiltonian = workspace.proposed_hamiltonian
+        copyto!(proposed_hamiltonian, current_hamiltonian)
+        log_accept_ratio = workspace.log_accept_ratio
+        fill!(log_accept_ratio, -Inf)
+        energy_error = workspace.energy_error
+        fill!(energy_error, Inf)
+        divergent_step = workspace.divergent_step
+        fill!(divergent_step, true)
 
         for chain_index in 1:num_chains
             if valid[chain_index]
@@ -1150,11 +1295,12 @@ function batched_hmc(
             end
         end
 
-        accept_prob = _batched_acceptance_probability(log_accept_ratio)
-        accepted_step = falses(num_chains)
+        accept_prob = _batched_acceptance_probability!(workspace.accept_prob, log_accept_ratio)
+        accepted_step = workspace.accepted_step
+        fill!(accepted_step, false)
         for chain_index in 1:num_chains
             if valid[chain_index] && log(rand(rng)) < min(0.0, log_accept_ratio[chain_index])
-                position[:, chain_index] = proposal_position[:, chain_index]
+                copyto!(view(position, :, chain_index), view(proposal_position, :, chain_index))
                 current_logjoint[chain_index] = proposed_logjoint[chain_index]
                 accepted_step[chain_index] = true
             end
@@ -1163,9 +1309,16 @@ function batched_hmc(
         if iteration > num_warmup
             sample_index += 1
             for chain_index in 1:num_chains
-                unconstrained_samples[:, sample_index, chain_index] = position[:, chain_index]
-                constrained_samples[:, sample_index, chain_index] =
-                    transform_to_constrained(model, view(position, :, chain_index))
+                copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
+                _transform_to_constrained!(
+                    view(workspace.constrained_position, :, chain_index),
+                    model,
+                    view(position, :, chain_index),
+                )
+                copyto!(
+                    view(constrained_samples, :, sample_index, chain_index),
+                    view(workspace.constrained_position, :, chain_index),
+                )
                 logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
                 energies[sample_index, chain_index] =
                     accepted_step[chain_index] ? proposed_hamiltonian[chain_index] : current_hamiltonian[chain_index]

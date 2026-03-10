@@ -109,6 +109,8 @@ The next lowering layer is now explicit:
   unconstrained temporary buffers when the batch shape stays fixed
 - batched gradient caches now reuse typed column caches and let `ForwardDiff`
   write directly into the shared gradient matrix
+- batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
+  constrained-position buffers instead of reallocating them on each iteration
 
 ## Phase 2 Execution Strategy
 

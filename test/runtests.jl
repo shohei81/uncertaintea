@@ -603,6 +603,71 @@ using UncertainTea
     ] atol=1e-8
     @test positive_workspace.batched_constrained_buffer[] === positive_workspace_constrained
     @test positive_workspace.batched_logabsdet_buffer[] === positive_workspace_logabsdet
+    positive_destination = fill(-1.0, 3)
+    @test UncertainTea._batched_logjoint_unconstrained_with_workspace!(
+        positive_destination,
+        observed_positive_step,
+        positive_workspace,
+        positive_batch_unconstrained,
+        (),
+        positive_batch_constraints,
+    ) === positive_destination
+    @test positive_destination ≈ positive_batch_logjoint atol=1e-8
+    positive_reconstrained = similar(positive_step_unconstrained)
+    @test UncertainTea._transform_to_constrained!(
+        positive_reconstrained,
+        observed_positive_step,
+        positive_step_unconstrained,
+    ) === positive_reconstrained
+    @test positive_reconstrained ≈ transform_to_constrained(
+        observed_positive_step,
+        positive_step_unconstrained,
+    ) atol=1e-8
+    gaussian_hmc_workspace = UncertainTea.BatchedHMCWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        gaussian_batch_constraints,
+        [1.0],
+    )
+    UncertainTea._sample_batched_momentum!(
+        gaussian_hmc_workspace.momentum,
+        MersenneTwister(91),
+        gaussian_hmc_workspace.sqrt_inverse_mass_matrix,
+    )
+    gaussian_hmc_proposal = UncertainTea._batched_leapfrog!(
+        gaussian_hmc_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        [1.0],
+        (),
+        gaussian_batch_constraints,
+        0.1,
+        2,
+    )
+    @test gaussian_hmc_proposal[1] === gaussian_hmc_workspace.proposal_position
+    @test gaussian_hmc_proposal[2] === gaussian_hmc_workspace.proposal_momentum
+    @test gaussian_hmc_proposal[3] === gaussian_hmc_workspace.proposed_logjoint
+    @test gaussian_hmc_proposal[4] === gaussian_hmc_workspace.valid
+    UncertainTea._sample_batched_momentum!(
+        gaussian_hmc_workspace.momentum,
+        MersenneTwister(92),
+        gaussian_hmc_workspace.sqrt_inverse_mass_matrix,
+    )
+    gaussian_hmc_proposal_replay = UncertainTea._batched_leapfrog!(
+        gaussian_hmc_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        [1.0],
+        (),
+        gaussian_batch_constraints,
+        0.1,
+        2,
+    )
+    @test gaussian_hmc_proposal_replay[1] === gaussian_hmc_proposal[1]
+    @test gaussian_hmc_proposal_replay[2] === gaussian_hmc_proposal[2]
+    @test gaussian_hmc_proposal_replay[3] === gaussian_hmc_proposal[3]
+    @test gaussian_hmc_proposal_replay[4] === gaussian_hmc_proposal[4]
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)
