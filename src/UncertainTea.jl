@@ -16,9 +16,9 @@ export StaticMode, DynamicMode
 export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepeatedchoices
 export parameterlayout, parametercount
 export executionplan
-export choicemap, generate, assess, logjoint
+export choicemap, generate, assess, logjoint, logjoint_unconstrained
 export initialparameters, parameter_vector, parameterchoicemap
-export transform_to_constrained, transform_to_unconstrained
+export transform_to_constrained, transform_to_unconstrained, transform_to_constrained_with_logabsdet
 export normal, lognormal, bernoulli
 
 include("ir.jl")

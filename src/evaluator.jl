@@ -176,3 +176,14 @@ function logjoint(
     end
     return total
 end
+
+function logjoint_unconstrained(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple=(),
+    constraints::ChoiceMap=choicemap();
+    rng::AbstractRNG=Random.default_rng(),
+)
+    constrained, logabsdet = transform_to_constrained_with_logabsdet(model, params)
+    return logjoint(model, constrained, args, constraints; rng=rng) + logabsdet
+end

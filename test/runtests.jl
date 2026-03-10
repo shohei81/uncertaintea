@@ -50,6 +50,7 @@ using UncertainTea
     @test length(initial) == 1
     @test overrides[:mu] == trace[:mu]
     @test logjoint(gaussian_mean, params, (), constraints; rng=MersenneTwister(7)) ≈ expected_joint atol=1e-6
+    @test logjoint_unconstrained(gaussian_mean, params, (), constraints; rng=MersenneTwister(15)) ≈ expected_joint atol=1e-6
     @test logjoint(gaussian_mean, params, (), constraints) ≈
         assess(gaussian_mean, (), choicemap((:mu, trace[:mu]), (:y, 0.3f0))) atol=1e-6
 
@@ -275,6 +276,8 @@ using UncertainTea
     @test positive_params[1] > 0
     @test unconstrained[1] ≈ log(positive_params[1])
     @test reconstrained ≈ positive_params
+    @test logjoint_unconstrained(positive_latent, unconstrained, (), choicemap((:y, 1.5f0))) ≈
+        logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) + unconstrained[1] atol=1e-6
     @test logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) ≈
         assess(positive_latent, (), choicemap((:sigma, positive_trace[:sigma]), (:y, 1.5f0))) atol=1e-6
 
@@ -300,6 +303,9 @@ using UncertainTea
     @test positive_step_params[1] == Float64(positive_step_trace[:state => :sigma])
     @test positive_step_unconstrained[1] ≈ log(positive_step_params[1])
     @test positive_step_reconstrained ≈ positive_step_params
+    @test logjoint_unconstrained(observed_positive_step, positive_step_unconstrained, (), choicemap((:y, 1.2f0))) ≈
+        logjoint(observed_positive_step, positive_step_params, (), choicemap((:y, 1.2f0))) +
+        positive_step_unconstrained[1] atol=1e-6
     @test logjoint(observed_positive_step, positive_step_params, (), choicemap((:y, 1.2f0))) ≈
         assess(
             observed_positive_step,
