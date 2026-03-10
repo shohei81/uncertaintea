@@ -52,6 +52,160 @@ function _environment_restore!(env::PlanEnvironment, slot::Int, previous_value, 
     return nothing
 end
 
+abstract type AbstractCompiledExpr end
+abstract type AbstractCompiledAddressPart end
+abstract type AbstractCompiledPlanStep end
+
+struct CompiledLiteralExpr <: AbstractCompiledExpr
+    value::Any
+end
+
+struct CompiledSlotExpr <: AbstractCompiledExpr
+    slot::Int
+end
+
+struct CompiledCallExpr <: AbstractCompiledExpr
+    callee::AbstractCompiledExpr
+    arguments::Vector{AbstractCompiledExpr}
+end
+
+struct CompiledTupleExpr <: AbstractCompiledExpr
+    arguments::Vector{AbstractCompiledExpr}
+end
+
+struct CompiledBlockExpr <: AbstractCompiledExpr
+    arguments::Vector{AbstractCompiledExpr}
+end
+
+struct CompiledAddressLiteralPart <: AbstractCompiledAddressPart
+    value::Any
+end
+
+struct CompiledAddressDynamicPart <: AbstractCompiledAddressPart
+    expr::AbstractCompiledExpr
+end
+
+struct CompiledAddressSpec
+    parts::Tuple{Vararg{AbstractCompiledAddressPart}}
+end
+
+struct CompiledChoicePlanStep <: AbstractCompiledPlanStep
+    binding_slot::Union{Nothing,Int}
+    address::CompiledAddressSpec
+    constructor::Any
+    arguments::Vector{AbstractCompiledExpr}
+    parameter_slot::Union{Nothing,Int}
+end
+
+struct CompiledDeterministicPlanStep <: AbstractCompiledPlanStep
+    binding_slot::Int
+    expr::AbstractCompiledExpr
+end
+
+struct CompiledLoopPlanStep <: AbstractCompiledPlanStep
+    iterator_slot::Int
+    iterable::AbstractCompiledExpr
+    body::Vector{AbstractCompiledPlanStep}
+end
+
+struct CompiledExecutionPlan
+    steps::Vector{AbstractCompiledPlanStep}
+end
+
+function _resolve_compile_symbol(model::TeaModel, layout::EnvironmentLayout, sym::Symbol)
+    slot = _environment_slot(layout, sym)
+    if !isnothing(slot)
+        return CompiledSlotExpr(slot)
+    elseif sym === Symbol(":")
+        return CompiledLiteralExpr(getfield(Base, Symbol(":")))
+    elseif sym === Symbol("=>")
+        return CompiledLiteralExpr(getfield(Base, Symbol("=>")))
+    end
+
+    module_ = _evaluation_module(model)
+    if isdefined(module_, sym)
+        return CompiledLiteralExpr(getfield(module_, sym))
+    elseif isdefined(@__MODULE__, sym)
+        return CompiledLiteralExpr(getfield(@__MODULE__, sym))
+    elseif isdefined(Base, sym)
+        return CompiledLiteralExpr(getfield(Base, sym))
+    end
+
+    throw(ArgumentError("lower-level logjoint could not resolve symbol `$sym` in model $(model.name)"))
+end
+
+function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
+    if expr isa QuoteNode
+        return CompiledLiteralExpr(expr.value)
+    elseif expr isa Symbol
+        return _resolve_compile_symbol(model, layout, expr)
+    elseif expr isa GlobalRef
+        return CompiledLiteralExpr(getfield(expr.mod, expr.name))
+    elseif expr isa Expr
+        if expr.head == :call
+            callee = _compile_plan_expr(model, layout, expr.args[1])
+            arguments = AbstractCompiledExpr[_compile_plan_expr(model, layout, arg) for arg in expr.args[2:end]]
+            return CompiledCallExpr(callee, arguments)
+        elseif expr.head == :block
+            arguments = AbstractCompiledExpr[
+                _compile_plan_expr(model, layout, arg) for arg in expr.args if !(arg isa LineNumberNode)
+            ]
+            return CompiledBlockExpr(arguments)
+        elseif expr.head == :tuple
+            arguments = AbstractCompiledExpr[_compile_plan_expr(model, layout, arg) for arg in expr.args]
+            return CompiledTupleExpr(arguments)
+        end
+
+        throw(ArgumentError("unsupported expression in lower-level logjoint compilation: $expr"))
+    end
+
+    return CompiledLiteralExpr(expr)
+end
+
+function _compile_address(layout::EnvironmentLayout, model::TeaModel, address::AddressSpec)
+    parts = map(address.parts) do part
+        if part isa AddressLiteralPart
+            return CompiledAddressLiteralPart(part.value)
+        end
+        return CompiledAddressDynamicPart(_compile_plan_expr(model, layout, part.value))
+    end
+    return CompiledAddressSpec(tuple(parts...))
+end
+
+function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep)
+    step.rhs isa DistributionSpec ||
+        throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
+    arguments = AbstractCompiledExpr[_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments]
+    constructor = getfield(@__MODULE__, step.rhs.family)
+    return CompiledChoicePlanStep(step.binding_slot, _compile_address(layout, model, step.address), constructor, arguments, step.parameter_slot)
+end
+
+function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::DeterministicPlanStep)
+    return CompiledDeterministicPlanStep(step.binding_slot, _compile_plan_expr(model, layout, step.expr))
+end
+
+function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::LoopPlanStep)
+    body = AbstractCompiledPlanStep[_compile_plan_step(model, layout, inner) for inner in step.body]
+    return CompiledLoopPlanStep(step.iterator_slot, _compile_plan_expr(model, layout, step.iterable), body)
+end
+
+function _compile_execution_plan(model::TeaModel)
+    raw_plan = executionplan(model)
+    compiled_steps = AbstractCompiledPlanStep[
+        _compile_plan_step(model, raw_plan.environment_layout, step) for step in raw_plan.steps
+    ]
+    return CompiledExecutionPlan(compiled_steps)
+end
+
+function _compiled_execution_plan(model::TeaModel)
+    cached = model.evaluator_cache[]
+    if isnothing(cached)
+        cached = _compile_execution_plan(model)
+        model.evaluator_cache[] = cached
+    end
+    return cached::CompiledExecutionPlan
+end
+
 function _resolve_eval_symbol(model::TeaModel, env::PlanEnvironment, sym::Symbol)
     _environment_hasvalue(env, sym) && return _environment_value(env, sym)
 
@@ -108,6 +262,32 @@ function _eval_plan_expr(model::TeaModel, env::PlanEnvironment, expr)
     return expr
 end
 
+function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledLiteralExpr)
+    return expr.value
+end
+
+function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledSlotExpr)
+    return _environment_value(env, expr.slot)
+end
+
+function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledCallExpr)
+    callee = _eval_compiled_expr(env, expr.callee)
+    arguments = map(arg -> _eval_compiled_expr(env, arg), expr.arguments)
+    return callee(arguments...)
+end
+
+function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledTupleExpr)
+    return tuple((_eval_compiled_expr(env, arg) for arg in expr.arguments)...)
+end
+
+function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledBlockExpr)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_compiled_expr(env, arg)
+    end
+    return value
+end
+
 function _concrete_address(model::TeaModel, env::PlanEnvironment, address::AddressSpec)
     parts = Any[]
     for part in address.parts
@@ -120,10 +300,27 @@ function _concrete_address(model::TeaModel, env::PlanEnvironment, address::Addre
     return Tuple(parts)
 end
 
+function _concrete_address(env::PlanEnvironment, address::CompiledAddressSpec)
+    parts = Any[]
+    for part in address.parts
+        if part isa CompiledAddressLiteralPart
+            push!(parts, part.value)
+        else
+            push!(parts, _eval_compiled_expr(env, part.expr))
+        end
+    end
+    return Tuple(parts)
+end
+
 function _distribution_from_spec(model::TeaModel, env::PlanEnvironment, rhs::DistributionSpec)
     constructor = getfield(@__MODULE__, rhs.family)
     args = map(arg -> _eval_plan_expr(model, env, arg), rhs.arguments)
     return constructor(args...)
+end
+
+function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
+    arguments = map(arg -> _eval_compiled_expr(env, arg), step.arguments)
+    return step.constructor(arguments...)
 end
 
 function _score_distribution_instance!(
@@ -143,6 +340,26 @@ function _score_distribution_instance!(
     end
 
     dist = _distribution_from_spec(model, env, step.rhs)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return logpdf(dist, value)
+end
+
+function _score_plan_step!(
+    step::CompiledChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = if !isnothing(step.parameter_slot)
+        params[step.parameter_slot]
+    elseif haskey(constraints, address)
+        constraints[address]
+    else
+        throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
+    end
+
+    dist = _compiled_distribution(step, env)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return logpdf(dist, value)
 end
@@ -198,6 +415,38 @@ function _score_plan_step!(
     return total
 end
 
+function _score_plan_step!(
+    step::CompiledDeterministicPlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    _environment_set!(env, step.binding_slot, _eval_compiled_expr(env, step.expr))
+    return 0.0
+end
+
+function _score_plan_step!(
+    step::CompiledLoopPlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    iterable = _eval_compiled_expr(env, step.iterable)
+    had_previous = _environment_hasvalue(env, step.iterator_slot)
+    previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
+    total = 0.0
+
+    for item in iterable
+        _environment_set!(env, step.iterator_slot, item)
+        for body_step in step.body
+            total += _score_plan_step!(body_step, env, params, constraints)
+        end
+    end
+
+    _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
+    return total
+end
+
 function logjoint(
     model::TeaModel,
     params::AbstractVector,
@@ -206,6 +455,7 @@ function logjoint(
     rng::AbstractRNG=Random.default_rng(),
 )
     plan = executionplan(model)
+    compiled_plan = _compiled_execution_plan(model)
     expected = parametercount(plan.parameter_layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
     length(args) == length(modelspec(model).arguments) ||
@@ -217,8 +467,8 @@ function logjoint(
     end
 
     total = 0.0
-    for step in plan.steps
-        total += _score_plan_step!(model, step, env, params, constraints)
+    for step in compiled_plan.steps
+        total += _score_plan_step!(step, env, params, constraints)
     end
     return total
 end
