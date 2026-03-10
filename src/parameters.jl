@@ -1,0 +1,55 @@
+function _static_address(address::AddressSpec)
+    parts = Any[]
+    for part in address.parts
+        part isa AddressLiteralPart || throw(ArgumentError("parameter vectors require static addresses, got $address"))
+        push!(parts, part.value)
+    end
+    return Tuple(parts)
+end
+
+function parameterchoicemap(model::TeaModel, params::AbstractVector)
+    plan = executionplan(model)
+    expected = parametercount(plan.parameter_layout)
+    length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+
+    cm = ChoiceMap()
+    for step in plan.steps
+        slot = step.parameter_slot
+        isnothing(slot) && continue
+        _pushchoice!(cm, _static_address(step.address), params[slot])
+    end
+    return cm
+end
+
+function parameter_vector(trace::TeaTrace)
+    layout = parameterlayout(trace.model)
+    params = Vector{Float64}(undef, parametercount(layout))
+    for slot in layout.slots
+        params[slot.index] = Float64(trace[_static_address(slot.address)])
+    end
+    return params
+end
+
+function initialparameters(model::TeaModel, args::Tuple=(); rng::AbstractRNG=Random.default_rng())
+    trace, _ = generate(model, args, choicemap(); rng=rng)
+    return parameter_vector(trace)
+end
+
+function logjoint(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple=(),
+    constraints::ChoiceMap=choicemap();
+    rng::AbstractRNG=Random.default_rng(),
+)
+    overrides = parameterchoicemap(model, params)
+    _, value = _run_model(
+        model,
+        args,
+        constraints;
+        rng=rng,
+        overrides=overrides,
+        require_all_choices_scored=true,
+    )
+    return value
+end

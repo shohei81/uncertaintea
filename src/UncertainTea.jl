@@ -14,7 +14,8 @@ export StaticMode, DynamicMode
 export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepeatedchoices
 export parameterlayout, parametercount
 export executionplan
-export choicemap, generate, assess
+export choicemap, generate, assess, logjoint
+export initialparameters, parameter_vector, parameterchoicemap
 export normal, bernoulli
 
 include("ir.jl")
@@ -22,6 +23,7 @@ include("core.jl")
 include("choicemaps.jl")
 include("distributions.jl")
 include("runtime.jl")
+include("parameters.jl")
 include("frontend.jl")
 
 end

@@ -39,6 +39,17 @@ using UncertainTea
     @test plan.steps[1].parameter_slot == 1
     @test isnothing(plan.steps[2].parameter_slot)
 
+    params = parameter_vector(trace)
+    initial = initialparameters(gaussian_mean; rng=MersenneTwister(11))
+    overrides = parameterchoicemap(gaussian_mean, params)
+    expected_joint = UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace[:mu]) +
+        UncertainTea.logpdf(normal(trace[:mu], 1.0f0), 0.3f0)
+
+    @test params == [Float64(trace[:mu])]
+    @test length(initial) == 1
+    @test overrides[:mu] == trace[:mu]
+    @test logjoint(gaussian_mean, params, (), constraints; rng=MersenneTwister(7)) ≈ expected_joint
+
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
         for i in 1:n
@@ -74,6 +85,12 @@ using UncertainTea
     @test isnothing(plan2.steps[2].parameter_slot)
     @test length(plan2.steps[2].scopes) == 1
 
+    params2 = [Float64(trace2[:mu])]
+    expected_joint2 = UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace2[:mu]) +
+        sum(UncertainTea.logpdf(normal(trace2[:mu], 1.0f0), y) for y in ys)
+
+    @test logjoint(iid_model, params2, (length(ys),), repeated; rng=MersenneTwister(8)) ≈ expected_joint2
+
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
         return z
@@ -81,9 +98,12 @@ using UncertainTea
 
     step_spec = modelspec(step)
     step_plan = executionplan(step)
+    step_trace, _ = generate(step, (2.0f0,), choicemap(); rng=MersenneTwister(4))
     @test parametercount(step_spec.parameter_layout) == 1
     @test step_spec.parameter_layout.slots[1].binding == :z
     @test step_plan.steps[1].parameter_slot == 1
+    @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap(); rng=MersenneTwister(9)) ≈
+        UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z])
 
     @tea static function chain_model(T)
         z = ({:z => 1} ~ step(0.0f0))
@@ -113,6 +133,8 @@ using UncertainTea
     @test isnothing(plan3.steps[1].parameter_slot)
     @test isnothing(plan3.steps[2].parameter_slot)
     @test length(plan3.steps[2].scopes) == 1
+    @test parameter_vector(trace3) == Float64[]
+    @test_throws ArgumentError logjoint(chain_model, Float64[], (3,), choicemap(); rng=MersenneTwister(10))
 
     @tea static function nested_loop_model(n, m)
         z ~ normal(0.0f0, 1.0f0)
@@ -137,4 +159,6 @@ using UncertainTea
     @test length(plan4.steps) == 2
     @test plan4.steps[1].parameter_slot == 1
     @test length(plan4.steps[2].scopes) == 2
+
+    @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
 end
