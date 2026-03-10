@@ -268,6 +268,11 @@ using UncertainTea
         return sigma
     end
 
+    @tea static function observed_coin()
+        {:y} ~ bernoulli(0.25f0)
+        return nothing
+    end
+
     @tea static function positive_latent()
         sigma ~ lognormal(0.0f0, 0.5f0)
         {:y} ~ normal(sigma, 1.0f0)
@@ -379,6 +384,18 @@ using UncertainTea
     gaussian_backend_plan = backend_execution_plan(gaussian_mean)
     iid_backend_report = backend_report(iid_model)
     iid_backend_plan = backend_execution_plan(iid_model)
+    coin_backend_report = backend_report(observed_coin)
+    coin_backend_plan = backend_execution_plan(observed_coin)
+    coin_batch_logjoint = batched_logjoint(
+        observed_coin,
+        zeros(0, 3),
+        (),
+        [
+            choicemap((:y, true)),
+            choicemap((:y, false)),
+            choicemap((:y, true)),
+        ],
+    )
     deterministic_backend_report = backend_report(deterministic_scale)
     deterministic_backend_plan = backend_execution_plan(deterministic_scale)
     unsupported_backend_report = backend_report(unsupported_backend_model)
@@ -444,6 +461,14 @@ using UncertainTea
     @test iid_backend_plan.generic_slots[1]
     @test iid_backend_plan.numeric_slots[2]
     @test iid_backend_plan.generic_slots[3]
+    @test coin_backend_report.supported
+    @test isempty(coin_backend_plan.numeric_slots)
+    @test isempty(coin_backend_plan.generic_slots)
+    @test coin_batch_logjoint ≈ [
+        logjoint(observed_coin, Float64[], (), choicemap((:y, true))),
+        logjoint(observed_coin, Float64[], (), choicemap((:y, false))),
+        logjoint(observed_coin, Float64[], (), choicemap((:y, true))),
+    ] atol=1e-8
     @test deterministic_backend_report.supported
     @test length(deterministic_backend_plan.steps) == 4
     @test deterministic_backend_plan.steps[3] isa UncertainTea.BackendDeterministicPlanStep

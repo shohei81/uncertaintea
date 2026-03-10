@@ -89,6 +89,8 @@ The next lowering layer is now explicit:
   the batch; divergent loop shapes fall back to the compiled CPU path
 - backend-plan environments now split numeric slots from generic/index slots so
   arithmetic-heavy bindings can live in dense `Float64` storage
+- backend-plan distribution scoring now uses family-specific direct score kernels
+  instead of constructing distribution objects on the hot path
 
 ## Phase 2 Execution Strategy
 

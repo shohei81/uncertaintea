@@ -643,10 +643,36 @@ function _concrete_address(env::BatchedPlanEnvironment, address::BackendAddressS
     return Tuple(parts)
 end
 
-function _backend_distribution(family::Symbol, arguments::Tuple)
-    family === :normal && return normal(arguments...)
-    family === :lognormal && return lognormal(arguments...)
-    family === :bernoulli && return bernoulli(arguments...)
+function _backend_normal_logpdf(mu, sigma, x)
+    xx, mu_, sigma_ = promote(x, mu, sigma)
+    sigma_ > zero(sigma_) || throw(ArgumentError("normal requires sigma > 0"))
+    z = (xx - mu_) / sigma_
+    return -log(sigma_) - log(2 * pi) / 2 - z * z / 2
+end
+
+function _backend_lognormal_logpdf(mu, sigma, x)
+    xx, mu_, sigma_ = promote(x, mu, sigma)
+    sigma_ > zero(sigma_) || throw(ArgumentError("lognormal requires sigma > 0"))
+    xx > zero(xx) || return oftype(xx, -Inf)
+    return _backend_normal_logpdf(mu_, sigma_, log(xx)) - log(xx)
+end
+
+function _backend_bernoulli_logpdf(p, x)
+    probability = p
+    zero(probability) <= probability <= one(probability) ||
+        throw(ArgumentError("bernoulli requires 0 <= p <= 1"))
+    value = x isa Bool ? x : x != 0
+    return value ? log(probability) : log1p(-probability)
+end
+
+function _score_backend_family(family::Symbol, arguments::Tuple, value)
+    if family === :normal
+        return _backend_normal_logpdf(arguments[1], arguments[2], value)
+    elseif family === :lognormal
+        return _backend_lognormal_logpdf(arguments[1], arguments[2], value)
+    elseif family === :bernoulli
+        return _backend_bernoulli_logpdf(arguments[1], value)
+    end
     throw(ArgumentError("unsupported backend distribution family `$family`"))
 end
 
@@ -685,9 +711,8 @@ function _score_backend_step!(
     end
 
     arguments = tuple((_eval_backend_expr(env, arg) for arg in step.arguments)...)
-    dist = _backend_distribution(step.family, arguments)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
-    return logpdf(dist, value)
+    return _score_backend_family(step.family, arguments, value)
 end
 
 function _score_backend_step!(
@@ -779,8 +804,7 @@ function _score_backend_step!(
         end
 
         arguments = tuple((_eval_backend_expr(env, arg, batch_index) for arg in step.arguments)...)
-        dist = _backend_distribution(step.family, arguments)
-        totals[batch_index] += logpdf(dist, value)
+        totals[batch_index] += _score_backend_family(step.family, arguments, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
                 env.numeric_values[step.binding_slot, batch_index] = Float64(value)
