@@ -1,0 +1,19 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/deps/build.log
+/Manifest.toml
+
+# Documentation builds
+/docs/build/
+/docs/site/
+
+# Test and benchmark outputs
+/coverage/
+/benchmarks/output/
+
+# Editors and OS files
+.DS_Store
+.vscode/
+.idea/
