@@ -105,6 +105,8 @@ The next lowering layer is now explicit:
 - synchronized repeated-observation loops now have a narrow fast path when the
   loop body is a single observed choice and the address depends only on the
   iterator
+- batched backend evaluation now reuses its environment, totals buffer, and
+  unconstrained temporary buffers when the batch shape stays fixed
 
 ## Phase 2 Execution Strategy
 

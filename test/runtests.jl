@@ -357,6 +357,7 @@ using UncertainTea
         gaussian_batch_gradient_cache,
         gaussian_batch_params_shifted,
     )
+    gaussian_workspace = UncertainTea.BatchedLogjointWorkspace(gaussian_mean)
     iid_batch_params = reshape(Float64[-0.2, 0.4], 1, 2)
     iid_batch_args = [(2,), (3,)]
     iid_batch_constraints = [
@@ -502,6 +503,25 @@ using UncertainTea
         logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for
         index in 1:3
     ]...) atol=1e-8
+    gaussian_workspace_values = UncertainTea._logjoint_with_batched_backend!(
+        gaussian_workspace,
+        gaussian_batch_params,
+        (),
+        gaussian_batch_constraints,
+    )
+    gaussian_workspace_env = gaussian_workspace.batched_environment[]
+    gaussian_workspace_totals = gaussian_workspace.batched_totals_buffer[]
+    @test gaussian_workspace_values ≈ gaussian_batch_logjoint atol=1e-8
+    @test UncertainTea._logjoint_with_batched_backend!(
+        gaussian_workspace,
+        gaussian_batch_params_shifted,
+        (),
+        gaussian_batch_constraints,
+    ) ≈ [
+        logjoint(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for index in 1:3
+    ] atol=1e-8
+    @test gaussian_workspace.batched_environment[] === gaussian_workspace_env
+    @test gaussian_workspace.batched_totals_buffer[] === gaussian_workspace_totals
     @test iid_batch_logjoint ≈ [
         logjoint(iid_model, iid_batch_params[:, index], iid_batch_args[index], iid_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
@@ -535,6 +555,33 @@ using UncertainTea
             positive_batch_constraints[index],
         ) for index in 1:3
     ]...) atol=1e-8
+    positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step)
+    positive_workspace_values = UncertainTea._logjoint_unconstrained_batched_backend!(
+        observed_positive_step,
+        positive_workspace,
+        positive_batch_unconstrained,
+        (),
+        positive_batch_constraints,
+    )
+    positive_workspace_constrained = positive_workspace.batched_constrained_buffer[]
+    positive_workspace_logabsdet = positive_workspace.batched_logabsdet_buffer[]
+    @test positive_workspace_values ≈ positive_batch_logjoint atol=1e-8
+    @test UncertainTea._logjoint_unconstrained_batched_backend!(
+        observed_positive_step,
+        positive_workspace,
+        positive_batch_unconstrained .+ 0.05,
+        (),
+        positive_batch_constraints,
+    ) ≈ [
+        logjoint_unconstrained(
+            observed_positive_step,
+            (positive_batch_unconstrained .+ 0.05)[:, index],
+            (),
+            positive_batch_constraints[index],
+        ) for index in 1:3
+    ] atol=1e-8
+    @test positive_workspace.batched_constrained_buffer[] === positive_workspace_constrained
+    @test positive_workspace.batched_logabsdet_buffer[] === positive_workspace_logabsdet
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

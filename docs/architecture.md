@@ -95,6 +95,8 @@ Current backend-lowering subset:
 - synchronized backend loops with a single observed choice whose address depends
   only on the loop iterator now use a loop-local fast path instead of the
   generic body scorer
+- batched backend workspaces now reuse their environment and temporary buffers
+  across repeated evaluations with the same batch shape
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

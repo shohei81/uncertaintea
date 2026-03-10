@@ -1,11 +1,16 @@
-mutable struct BatchedLogjointWorkspace{BP,CP,E,B}
+mutable struct BatchedLogjointWorkspace{BP,CP,E}
     backend_plan::BP
     compiled_plan::CP
     environment::E
     parameter_count::Int
     argument_count::Int
     argument_slots::Vector{Int}
-    constrained_buffer::B
+    constrained_buffer::Base.RefValue{Any}
+    batched_environment::Base.RefValue{Any}
+    batched_totals_buffer::Base.RefValue{Any}
+    batched_constrained_buffer::Base.RefValue{Any}
+    batched_logabsdet_buffer::Base.RefValue{Any}
+    batched_argument_buffer::Base.RefValue{Any}
 end
 
 struct BatchedGradientColumnCache{F,C,V,W}
@@ -32,6 +37,11 @@ function BatchedLogjointWorkspace(model::TeaModel)
         parametercount(plan.parameter_layout),
         length(modelspec(model).arguments),
         copy(plan.environment_layout.argument_slots),
+        Ref{Any}(nothing),
+        Ref{Any}(nothing),
+        Ref{Any}(nothing),
+        Ref{Any}(nothing),
+        Ref{Any}(nothing),
         Ref{Any}(nothing),
     )
 end
@@ -89,39 +99,50 @@ function _prepare_environment!(workspace::BatchedLogjointWorkspace, args::Tuple)
     return env
 end
 
-function _prepare_batched_environment!(
-    backend_plan::BackendExecutionPlan,
-    layout::EnvironmentLayout,
-    argument_slots::Vector{Int},
-    argument_count::Int,
-    args,
-    batch_size::Int,
-)
-    env = BatchedPlanEnvironment(
-        layout,
-        backend_plan.numeric_slots,
-        backend_plan.index_slots,
-        backend_plan.generic_slots,
-        batch_size,
-    )
+function _batched_environment!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    env = workspace.batched_environment[]
+    if !(env isa BatchedPlanEnvironment) || env.batch_size != batch_size
+        env = BatchedPlanEnvironment(
+            workspace.environment.layout,
+            workspace.backend_plan.numeric_slots,
+            workspace.backend_plan.index_slots,
+            workspace.backend_plan.generic_slots,
+            batch_size,
+        )
+        workspace.batched_environment[] = env
+    end
+    return env
+end
+
+function _batched_argument_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    buffer = workspace.batched_argument_buffer[]
+    if !(buffer isa Vector{Any}) || length(buffer) != batch_size
+        buffer = Vector{Any}(undef, batch_size)
+        workspace.batched_argument_buffer[] = buffer
+    end
+    return buffer
+end
+
+function _prepare_batched_environment!(workspace::BatchedLogjointWorkspace, args, batch_size::Int)
+    env = _batched_environment!(workspace, batch_size)
     fill!(env.assigned, false)
 
     if args isa Tuple
-        length(args) == argument_count ||
-            throw(DimensionMismatch("expected $argument_count model arguments, got $(length(args))"))
-        for (slot, value) in zip(argument_slots, args)
+        length(args) == workspace.argument_count ||
+            throw(DimensionMismatch("expected $(workspace.argument_count) model arguments, got $(length(args))"))
+        for (slot, value) in zip(workspace.argument_slots, args)
             _batched_environment_set_shared!(env, slot, value)
         end
     else
         length(args) == batch_size ||
             throw(DimensionMismatch("expected $batch_size batched argument tuples, got $(length(args))"))
-        for argument_index in 1:argument_count
-            slot = argument_slots[argument_index]
-            values = Vector{Any}(undef, batch_size)
+        values = _batched_argument_buffer!(workspace, batch_size)
+        for argument_index in 1:workspace.argument_count
+            slot = workspace.argument_slots[argument_index]
             for batch_index in 1:batch_size
                 batch_args = args[batch_index]
-                length(batch_args) == argument_count ||
-                    throw(DimensionMismatch("expected $argument_count model arguments, got $(length(batch_args))"))
+                length(batch_args) == workspace.argument_count ||
+                    throw(DimensionMismatch("expected $(workspace.argument_count) model arguments, got $(length(batch_args))"))
                 values[batch_index] = batch_args[argument_index]
             end
             _batched_environment_set!(env, slot, values)
@@ -136,6 +157,37 @@ function _constrained_buffer!(workspace::BatchedLogjointWorkspace, params::Abstr
     if !(buffer isa AbstractVector) || length(buffer) != workspace.parameter_count || eltype(buffer) != eltype(params)
         buffer = similar(params, workspace.parameter_count)
         workspace.constrained_buffer[] = buffer
+    end
+    return buffer
+end
+
+function _batched_totals_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    buffer = workspace.batched_totals_buffer[]
+    if !(buffer isa Vector{Float64}) || length(buffer) != batch_size
+        buffer = zeros(Float64, batch_size)
+        workspace.batched_totals_buffer[] = buffer
+    else
+        fill!(buffer, 0.0)
+    end
+    return buffer
+end
+
+function _batched_constrained_buffer!(workspace::BatchedLogjointWorkspace, parameter_count::Int, batch_size::Int)
+    buffer = workspace.batched_constrained_buffer[]
+    if !(buffer isa Matrix{Float64}) || size(buffer) != (parameter_count, batch_size)
+        buffer = Matrix{Float64}(undef, parameter_count, batch_size)
+        workspace.batched_constrained_buffer[] = buffer
+    end
+    return buffer
+end
+
+function _batched_logabsdet_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    buffer = workspace.batched_logabsdet_buffer[]
+    if !(buffer isa Vector{Float64}) || length(buffer) != batch_size
+        buffer = zeros(Float64, batch_size)
+        workspace.batched_logabsdet_buffer[] = buffer
+    else
+        fill!(buffer, 0.0)
     end
     return buffer
 end
@@ -162,15 +214,8 @@ function _logjoint_with_batched_backend!(
     constraints,
 )
     batch_size = size(params, 2)
-    env = _prepare_batched_environment!(
-        workspace.backend_plan,
-        workspace.environment.layout,
-        workspace.argument_slots,
-        workspace.argument_count,
-        args,
-        batch_size,
-    )
-    totals = zeros(Float64, batch_size)
+    env = _prepare_batched_environment!(workspace, args, batch_size)
+    totals = _batched_totals_buffer!(workspace, batch_size)
     _score_backend_steps!(totals, workspace.backend_plan.steps, env, params, constraints)
     return totals
 end
@@ -224,8 +269,8 @@ function _logjoint_unconstrained_batched_backend!(
 )
     parameter_count, batch_size = size(params)
     layout = parameterlayout(model)
-    constrained = Matrix{Float64}(undef, parameter_count, batch_size)
-    logabsdet = zeros(Float64, batch_size)
+    constrained = _batched_constrained_buffer!(workspace, parameter_count, batch_size)
+    logabsdet = _batched_logabsdet_buffer!(workspace, batch_size)
     for slot in layout.slots
         slot_index = slot.index
         for batch_index in 1:batch_size
