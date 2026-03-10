@@ -433,6 +433,7 @@ using UncertainTea
         deterministic_batch_constraints,
     )
     deterministic_workspace = UncertainTea.BatchedLogjointWorkspace(deterministic_scale)
+    offset_workspace = UncertainTea.BatchedLogjointWorkspace(offset_iid_model)
     positive_batch_unconstrained = reshape(
         [
             positive_step_unconstrained[1] - 0.2,
@@ -572,6 +573,31 @@ using UncertainTea
         logjoint(offset_iid_model, offset_batch_params[:, index], offset_batch_args[index], offset_batch_constraints[index]) for
         index in 1:2
     ] atol=1e-8
+    offset_workspace_values = UncertainTea._logjoint_with_batched_backend!(
+        offset_workspace,
+        offset_batch_params,
+        offset_batch_args,
+        offset_batch_constraints,
+    )
+    offset_workspace_env = offset_workspace.batched_environment[]
+    offset_workspace_scratch = offset_workspace_env.index_scratch[1]
+    @test offset_workspace_values ≈ offset_batch_logjoint atol=1e-8
+    @test !isempty(offset_workspace_env.index_scratch)
+    @test UncertainTea._logjoint_with_batched_backend!(
+        offset_workspace,
+        offset_batch_params .+ 0.05,
+        offset_batch_args,
+        offset_batch_constraints,
+    ) ≈ [
+        logjoint(
+            offset_iid_model,
+            (offset_batch_params .+ 0.05)[:, index],
+            offset_batch_args[index],
+            offset_batch_constraints[index],
+        ) for index in 1:2
+    ] atol=1e-8
+    @test offset_workspace.batched_environment[] === offset_workspace_env
+    @test offset_workspace_env.index_scratch[1] === offset_workspace_scratch
     @test indexed_scale_batch_logjoint ≈ [
         logjoint(
             indexed_scale_model,

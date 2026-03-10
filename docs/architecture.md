@@ -105,6 +105,9 @@ Current backend-lowering subset:
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
+- backend index expressions and dynamic address parts now use reusable integer
+  scratch buffers, so batched address evaluation no longer reinterprets each
+  index expression independently for every column
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

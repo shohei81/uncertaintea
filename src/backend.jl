@@ -126,6 +126,7 @@ mutable struct BatchedPlanEnvironment
     index_values::Matrix{Int}
     generic_values::Vector{Vector{Any}}
     numeric_scratch::Vector{Vector{Float64}}
+    index_scratch::Vector{Vector{Int}}
     assigned::BitVector
     batch_size::Int
 end
@@ -149,6 +150,7 @@ function BatchedPlanEnvironment(
         index_values,
         generic_values,
         Vector{Vector{Float64}}(),
+        Vector{Vector{Int}}(),
         falses(length(layout.symbols)),
         batch_size,
     )
@@ -921,6 +923,16 @@ function _batched_numeric_scratch!(env::BatchedPlanEnvironment, depth::Int)
     return buffer
 end
 
+function _batched_index_scratch!(env::BatchedPlanEnvironment, depth::Int)
+    depth > 0 || throw(ArgumentError("batched index scratch depth must be positive"))
+    while length(env.index_scratch) < depth
+        push!(env.index_scratch, Vector{Int}(undef, env.batch_size))
+    end
+    buffer = env.index_scratch[depth]
+    length(buffer) == env.batch_size || resize!(buffer, env.batch_size)
+    return buffer
+end
+
 function _apply_backend_numeric_unary!(
     destination::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -1097,6 +1109,116 @@ function _eval_backend_index_value_expr(env::BatchedPlanEnvironment, expr::Backe
     return value
 end
 
+function _apply_backend_index_unary!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    op::Symbol,
+)
+    for batch_index in eachindex(destination)
+        destination[batch_index] = _require_index_value(
+            env,
+            _backend_primitive(op, destination[batch_index]),
+            "batched backend index primitive",
+        )
+    end
+    return destination
+end
+
+function _apply_backend_index_binary!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    op::Symbol,
+    rhs::AbstractVector,
+)
+    length(destination) == length(rhs) ||
+        throw(DimensionMismatch("expected backend index vectors of matching length, got $(length(destination)) and $(length(rhs))"))
+    for batch_index in eachindex(destination, rhs)
+        destination[batch_index] = _require_index_value(
+            env,
+            _backend_primitive(op, destination[batch_index], rhs[batch_index]),
+            "batched backend index primitive",
+        )
+    end
+    return destination
+end
+
+function _eval_backend_index_value_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendLiteralExpr,
+    depth::Int=1,
+)
+    fill!(destination, _require_index_value(env, expr.value, "batched backend index expression"))
+    return destination
+end
+
+function _eval_backend_index_value_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendSlotExpr,
+    depth::Int=1,
+)
+    env.assigned[expr.slot] || throw(BatchedBackendFallback("environment slot $(expr.slot) is not assigned"))
+    if env.index_slots[expr.slot]
+        copyto!(destination, view(env.index_values, expr.slot, :))
+        return destination
+    elseif env.numeric_slots[expr.slot]
+        for batch_index in eachindex(destination)
+            destination[batch_index] = _require_index_value(
+                env,
+                env.numeric_values[expr.slot, batch_index],
+                "batched backend index slot",
+            )
+        end
+        return destination
+    end
+    _backend_index_error(env, "batched backend index slot $(expr.slot) is not index-compatible")
+end
+
+function _eval_backend_index_value_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendPrimitiveExpr,
+    depth::Int=1,
+)
+    expr.op === Symbol(":") && _backend_index_error(env, "batched backend index value expression cannot be a range")
+    expr.op === Symbol("=>") && _backend_index_error(env, "batched backend index value expression cannot be a pair")
+    isempty(expr.arguments) && _backend_index_error(env, "batched backend index primitive requires arguments")
+
+    _eval_backend_index_value_expr!(destination, env, first(expr.arguments), depth + 1)
+    if length(expr.arguments) == 1
+        return _apply_backend_index_unary!(destination, env, expr.op)
+    end
+
+    temp = _batched_index_scratch!(env, depth)
+    for argument in Base.tail(expr.arguments)
+        _eval_backend_index_value_expr!(temp, env, argument, depth + 1)
+        _apply_backend_index_binary!(destination, env, expr.op, temp)
+    end
+    return destination
+end
+
+function _eval_backend_index_value_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendTupleExpr,
+    depth::Int=1,
+)
+    _backend_index_error(env, "batched backend index value expression cannot be a tuple")
+end
+
+function _eval_backend_index_value_expr!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendBlockExpr,
+    depth::Int=1,
+)
+    for arg in expr.arguments
+        _eval_backend_index_value_expr!(destination, env, arg, depth)
+    end
+    return destination
+end
+
 function _eval_backend_index_iterable_expr(env::PlanEnvironment, expr::BackendPrimitiveExpr)
     expr.op === Symbol(":") || _backend_index_error(env, "backend loop iterable must lower to `:`")
     arguments = tuple((_eval_backend_index_value_expr(env, arg) for arg in expr.arguments)...)
@@ -1163,6 +1285,29 @@ end
 
 function _concrete_address(env::BatchedPlanEnvironment, address::BackendAddressSpec, batch_index::Int)
     return _concrete_backend_address_parts(env, address.parts, batch_index)
+end
+
+_batched_backend_address_parts(env::BatchedPlanEnvironment, ::Tuple{}, depth::Int=1) = ()
+
+function _batched_backend_address_parts(env::BatchedPlanEnvironment, parts::Tuple, depth::Int=1)
+    part = first(parts)
+    head = if part isa BackendAddressLiteralPart
+        part.value
+    else
+        values = _batched_index_scratch!(env, depth)
+        _eval_backend_index_value_expr!(values, env, part.expr, depth + 1)
+        values
+    end
+    next_depth = part isa BackendAddressLiteralPart ? depth : depth + 1
+    return (head, _batched_backend_address_parts(env, Base.tail(parts), next_depth)...)
+end
+
+_concrete_batched_address(::Tuple{}, batch_index::Int) = ()
+
+function _concrete_batched_address(parts::Tuple, batch_index::Int)
+    source = first(parts)
+    head = source isa AbstractVector ? source[batch_index] : source
+    return (head, _concrete_batched_address(Base.tail(parts), batch_index)...)
 end
 
 function _backend_normal_logpdf(mu, sigma, x)
@@ -1375,8 +1520,9 @@ function _score_backend_step!(
     sigma_values = _batched_numeric_scratch!(env, 2)
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     for batch_index in 1:env.batch_size
-        address = _concrete_address(env, step.address, batch_index)
+        address = _concrete_batched_address(address_parts, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
         mu = mu_values[batch_index]
@@ -1410,8 +1556,9 @@ function _score_backend_step!(
     sigma_values = _batched_numeric_scratch!(env, 2)
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     for batch_index in 1:env.batch_size
-        address = _concrete_address(env, step.address, batch_index)
+        address = _concrete_batched_address(address_parts, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
         mu = mu_values[batch_index]
@@ -1443,8 +1590,9 @@ function _score_backend_step!(
 )
     probability_values = _batched_numeric_scratch!(env, 1)
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     for batch_index in 1:env.batch_size
-        address = _concrete_address(env, step.address, batch_index)
+        address = _concrete_batched_address(address_parts, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
         value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
         probability = probability_values[batch_index]
@@ -1541,13 +1689,7 @@ function _score_backend_step!(
         env.assigned[step.binding_slot] = true
         return totals
     elseif env.index_slots[step.binding_slot]
-        for batch_index in 1:env.batch_size
-            value = _eval_backend_expr(env, step.expr, batch_index)
-            value isa Integer || throw(
-                BatchedBackendFallback("index backend slot $(step.binding_slot) produced a non-integer deterministic value"),
-            )
-            env.index_values[step.binding_slot, batch_index] = Int(value)
-        end
+        _eval_backend_index_value_expr!(view(env.index_values, step.binding_slot, :), env, step.expr)
         env.assigned[step.binding_slot] = true
         return totals
     end

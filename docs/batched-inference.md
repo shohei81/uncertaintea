@@ -113,6 +113,8 @@ The next lowering layer is now explicit:
   constrained-position buffers instead of reallocating them on each iteration
 - backend numeric expressions for supported models now evaluate batch-wide into
   reusable scratch buffers instead of recursing separately for each column
+- backend index expressions and dynamic address parts now use reusable integer
+  scratch buffers on the batched path, reducing per-column address evaluation
 
 ## Phase 2 Execution Strategy
 
