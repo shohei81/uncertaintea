@@ -77,6 +77,8 @@ end
 struct BackendExecutionPlan{S<:Tuple}
     target::Symbol
     steps::S
+    numeric_slots::BitVector
+    generic_slots::BitVector
 end
 
 struct BackendLoweringReport
@@ -98,14 +100,31 @@ end
 
 mutable struct BatchedPlanEnvironment
     layout::EnvironmentLayout
-    values::Vector{Vector{Any}}
+    numeric_slots::BitVector
+    generic_slots::BitVector
+    numeric_values::Matrix{Float64}
+    generic_values::Vector{Vector{Any}}
     assigned::BitVector
     batch_size::Int
 end
 
-function BatchedPlanEnvironment(layout::EnvironmentLayout, batch_size::Int)
-    values = [Vector{Any}(undef, batch_size) for _ in layout.symbols]
-    return BatchedPlanEnvironment(layout, values, falses(length(layout.symbols)), batch_size)
+function BatchedPlanEnvironment(
+    layout::EnvironmentLayout,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+    batch_size::Int,
+)
+    numeric_values = zeros(Float64, length(layout.symbols), batch_size)
+    generic_values = [Vector{Any}(undef, batch_size) for _ in layout.symbols]
+    return BatchedPlanEnvironment(
+        layout,
+        copy(numeric_slots),
+        copy(generic_slots),
+        numeric_values,
+        generic_values,
+        falses(length(layout.symbols)),
+        batch_size,
+    )
 end
 
 function Base.show(io::IO, report::BackendLoweringReport)
@@ -122,7 +141,16 @@ function Base.show(io::IO, report::BackendLoweringReport)
 end
 
 function Base.show(io::IO, plan::BackendExecutionPlan)
-    print(io, "BackendExecutionPlan(target=", plan.target, ", steps=", length(plan.steps), ")")
+    print(
+        io,
+        "BackendExecutionPlan(target=",
+        plan.target,
+        ", steps=",
+        length(plan.steps),
+        ", numeric_slots=",
+        count(identity, plan.numeric_slots),
+        ")",
+    )
 end
 
 function Base.showerror(io::IO, err::BatchedBackendFallback)
@@ -247,6 +275,209 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::L
     return BackendLoopPlanStep(step.iterator_slot, iterable, tuple(body...))
 end
 
+function _mark_backend_numeric_slot!(numeric_slots::BitVector, generic_slots::BitVector, slot::Int)
+    generic_slots[slot] && return false
+    numeric_slots[slot] && return false
+    numeric_slots[slot] = true
+    return true
+end
+
+function _mark_backend_generic_slot!(numeric_slots::BitVector, generic_slots::BitVector, slot::Int)
+    changed = false
+    if !generic_slots[slot]
+        generic_slots[slot] = true
+        changed = true
+    end
+    if numeric_slots[slot]
+        numeric_slots[slot] = false
+        changed = true
+    end
+    return changed
+end
+
+function _mark_backend_numeric_expr_slots!(
+    expr::BackendLiteralExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    return nothing
+end
+
+function _mark_backend_numeric_expr_slots!(
+    expr::BackendSlotExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_numeric_slot!(numeric_slots, generic_slots, expr.slot)
+    return nothing
+end
+
+function _mark_backend_numeric_expr_slots!(
+    expr::BackendPrimitiveExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    if expr.op === Symbol(":") || expr.op === Symbol("=>")
+        _mark_backend_generic_expr_slots!(expr, numeric_slots, generic_slots)
+        return nothing
+    end
+    for arg in expr.arguments
+        _mark_backend_numeric_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _mark_backend_numeric_expr_slots!(
+    expr::BackendTupleExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    for arg in expr.arguments
+        _mark_backend_numeric_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _mark_backend_numeric_expr_slots!(
+    expr::BackendBlockExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    for arg in expr.arguments
+        _mark_backend_numeric_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _mark_backend_generic_expr_slots!(
+    expr::BackendLiteralExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    return nothing
+end
+
+function _mark_backend_generic_expr_slots!(
+    expr::BackendSlotExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_generic_slot!(numeric_slots, generic_slots, expr.slot)
+    return nothing
+end
+
+function _mark_backend_generic_expr_slots!(
+    expr::BackendPrimitiveExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    for arg in expr.arguments
+        _mark_backend_generic_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _mark_backend_generic_expr_slots!(
+    expr::BackendTupleExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    for arg in expr.arguments
+        _mark_backend_generic_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _mark_backend_generic_expr_slots!(
+    expr::BackendBlockExpr,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    for arg in expr.arguments
+        _mark_backend_generic_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _backend_expr_is_numeric(expr::BackendLiteralExpr)
+    return expr.value isa Real && !(expr.value isa Bool)
+end
+
+_backend_expr_is_numeric(expr::BackendSlotExpr) = true
+
+function _backend_expr_is_numeric(expr::BackendPrimitiveExpr)
+    (expr.op === Symbol(":") || expr.op === Symbol("=>")) && return false
+    return all(_backend_expr_is_numeric, expr.arguments)
+end
+
+function _backend_expr_is_numeric(expr::BackendTupleExpr)
+    return all(_backend_expr_is_numeric, expr.arguments)
+end
+
+function _backend_expr_is_numeric(expr::BackendBlockExpr)
+    return all(_backend_expr_is_numeric, expr.arguments)
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendChoicePlanStep,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    for part in step.address.parts
+        if part isa BackendAddressExprPart
+            _mark_backend_generic_expr_slots!(part.expr, numeric_slots, generic_slots)
+        end
+    end
+    for arg in step.arguments
+        _mark_backend_numeric_expr_slots!(arg, numeric_slots, generic_slots)
+    end
+    if !isnothing(step.binding_slot)
+        if step.family === :bernoulli
+            _mark_backend_generic_slot!(numeric_slots, generic_slots, step.binding_slot)
+        else
+            _mark_backend_numeric_slot!(numeric_slots, generic_slots, step.binding_slot)
+        end
+    end
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendDeterministicPlanStep,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    if _backend_expr_is_numeric(step.expr)
+        _mark_backend_numeric_expr_slots!(step.expr, numeric_slots, generic_slots)
+        _mark_backend_numeric_slot!(numeric_slots, generic_slots, step.binding_slot)
+    else
+        _mark_backend_generic_expr_slots!(step.expr, numeric_slots, generic_slots)
+        _mark_backend_generic_slot!(numeric_slots, generic_slots, step.binding_slot)
+    end
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendLoopPlanStep,
+    numeric_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_generic_slot!(numeric_slots, generic_slots, step.iterator_slot)
+    _mark_backend_generic_expr_slots!(step.iterable, numeric_slots, generic_slots)
+    for inner in step.body
+        _collect_backend_slot_kinds!(inner, numeric_slots, generic_slots)
+    end
+    return nothing
+end
+
+function _derive_backend_slot_kinds(layout::EnvironmentLayout, steps::Tuple)
+    numeric_slots = falses(length(layout.symbols))
+    generic_slots = falses(length(layout.symbols))
+    for step in steps
+        _collect_backend_slot_kinds!(step, numeric_slots, generic_slots)
+    end
+    return numeric_slots, generic_slots
+end
+
 function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     target === :gpu || throw(ArgumentError("only :gpu backend lowering is currently supported"))
     plan = executionplan(model)
@@ -262,7 +493,8 @@ function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     if any(isnothing, steps)
         return BackendLoweringResult(report, nothing)
     end
-    return BackendLoweringResult(report, BackendExecutionPlan(target, tuple(steps...)))
+    numeric_slots, generic_slots = _derive_backend_slot_kinds(plan.environment_layout, tuple(steps...))
+    return BackendLoweringResult(report, BackendExecutionPlan(target, tuple(steps...), numeric_slots, generic_slots))
 end
 
 function _backend_lowering(model::TeaModel; target::Symbol=:gpu)
@@ -305,7 +537,10 @@ end
 
 function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendSlotExpr, batch_index::Int)
     env.assigned[expr.slot] || throw(ArgumentError("environment slot $(expr.slot) is not assigned"))
-    return env.values[expr.slot][batch_index]
+    if env.numeric_slots[expr.slot]
+        return env.numeric_values[expr.slot, batch_index]
+    end
+    return env.generic_values[expr.slot][batch_index]
 end
 
 function _backend_primitive(op::Symbol, args...)
@@ -474,23 +709,40 @@ function _batched_constraint(constraints::AbstractVector, batch_index::Int)
 end
 
 function _batched_environment_set_shared!(env::BatchedPlanEnvironment, slot::Int, value)
-    values = env.values[slot]
-    for batch_index in 1:env.batch_size
-        values[batch_index] = value
+    if env.numeric_slots[slot]
+        value isa Real && !(value isa Bool) || throw(
+            BatchedBackendFallback("numeric backend slot $slot received non-real shared value"),
+        )
+        env.numeric_values[slot, :] .= Float64(value)
+    else
+        values = env.generic_values[slot]
+        for batch_index in 1:env.batch_size
+            values[batch_index] = value
+        end
     end
     env.assigned[slot] = true
-    return values
+    return nothing
 end
 
 function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, values::AbstractVector)
     length(values) == env.batch_size ||
         throw(DimensionMismatch("expected $(env.batch_size) batched values, got $(length(values))"))
-    storage = env.values[slot]
-    for batch_index in 1:env.batch_size
-        storage[batch_index] = values[batch_index]
+    if env.numeric_slots[slot]
+        for batch_index in 1:env.batch_size
+            value = values[batch_index]
+            value isa Real && !(value isa Bool) || throw(
+                BatchedBackendFallback("numeric backend slot $slot received non-real batched value"),
+            )
+            env.numeric_values[slot, batch_index] = Float64(value)
+        end
+    else
+        storage = env.generic_values[slot]
+        for batch_index in 1:env.batch_size
+            storage[batch_index] = values[batch_index]
+        end
     end
     env.assigned[slot] = true
-    return storage
+    return nothing
 end
 
 function _batched_environment_restore!(
@@ -500,7 +752,7 @@ function _batched_environment_restore!(
     was_assigned::Bool,
 )
     if was_assigned
-        env.values[slot] .= previous_value
+        env.generic_values[slot] .= previous_value
         env.assigned[slot] = true
     else
         env.assigned[slot] = false
@@ -515,7 +767,6 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
-    binding_values = isnothing(step.binding_slot) ? nothing : env.values[step.binding_slot]
     for batch_index in 1:env.batch_size
         address = _concrete_address(env, step.address, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
@@ -530,7 +781,13 @@ function _score_backend_step!(
         arguments = tuple((_eval_backend_expr(env, arg, batch_index) for arg in step.arguments)...)
         dist = _backend_distribution(step.family, arguments)
         totals[batch_index] += logpdf(dist, value)
-        isnothing(binding_values) || (binding_values[batch_index] = value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
     end
     isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
     return totals
@@ -543,7 +800,19 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
-    values = env.values[step.binding_slot]
+    if env.numeric_slots[step.binding_slot]
+        for batch_index in 1:env.batch_size
+            value = _eval_backend_expr(env, step.expr, batch_index)
+            value isa Real && !(value isa Bool) || throw(
+                BatchedBackendFallback("numeric backend slot $(step.binding_slot) produced a non-real deterministic value"),
+            )
+            env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+        end
+        env.assigned[step.binding_slot] = true
+        return totals
+    end
+
+    values = env.generic_values[step.binding_slot]
     for batch_index in 1:env.batch_size
         values[batch_index] = _eval_backend_expr(env, step.expr, batch_index)
     end
@@ -593,7 +862,7 @@ function _score_backend_step!(
     end
 
     had_previous = env.assigned[step.iterator_slot]
-    previous_value = had_previous ? copy(env.values[step.iterator_slot]) : Vector{Any}()
+    previous_value = had_previous ? copy(env.generic_values[step.iterator_slot]) : Vector{Any}()
     for item in reference_iterable
         _batched_environment_set_shared!(env, step.iterator_slot, item)
         _score_backend_steps!(totals, step.body, env, params, constraints)

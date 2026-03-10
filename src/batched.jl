@@ -90,13 +90,14 @@ function _prepare_environment!(workspace::BatchedLogjointWorkspace, args::Tuple)
 end
 
 function _prepare_batched_environment!(
+    backend_plan::BackendExecutionPlan,
     layout::EnvironmentLayout,
     argument_slots::Vector{Int},
     argument_count::Int,
     args,
     batch_size::Int,
 )
-    env = BatchedPlanEnvironment(layout, batch_size)
+    env = BatchedPlanEnvironment(layout, backend_plan.numeric_slots, backend_plan.generic_slots, batch_size)
     fill!(env.assigned, false)
 
     if args isa Tuple
@@ -156,6 +157,7 @@ function _logjoint_with_batched_backend!(
 )
     batch_size = size(params, 2)
     env = _prepare_batched_environment!(
+        workspace.backend_plan,
         workspace.environment.layout,
         workspace.argument_slots,
         workspace.argument_count,

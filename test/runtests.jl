@@ -377,6 +377,8 @@ using UncertainTea
     )
     gaussian_backend_report = backend_report(gaussian_mean)
     gaussian_backend_plan = backend_execution_plan(gaussian_mean)
+    iid_backend_report = backend_report(iid_model)
+    iid_backend_plan = backend_execution_plan(iid_model)
     deterministic_backend_report = backend_report(deterministic_scale)
     deterministic_backend_plan = backend_execution_plan(deterministic_scale)
     unsupported_backend_report = backend_report(unsupported_backend_model)
@@ -434,9 +436,19 @@ using UncertainTea
     @test gaussian_backend_plan.target == :gpu
     @test length(gaussian_backend_plan.steps) == 2
     @test gaussian_backend_plan.steps[1] isa UncertainTea.BackendChoicePlanStep
+    @test gaussian_backend_plan.numeric_slots == BitVector([true])
+    @test gaussian_backend_plan.generic_slots == BitVector([false])
+    @test iid_backend_report.supported
+    @test count(identity, iid_backend_plan.numeric_slots) == 1
+    @test count(identity, iid_backend_plan.generic_slots) == 2
+    @test iid_backend_plan.generic_slots[1]
+    @test iid_backend_plan.numeric_slots[2]
+    @test iid_backend_plan.generic_slots[3]
     @test deterministic_backend_report.supported
     @test length(deterministic_backend_plan.steps) == 4
     @test deterministic_backend_plan.steps[3] isa UncertainTea.BackendDeterministicPlanStep
+    @test all(deterministic_backend_plan.numeric_slots)
+    @test !any(deterministic_backend_plan.generic_slots)
     @test !unsupported_backend_report.supported
     @test any(occursin("sin", issue) for issue in unsupported_backend_report.issues)
     @test unsupported_backend_logjoint ≈ [

@@ -87,6 +87,8 @@ The next lowering layer is now explicit:
 - unsupported models keep working through the compiled CPU fallback path
 - batched backend execution currently requires synchronized loop iterables across
   the batch; divergent loop shapes fall back to the compiled CPU path
+- backend-plan environments now split numeric slots from generic/index slots so
+  arithmetic-heavy bindings can live in dense `Float64` storage
 
 ## Phase 2 Execution Strategy
 
