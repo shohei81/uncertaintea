@@ -299,6 +299,47 @@ using UncertainTea
     positive_step_params = parameter_vector(positive_step_trace)
     positive_step_unconstrained = transform_to_unconstrained(positive_step_trace)
     positive_step_reconstrained = transform_to_constrained(observed_positive_step, positive_step_unconstrained)
+    gaussian_batch_params = reshape(Float64[-0.4, 0.0, 0.6], 1, 3)
+    gaussian_batch_constraints = [
+        choicemap((:y, -0.1f0)),
+        choicemap((:y, 0.3f0)),
+        choicemap((:y, 0.7f0)),
+    ]
+    gaussian_batch_logjoint = batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+    gaussian_batch_gradient = batched_logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+    iid_batch_params = reshape(Float64[-0.2, 0.4], 1, 2)
+    iid_batch_args = [(2,), (3,)]
+    iid_batch_constraints = [
+        choicemap((:y => 1, 0.1f0), (:y => 2, -0.2f0)),
+        choicemap((:y => 1, 0.5f0), (:y => 2, 0.2f0), (:y => 3, -0.1f0)),
+    ]
+    iid_batch_logjoint = batched_logjoint(iid_model, iid_batch_params, iid_batch_args, iid_batch_constraints)
+    positive_batch_unconstrained = reshape(
+        [
+            positive_step_unconstrained[1] - 0.2,
+            positive_step_unconstrained[1],
+            positive_step_unconstrained[1] + 0.2,
+        ],
+        1,
+        3,
+    )
+    positive_batch_constraints = [
+        choicemap((:y, 0.8f0)),
+        choicemap((:y, 1.2f0)),
+        choicemap((:y, 1.5f0)),
+    ]
+    positive_batch_logjoint = batched_logjoint_unconstrained(
+        observed_positive_step,
+        positive_batch_unconstrained,
+        (),
+        positive_batch_constraints,
+    )
+    positive_batch_gradient = batched_logjoint_gradient_unconstrained(
+        observed_positive_step,
+        positive_batch_unconstrained,
+        (),
+        positive_batch_constraints,
+    )
     short_warmup_schedule = UncertainTea._warmup_schedule(12)
     long_warmup_schedule = UncertainTea._warmup_schedule(150)
 
@@ -316,6 +357,28 @@ using UncertainTea
             (),
             choicemap((:state => :sigma, positive_step_trace[:state => :sigma]), (:y, 1.2f0)),
         ) atol=1e-6
+    @test gaussian_batch_logjoint ≈ [
+        logjoint(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index]) for index in 1:3
+    ] atol=1e-8
+    @test gaussian_batch_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index]) for
+        index in 1:3
+    ]...) atol=1e-8
+    @test iid_batch_logjoint ≈ [
+        logjoint(iid_model, iid_batch_params[:, index], iid_batch_args[index], iid_batch_constraints[index]) for index in 1:2
+    ] atol=1e-8
+    @test positive_batch_logjoint ≈ [
+        logjoint_unconstrained(observed_positive_step, positive_batch_unconstrained[:, index], (), positive_batch_constraints[index]) for
+        index in 1:3
+    ] atol=1e-8
+    @test positive_batch_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(
+            observed_positive_step,
+            positive_batch_unconstrained[:, index],
+            (),
+            positive_batch_constraints[index],
+        ) for index in 1:3
+    ]...) atol=1e-8
     @test short_warmup_schedule.initial_buffer == 5
     @test short_warmup_schedule.slow_window_ends == [12]
     @test short_warmup_schedule.terminal_buffer == 0
@@ -562,6 +625,9 @@ using UncertainTea
     @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
     @test_throws ArgumentError hmc(gaussian_mean, (), constraints; num_samples=10, divergence_threshold=0.0)
     @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
+    @test_throws DimensionMismatch batched_logjoint(gaussian_mean, zeros(2, 3), (), gaussian_batch_constraints)
+    @test_throws DimensionMismatch batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints[1:2])
+    @test_throws ArgumentError batched_logjoint(gaussian_mean, gaussian_batch_params, [1, 2, 3], gaussian_batch_constraints)
     @test_throws ArgumentError rhat(HMCChains(gaussian_mean, (), constraints, [gaussian_baseline_chain]))
     @test_throws ArgumentError ess(gaussian_multichain; space=:energy)
     @test_throws ArgumentError summarize(gaussian_multichain; quantiles=())

@@ -162,7 +162,8 @@ Initial direction:
 2. define the `choicemap` and `generate` API surface
 3. implement CPU-side lowering and `logjoint`
 4. implement the minimal Gen-like static DSL
-5. add one batch-friendly inference path, likely VI or SMC first
+5. add a batched `logjoint` reference path with a stable public API
+6. lower that batched path into a compiled evaluator before GPU backend work
 
 ## Non-Goals for v0
 

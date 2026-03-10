@@ -18,6 +18,7 @@ export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepea
 export parameterlayout, parametercount
 export executionplan
 export choicemap, generate, assess, logjoint, logjoint_unconstrained, logjoint_gradient_unconstrained
+export batched_logjoint, batched_logjoint_unconstrained, batched_logjoint_gradient_unconstrained
 export initialparameters, parameter_vector, parameterchoicemap
 export transform_to_constrained, transform_to_unconstrained, transform_to_constrained_with_logabsdet
 export HMCChain, HMCChains, HMCParameterSummary, HMCSummary
@@ -31,6 +32,7 @@ include("distributions.jl")
 include("runtime.jl")
 include("parameters.jl")
 include("evaluator.jl")
+include("batched.jl")
 include("inference.jl")
 include("frontend.jl")
 

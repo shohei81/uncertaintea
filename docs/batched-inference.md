@@ -1,0 +1,108 @@
+# Batched Inference Design
+
+Date: 2026-03-10
+
+## Motivation
+
+UncertainTea now has a good CPU reference path for single-chain `logjoint`,
+gradients, HMC, multi-chain HMC, and summaries.
+
+The next architectural step is not `NUTS`.
+It is a batched execution path that makes `chain`, `particle`, or `minibatch`
+dimensions explicit in the evaluator.
+
+This is the bridge from the current CPU implementation to a future GPU-native
+backend.
+
+## Design Goal
+
+Add a batched evaluator in phases:
+
+1. CPU reference batching with the final public API
+2. compiled batched execution on CPU
+3. backend-specific lowering for `CUDA.jl` and `Metal.jl`
+
+The public API should stabilize in phase 1 even if the implementation is still
+loop-based internally.
+
+## Batch Axis Convention
+
+The primary convention is:
+
+- parameter arrays use shape `num_params x batch`
+- outputs use shape `batch`
+- gradient outputs use shape `num_params x batch`
+
+This matches the long-term target layout for:
+
+- `theta[param, chain]`
+- `grad[param, chain]`
+- `weight[particle]`
+
+## Phase 1 API
+
+The initial API should be:
+
+- `batched_logjoint(model, params, args, constraints)`
+- `batched_logjoint_unconstrained(model, params, args, constraints)`
+- `batched_logjoint_gradient_unconstrained(model, params, args, constraints)`
+
+Accepted batching modes:
+
+- shared `args::Tuple` for every batch element
+- `Vector{<:Tuple}` for per-batch arguments
+- shared `ChoiceMap` for every batch element
+- `Vector{ChoiceMap}` for per-batch constraints
+
+Phase 1 intentionally uses the existing single-item evaluator internally.
+That gives us:
+
+- a stable API
+- clear shape conventions
+- a correctness oracle for later optimized implementations
+
+## Phase 2 Execution Strategy
+
+After the public API lands, the next step is a compiled batched evaluator.
+
+Requirements:
+
+- no dynamic dictionaries on the hot path
+- one compiled execution plan reused across the whole batch
+- batched environments represented with dense arrays
+- deterministic assignments and distribution arguments lowered once
+
+The target abstraction is not "run the single evaluator in a loop on GPU".
+The target abstraction is "evaluate one static execution plan over batched
+storage".
+
+## Phase 3 GPU Strategy
+
+Once the batched evaluator exists on CPU, GPU support can follow by lowering the
+same batched representation to:
+
+- `CUDA.jl`
+- `Metal.jl`
+- possibly `KernelAbstractions.jl` for selected kernels
+
+The initial GPU scope should stay narrow:
+
+- continuous latent choices only
+- fixed parameter dimension
+- static execution plans only
+- vectorized likelihoods first
+
+## Non-Goals for the Batched Path
+
+- dynamic trace growth
+- trans-dimensional models
+- arbitrary heterogeneous batch elements
+- direct GPU support for the current single-trace runtime path
+
+## Immediate Implementation Plan
+
+1. add phase 1 batched evaluator functions in `src/`
+2. add regression tests that compare batched outputs with per-column scalar calls
+3. add batch-specific `args` and `ChoiceMap` tests
+4. keep phase 1 implementation simple and correct
+5. optimize only after the API and tests are stable
