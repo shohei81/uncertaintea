@@ -135,20 +135,47 @@ function _parameter_layout_expr(choice_nodes)
     for (choice_index, node) in enumerate(choice_nodes)
         choice_expr, loop_scopes = node
         lhs = choice_expr.args[2]
+        rhs = choice_expr.args[3]
 
-        if lhs isa Symbol && isempty(loop_scopes)
+        if lhs isa Symbol && isempty(loop_scopes) && _supports_parameter_slot(rhs)
             address = _address_spec_expr(lhs)
+            transform = _parameter_transform_expr(rhs)
             push!(slot_exprs, :($(_qualify(:ParameterSlotSpec))(
                 $choice_index,
                 $(QuoteNode(lhs)),
                 $address,
                 $slot_index,
+                $transform,
             )))
             slot_index += 1
         end
     end
 
     return :($(_qualify(:ParameterLayout))($(Expr(:vect, slot_exprs...))))
+end
+
+function _supported_distribution_family(rhs)
+    rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
+    family = rhs.args[1]
+    family in (:normal, :lognormal) || return nothing
+    return family
+end
+
+function _supports_parameter_slot(rhs)
+    return !isnothing(_supported_distribution_family(rhs))
+end
+
+function _parameter_transform_expr(rhs)
+    family = _supported_distribution_family(rhs)
+    isnothing(family) && throw(ArgumentError("unsupported parameter transform for $rhs"))
+
+    if family === :normal
+        return :($(_qualify(:IdentityTransform))())
+    elseif family === :lognormal
+        return :($(_qualify(:LogTransform))())
+    end
+
+    throw(ArgumentError("unsupported parameter transform family $family"))
 end
 
 function _address_has_dynamic_parts(lhs)

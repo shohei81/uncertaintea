@@ -35,6 +35,7 @@ using UncertainTea
     @test parametercount(spec.parameter_layout) == 1
     @test parameterlayout(gaussian_mean).slots[1].binding == :mu
     @test parameterlayout(gaussian_mean).slots[1].choice_index == 1
+    @test parameterlayout(gaussian_mean).slots[1].transform isa IdentityTransform
     @test length(plan.steps) == 2
     @test plan.steps[1].parameter_slot == 1
     @test isnothing(plan.steps[2].parameter_slot)
@@ -81,6 +82,7 @@ using UncertainTea
     @test spec2.choices[2].scopes[1].shape_specialized
     @test parametercount(spec2.parameter_layout) == 1
     @test spec2.parameter_layout.slots[1].binding == :mu
+    @test spec2.parameter_layout.slots[1].transform isa IdentityTransform
     @test plan2.steps[1].parameter_slot == 1
     @test isnothing(plan2.steps[2].parameter_slot)
     @test length(plan2.steps[2].scopes) == 1
@@ -101,6 +103,7 @@ using UncertainTea
     step_trace, _ = generate(step, (2.0f0,), choicemap(); rng=MersenneTwister(4))
     @test parametercount(step_spec.parameter_layout) == 1
     @test step_spec.parameter_layout.slots[1].binding == :z
+    @test step_spec.parameter_layout.slots[1].transform isa IdentityTransform
     @test step_plan.steps[1].parameter_slot == 1
     @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap(); rng=MersenneTwister(9)) ≈
         UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z])
@@ -159,6 +162,24 @@ using UncertainTea
     @test length(plan4.steps) == 2
     @test plan4.steps[1].parameter_slot == 1
     @test length(plan4.steps[2].scopes) == 2
+
+    @tea static function positive_latent()
+        sigma ~ lognormal(0.0f0, 0.5f0)
+        {:y} ~ normal(sigma, 1.0f0)
+        return sigma
+    end
+
+    positive_trace, _ = generate(positive_latent, (), choicemap((:y, 1.5f0)); rng=MersenneTwister(5))
+    positive_spec = modelspec(positive_latent)
+    positive_params = parameter_vector(positive_trace)
+    unconstrained = transform_to_unconstrained(positive_trace)
+    reconstrained = transform_to_constrained(positive_latent, unconstrained)
+
+    @test parametercount(positive_spec.parameter_layout) == 1
+    @test positive_spec.parameter_layout.slots[1].transform isa LogTransform
+    @test positive_params[1] > 0
+    @test unconstrained[1] ≈ log(positive_params[1])
+    @test reconstrained ≈ positive_params
 
     @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
 end

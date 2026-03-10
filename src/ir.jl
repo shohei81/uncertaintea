@@ -34,6 +34,11 @@ struct LoopScopeSpec
     shape_specialized::Bool
 end
 
+abstract type AbstractParameterTransform end
+
+struct IdentityTransform <: AbstractParameterTransform end
+struct LogTransform <: AbstractParameterTransform end
+
 struct ChoiceSpec
     binding::Union{Nothing,Symbol}
     address::AddressSpec
@@ -46,6 +51,7 @@ struct ParameterSlotSpec
     binding::Symbol
     address::AddressSpec
     index::Int
+    transform::AbstractParameterTransform
 end
 
 struct ParameterLayout
@@ -163,7 +169,18 @@ function Base.show(io::IO, spec::ChoiceSpec)
 end
 
 function Base.show(io::IO, spec::ParameterSlotSpec)
-    print(io, "ParameterSlotSpec(index=", spec.index, ", binding=", spec.binding, ", choice=", spec.choice_index, ")")
+    print(
+        io,
+        "ParameterSlotSpec(index=",
+        spec.index,
+        ", binding=",
+        spec.binding,
+        ", choice=",
+        spec.choice_index,
+        ", transform=",
+        nameof(typeof(spec.transform)),
+        ")",
+    )
 end
 
 function Base.show(io::IO, layout::ParameterLayout)

@@ -7,6 +7,11 @@ function _static_address(address::AddressSpec)
     return Tuple(parts)
 end
 
+to_constrained(::IdentityTransform, value) = Float64(value)
+to_unconstrained(::IdentityTransform, value) = Float64(value)
+to_constrained(::LogTransform, value) = exp(Float64(value))
+to_unconstrained(::LogTransform, value) = log(Float64(value))
+
 function parameterchoicemap(model::TeaModel, params::AbstractVector)
     plan = executionplan(model)
     expected = parametercount(plan.parameter_layout)
@@ -29,6 +34,32 @@ function parameter_vector(trace::TeaTrace)
     end
     return params
 end
+
+function transform_to_constrained(model::TeaModel, params::AbstractVector)
+    layout = parameterlayout(model)
+    expected = parametercount(layout)
+    length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+
+    constrained = Vector{Float64}(undef, expected)
+    for slot in layout.slots
+        constrained[slot.index] = to_constrained(slot.transform, params[slot.index])
+    end
+    return constrained
+end
+
+function transform_to_unconstrained(model::TeaModel, params::AbstractVector)
+    layout = parameterlayout(model)
+    expected = parametercount(layout)
+    length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+
+    unconstrained = Vector{Float64}(undef, expected)
+    for slot in layout.slots
+        unconstrained[slot.index] = to_unconstrained(slot.transform, params[slot.index])
+    end
+    return unconstrained
+end
+
+transform_to_unconstrained(trace::TeaTrace) = transform_to_unconstrained(trace.model, parameter_vector(trace))
 
 function initialparameters(model::TeaModel, args::Tuple=(); rng::AbstractRNG=Random.default_rng())
     trace, _ = generate(model, args, choicemap(); rng=rng)
