@@ -12,10 +12,26 @@ struct AddressSpec
     parts::Tuple{Vararg{AbstractAddressPart}}
 end
 
+abstract type AbstractChoiceRhsSpec end
+
+struct DistributionSpec <: AbstractChoiceRhsSpec
+    family::Symbol
+    arguments::Vector{Any}
+end
+
+struct GenerativeCallSpec <: AbstractChoiceRhsSpec
+    callee::Any
+    arguments::Vector{Any}
+end
+
+struct RawChoiceRhsSpec <: AbstractChoiceRhsSpec
+    expr::Any
+end
+
 struct ChoiceSpec
     binding::Union{Nothing,Symbol}
     address::AddressSpec
-    source::Expr
+    rhs::AbstractChoiceRhsSpec
 end
 
 struct ModelSpec
@@ -55,6 +71,7 @@ function Base.show(io::IO, spec::ChoiceSpec)
     isnothing(spec.binding) || print(io, "binding=", spec.binding, ", ")
     print(io, "address=")
     show(io, spec.address)
+    print(io, ", rhs=", nameof(typeof(spec.rhs)))
     print(io, ")")
 end
 

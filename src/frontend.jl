@@ -95,8 +95,23 @@ function _choice_spec_expr(expr)
     rhs = expr.args[3]
     binding = lhs isa Symbol ? QuoteNode(lhs) : :(nothing)
     address = _address_spec_expr(lhs)
-    source = QuoteNode(rhs)
-    return :($(_qualify(:ChoiceSpec))($binding, $address, $source))
+    rhs_spec = _rhs_spec_expr(rhs)
+    return :($(_qualify(:ChoiceSpec))($binding, $address, $rhs_spec))
+end
+
+function _rhs_spec_expr(rhs)
+    if rhs isa Expr && rhs.head == :call && !isempty(rhs.args)
+        callee = rhs.args[1]
+        arguments = Expr(:vect, map(QuoteNode, rhs.args[2:end])...)
+
+        if callee isa Symbol && callee in (:normal, :lognormal, :bernoulli, :categorical, :mvnormal)
+            return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
+        end
+
+        return :($(_qualify(:GenerativeCallSpec))($(QuoteNode(callee)), $arguments))
+    end
+
+    return :($(_qualify(:RawChoiceRhsSpec))($(QuoteNode(rhs))))
 end
 
 function _address_has_dynamic_parts(lhs)

@@ -5,6 +5,7 @@ using Random
 export @tea
 export AddressSpec, ChoiceSpec, ModelSpec
 export AddressLiteralPart, AddressDynamicPart
+export DistributionSpec, GenerativeCallSpec, RawChoiceRhsSpec
 export ChoiceMap, TeaModel, TeaTrace
 export StaticMode, DynamicMode
 export modelspec, isstaticaddress, isaddresstemplate

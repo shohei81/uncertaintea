@@ -26,6 +26,9 @@ using UncertainTea
     @test spec.choices[1].binding == :mu
     @test isstaticaddress(spec.choices[1].address)
     @test isstaticaddress(spec.choices[2].address)
+    @test spec.choices[1].rhs isa DistributionSpec
+    @test spec.choices[1].rhs.family == :normal
+    @test spec.choices[2].rhs isa DistributionSpec
 
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
@@ -47,6 +50,7 @@ using UncertainTea
     @test length(spec2.choices) == 2
     @test spec2.shape_specialized
     @test isaddresstemplate(spec2.choices[2].address)
+    @test spec2.choices[2].rhs isa DistributionSpec
 
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
@@ -69,4 +73,7 @@ using UncertainTea
     @test length(spec3.choices) == 2
     @test isstaticaddress(spec3.choices[1].address)
     @test isaddresstemplate(spec3.choices[2].address)
+    @test spec3.choices[1].rhs isa GenerativeCallSpec
+    @test spec3.choices[1].rhs.callee == :step
+    @test spec3.choices[2].rhs isa GenerativeCallSpec
 end
