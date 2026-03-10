@@ -735,13 +735,118 @@ function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr,
     return value
 end
 
+function _backend_index_error(env::PlanEnvironment, message::String)
+    throw(ArgumentError(message))
+end
+
+function _backend_index_error(env::BatchedPlanEnvironment, message::String)
+    throw(BatchedBackendFallback(message))
+end
+
+function _require_index_value(env, value, context::String)
+    value isa Integer && return Int(value)
+    _backend_index_error(env, "$context requires integer values, got $(typeof(value))")
+end
+
+function _eval_backend_index_value_expr(env::PlanEnvironment, expr::BackendLiteralExpr)
+    return _require_index_value(env, expr.value, "backend index expression")
+end
+
+function _eval_backend_index_value_expr(env::BatchedPlanEnvironment, expr::BackendLiteralExpr, batch_index::Int)
+    return _require_index_value(env, expr.value, "batched backend index expression")
+end
+
+function _eval_backend_index_value_expr(env::PlanEnvironment, expr::BackendSlotExpr)
+    return _require_index_value(env, _environment_value(env, expr.slot), "backend index slot")
+end
+
+function _eval_backend_index_value_expr(env::BatchedPlanEnvironment, expr::BackendSlotExpr, batch_index::Int)
+    return _require_index_value(env, _eval_backend_expr(env, expr, batch_index), "batched backend index slot")
+end
+
+function _eval_backend_index_value_expr(env::PlanEnvironment, expr::BackendPrimitiveExpr)
+    expr.op === Symbol(":") && _backend_index_error(env, "backend index value expression cannot be a range")
+    expr.op === Symbol("=>") && _backend_index_error(env, "backend index value expression cannot be a pair")
+    arguments = tuple((_eval_backend_index_value_expr(env, arg) for arg in expr.arguments)...)
+    value = _backend_primitive(expr.op, arguments...)
+    return _require_index_value(env, value, "backend index primitive")
+end
+
+function _eval_backend_index_value_expr(env::BatchedPlanEnvironment, expr::BackendPrimitiveExpr, batch_index::Int)
+    expr.op === Symbol(":") && _backend_index_error(env, "batched backend index value expression cannot be a range")
+    expr.op === Symbol("=>") && _backend_index_error(env, "batched backend index value expression cannot be a pair")
+    arguments = tuple((_eval_backend_index_value_expr(env, arg, batch_index) for arg in expr.arguments)...)
+    value = _backend_primitive(expr.op, arguments...)
+    return _require_index_value(env, value, "batched backend index primitive")
+end
+
+function _eval_backend_index_value_expr(env::PlanEnvironment, expr::BackendTupleExpr)
+    _backend_index_error(env, "backend index value expression cannot be a tuple")
+end
+
+function _eval_backend_index_value_expr(env::BatchedPlanEnvironment, expr::BackendTupleExpr, batch_index::Int)
+    _backend_index_error(env, "batched backend index value expression cannot be a tuple")
+end
+
+function _eval_backend_index_value_expr(env::PlanEnvironment, expr::BackendBlockExpr)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_backend_index_value_expr(env, arg)
+    end
+    return value
+end
+
+function _eval_backend_index_value_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr, batch_index::Int)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_backend_index_value_expr(env, arg, batch_index)
+    end
+    return value
+end
+
+function _eval_backend_index_iterable_expr(env::PlanEnvironment, expr::BackendPrimitiveExpr)
+    expr.op === Symbol(":") || _backend_index_error(env, "backend loop iterable must lower to `:`")
+    arguments = tuple((_eval_backend_index_value_expr(env, arg) for arg in expr.arguments)...)
+    return getfield(Base, Symbol(":"))(arguments...)
+end
+
+function _eval_backend_index_iterable_expr(env::BatchedPlanEnvironment, expr::BackendPrimitiveExpr, batch_index::Int)
+    expr.op === Symbol(":") || _backend_index_error(env, "batched backend loop iterable must lower to `:`")
+    arguments = tuple((_eval_backend_index_value_expr(env, arg, batch_index) for arg in expr.arguments)...)
+    return getfield(Base, Symbol(":"))(arguments...)
+end
+
+function _eval_backend_index_iterable_expr(env::PlanEnvironment, expr::BackendBlockExpr)
+    value = nothing
+    for arg in expr.arguments
+        value = if arg isa BackendPrimitiveExpr
+            _eval_backend_index_iterable_expr(env, arg)
+        else
+            _backend_index_error(env, "backend loop iterable block must end in `:`")
+        end
+    end
+    return value
+end
+
+function _eval_backend_index_iterable_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr, batch_index::Int)
+    value = nothing
+    for arg in expr.arguments
+        value = if arg isa BackendPrimitiveExpr
+            _eval_backend_index_iterable_expr(env, arg, batch_index)
+        else
+            _backend_index_error(env, "batched backend loop iterable block must end in `:`")
+        end
+    end
+    return value
+end
+
 function _concrete_address(env::PlanEnvironment, address::BackendAddressSpec)
     parts = Any[]
     for part in address.parts
         if part isa BackendAddressLiteralPart
             push!(parts, part.value)
         else
-            push!(parts, _eval_backend_expr(env, part.expr))
+            push!(parts, _eval_backend_index_value_expr(env, part.expr))
         end
     end
     return Tuple(parts)
@@ -753,7 +858,7 @@ function _concrete_address(env::BatchedPlanEnvironment, address::BackendAddressS
         if part isa BackendAddressLiteralPart
             push!(parts, part.value)
         else
-            push!(parts, _eval_backend_expr(env, part.expr, batch_index))
+            push!(parts, _eval_backend_index_value_expr(env, part.expr, batch_index))
         end
     end
     return Tuple(parts)
@@ -998,7 +1103,7 @@ function _score_backend_step!(
     params::AbstractVector,
     constraints::ChoiceMap,
 )
-    iterable = _eval_backend_expr(env, step.iterable)
+    iterable = _eval_backend_index_iterable_expr(env, step.iterable)
     had_previous = _environment_hasvalue(env, step.iterator_slot)
     previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
     total = 0.0
@@ -1021,7 +1126,7 @@ function _score_backend_step!(
 )
     iterables = Vector{Any}(undef, env.batch_size)
     for batch_index in 1:env.batch_size
-        iterables[batch_index] = _eval_backend_expr(env, step.iterable, batch_index)
+        iterables[batch_index] = _eval_backend_index_iterable_expr(env, step.iterable, batch_index)
     end
 
     reference_iterable = first(iterables)

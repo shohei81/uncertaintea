@@ -92,6 +92,8 @@ The next lowering layer is now explicit:
   storage and loop/address state can live in dense integer storage
 - backend-plan distribution scoring now uses family-specific direct score kernels
   instead of constructing distribution objects on the hot path
+- address construction and `1:n` loop evaluation now use an integer-specific
+  evaluator instead of the generic expression path
 
 ## Phase 2 Execution Strategy
 

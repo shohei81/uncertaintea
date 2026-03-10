@@ -83,6 +83,7 @@ Current backend-lowering subset:
 - batched backend execution assumes synchronized loop iterables across the batch
 - backend environments separate numeric slots, index slots, and generic slots
 - backend score evaluation uses direct family kernels for supported distributions
+- address and loop-index evaluation use an integer-specific backend path
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 
