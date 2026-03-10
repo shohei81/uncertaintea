@@ -313,6 +313,56 @@ using UncertainTea
             choicemap((:state => :sigma, positive_step_trace[:state => :sigma]), (:y, 1.2f0)),
         ) atol=1e-6
 
+    gaussian_chain = hmc(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=250,
+        num_warmup=150,
+        step_size=0.25,
+        num_leapfrog_steps=8,
+        rng=MersenneTwister(20),
+    )
+    gaussian_chain_mean = sum(gaussian_chain.constrained_samples[1, :]) / size(gaussian_chain.constrained_samples, 2)
+
+    @test length(gaussian_chain) == 250
+    @test size(gaussian_chain.unconstrained_samples) == (1, 250)
+    @test size(gaussian_chain.constrained_samples) == (1, 250)
+    @test all(isfinite, gaussian_chain.unconstrained_samples)
+    @test all(isfinite, gaussian_chain.constrained_samples)
+    @test all(isfinite, gaussian_chain.logjoint_values)
+    @test 0.0 <= acceptancerate(gaussian_chain) <= 1.0
+    @test any(gaussian_chain.accepted)
+    @test abs(gaussian_chain_mean - 0.15) < 0.2
+    @test gaussian_chain.logjoint_values[1] ≈
+        logjoint_unconstrained(gaussian_mean, gaussian_chain.unconstrained_samples[:, 1], (), constraints) atol=1e-6
+
+    positive_chain = hmc(
+        observed_positive_step,
+        (),
+        choicemap((:y, 1.2f0));
+        num_samples=120,
+        num_warmup=80,
+        step_size=0.12,
+        num_leapfrog_steps=10,
+        initial_params=positive_step_unconstrained,
+        rng=MersenneTwister(21),
+    )
+
+    @test length(positive_chain) == 120
+    @test size(positive_chain.unconstrained_samples) == (1, 120)
+    @test size(positive_chain.constrained_samples) == (1, 120)
+    @test all(x -> x > 0, positive_chain.constrained_samples)
+    @test any(positive_chain.accepted)
+    @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
+        positive_chain.constrained_samples[1, 1]
+
+    @tea static function observed_only()
+        {:y} ~ bernoulli(0.5f0)
+        return nothing
+    end
+
     @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
     @test_throws DimensionMismatch logjoint(iid_model, params2, (), repeated)
+    @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
 end
