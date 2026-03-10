@@ -47,6 +47,12 @@ The initial API should be:
 - `batched_logjoint_unconstrained(model, params, args, constraints)`
 - `batched_logjoint_gradient_unconstrained(model, params, args, constraints)`
 
+For repeated gradient evaluations on a fixed batch shape, phase 1 also supports
+an explicit cache:
+
+- `BatchedLogjointGradientCache(model, params, args, constraints)`
+- `batched_logjoint_gradient_unconstrained!(cache, params)`
+
 Accepted batching modes:
 
 - shared `args::Tuple` for every batch element
@@ -60,6 +66,10 @@ That gives us:
 - a stable API
 - clear shape conventions
 - a correctness oracle for later optimized implementations
+
+The current implementation already moves part of this work into a compiled
+batched evaluator and a reusable gradient cache, but it is still a CPU
+reference path rather than a GPU kernel design.
 
 ## Phase 2 Execution Strategy
 

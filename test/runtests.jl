@@ -307,6 +307,12 @@ using UncertainTea
     ]
     gaussian_batch_logjoint = batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
     gaussian_batch_gradient = batched_logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+    gaussian_batch_gradient_cache = BatchedLogjointGradientCache(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+    gaussian_batch_params_shifted = gaussian_batch_params .+ 0.15
+    gaussian_batch_gradient_shifted = batched_logjoint_gradient_unconstrained(
+        gaussian_batch_gradient_cache,
+        gaussian_batch_params_shifted,
+    )
     iid_batch_params = reshape(Float64[-0.2, 0.4], 1, 2)
     iid_batch_args = [(2,), (3,)]
     iid_batch_constraints = [
@@ -362,6 +368,12 @@ using UncertainTea
     ] atol=1e-8
     @test gaussian_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index]) for
+        index in 1:3
+    ]...) atol=1e-8
+    @test batched_logjoint_gradient_unconstrained!(gaussian_batch_gradient_cache, gaussian_batch_params) ≈
+        gaussian_batch_gradient atol=1e-8
+    @test gaussian_batch_gradient_shifted ≈ hcat([
+        logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for
         index in 1:3
     ]...) atol=1e-8
     @test iid_batch_logjoint ≈ [
@@ -628,6 +640,7 @@ using UncertainTea
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, zeros(2, 3), (), gaussian_batch_constraints)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints[1:2])
     @test_throws ArgumentError batched_logjoint(gaussian_mean, gaussian_batch_params, [1, 2, 3], gaussian_batch_constraints)
+    @test_throws DimensionMismatch batched_logjoint_gradient_unconstrained(gaussian_batch_gradient_cache, zeros(1, 2))
     @test_throws ArgumentError rhat(HMCChains(gaussian_mean, (), constraints, [gaussian_baseline_chain]))
     @test_throws ArgumentError ess(gaussian_multichain; space=:energy)
     @test_throws ArgumentError summarize(gaussian_multichain; quantiles=())

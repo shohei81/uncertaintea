@@ -7,6 +7,21 @@ mutable struct BatchedLogjointWorkspace{P,E,B}
     constrained_buffer::B
 end
 
+struct BatchedGradientColumnCache{F,C,V,W}
+    objective::F
+    config::C
+    buffer::V
+    workspace::W
+end
+
+struct BatchedLogjointGradientCache
+    model::TeaModel
+    column_caches::Vector{Any}
+    gradient_buffer::Matrix{Float64}
+    parameter_count::Int
+    batch_size::Int
+end
+
 function BatchedLogjointWorkspace(model::TeaModel)
     plan = executionplan(model)
     return BatchedLogjointWorkspace(
@@ -128,6 +143,57 @@ function _batched_gradient_column!(
     return destination
 end
 
+function BatchedLogjointGradientCache(
+    model::TeaModel,
+    params::AbstractMatrix,
+    args=(),
+    constraints=choicemap(),
+)
+    batch_size = _validate_batched_params(model, params)
+    batch_args = _validate_batched_args(args, batch_size)
+    batch_constraints = _validate_batched_constraints(constraints, batch_size)
+    parameter_count = size(params, 1)
+    gradient_buffer = Matrix{Float64}(undef, parameter_count, batch_size)
+    column_caches = Vector{Any}(undef, batch_size)
+
+    for batch_index in 1:batch_size
+        workspace = BatchedLogjointWorkspace(model)
+        batch_args_i = _batched_args(batch_args, batch_index)
+        batch_constraints_i = _batched_constraints(batch_constraints, batch_index)
+        seed = collect(view(params, :, batch_index))
+        objective = theta -> _logjoint_unconstrained_with_workspace!(model, workspace, theta, batch_args_i, batch_constraints_i)
+        config = ForwardDiff.GradientConfig(objective, seed)
+        buffer = similar(seed)
+        column_caches[batch_index] = BatchedGradientColumnCache(objective, config, buffer, workspace)
+    end
+
+    return BatchedLogjointGradientCache(model, column_caches, gradient_buffer, parameter_count, batch_size)
+end
+
+function batched_logjoint_gradient_unconstrained!(
+    cache::BatchedLogjointGradientCache,
+    params::AbstractMatrix,
+)
+    size(params, 1) == cache.parameter_count ||
+        throw(DimensionMismatch("expected $(cache.parameter_count) parameters, got $(size(params, 1))"))
+    size(params, 2) == cache.batch_size ||
+        throw(DimensionMismatch("expected $(cache.batch_size) batch elements, got $(size(params, 2))"))
+
+    for batch_index in 1:cache.batch_size
+        column_cache = cache.column_caches[batch_index]
+        ForwardDiff.gradient!(column_cache.buffer, column_cache.objective, view(params, :, batch_index), column_cache.config)
+        cache.gradient_buffer[:, batch_index] = column_cache.buffer
+    end
+    return cache.gradient_buffer
+end
+
+function batched_logjoint_gradient_unconstrained(
+    cache::BatchedLogjointGradientCache,
+    params::AbstractMatrix,
+)
+    return copy(batched_logjoint_gradient_unconstrained!(cache, params))
+end
+
 function batched_logjoint(
     model::TeaModel,
     params::AbstractMatrix,
@@ -183,23 +249,6 @@ function batched_logjoint_gradient_unconstrained(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_params(model, params)
-    batch_args = _validate_batched_args(args, batch_size)
-    batch_constraints = _validate_batched_constraints(constraints, batch_size)
-    gradients = Matrix{Float64}(undef, size(params, 1), batch_size)
-    batch_size == 0 && return gradients
-
-    workspace = BatchedLogjointWorkspace(model)
-    for batch_index in 1:batch_size
-        seed = collect(view(params, :, batch_index))
-        _batched_gradient_column!(
-            model,
-            workspace,
-            view(gradients, :, batch_index),
-            seed,
-            _batched_args(batch_args, batch_index),
-            _batched_constraints(batch_constraints, batch_index),
-        )
-    end
-    return gradients
+    cache = BatchedLogjointGradientCache(model, params, args, constraints)
+    return batched_logjoint_gradient_unconstrained(cache, params)
 end
