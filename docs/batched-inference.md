@@ -94,6 +94,8 @@ The next lowering layer is now explicit:
   instead of constructing distribution objects on the hot path
 - address construction and `1:n` loop evaluation now use an integer-specific
   evaluator instead of the generic expression path
+- distribution arguments and numeric deterministic assignments now use a
+  numeric-specific evaluator instead of the generic expression path
 
 ## Phase 2 Execution Strategy
 

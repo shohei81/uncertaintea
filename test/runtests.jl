@@ -72,6 +72,14 @@ using UncertainTea
         return mu
     end
 
+    @tea static function indexed_scale_model(n)
+        mu ~ normal(0.0f0, 1.0f0)
+        for i in 1:n
+            {:y => i} ~ normal(mu, exp(mu + i / 10))
+        end
+        return mu
+    end
+
     ys = Float32[0.1f0, -0.2f0, 0.4f0]
     repeated = choicemap((:y => i, ys[i]) for i in eachindex(ys))
     trace2, logw2 = generate(iid_model, (length(ys),), repeated; rng=MersenneTwister(2))
@@ -362,6 +370,17 @@ using UncertainTea
         (3,),
         shifted_batch_constraints,
     )
+    indexed_scale_batch_params = reshape(Float64[-0.2, 0.35], 1, 2)
+    indexed_scale_batch_constraints = [
+        choicemap((:y => 1, 0.2f0), (:y => 2, -0.1f0), (:y => 3, 0.5f0)),
+        choicemap((:y => 1, -0.4f0), (:y => 2, 0.1f0), (:y => 3, 0.3f0)),
+    ]
+    indexed_scale_batch_logjoint = batched_logjoint(
+        indexed_scale_model,
+        indexed_scale_batch_params,
+        (3,),
+        indexed_scale_batch_constraints,
+    )
     positive_batch_unconstrained = reshape(
         [
             positive_step_unconstrained[1] - 0.2,
@@ -405,6 +424,9 @@ using UncertainTea
     iid_backend_plan = backend_execution_plan(iid_model)
     shifted_backend_report = backend_report(shifted_iid_model)
     shifted_backend_plan = backend_execution_plan(shifted_iid_model)
+    indexed_scale_plan = executionplan(indexed_scale_model)
+    indexed_scale_backend_report = backend_report(indexed_scale_model)
+    indexed_scale_backend_plan = backend_execution_plan(indexed_scale_model)
     coin_backend_report = backend_report(observed_coin)
     coin_backend_plan = backend_execution_plan(observed_coin)
     coin_batch_logjoint = batched_logjoint(
@@ -459,6 +481,14 @@ using UncertainTea
     @test shifted_batch_logjoint ≈ [
         logjoint(shifted_iid_model, shifted_batch_params[:, index], (3,), shifted_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
+    @test indexed_scale_batch_logjoint ≈ [
+        logjoint(
+            indexed_scale_model,
+            indexed_scale_batch_params[:, index],
+            (3,),
+            indexed_scale_batch_constraints[index],
+        ) for index in 1:2
+    ] atol=1e-8
     @test positive_batch_logjoint ≈ [
         logjoint_unconstrained(observed_positive_step, positive_batch_unconstrained[:, index], (), positive_batch_constraints[index]) for
         index in 1:3
@@ -490,6 +520,11 @@ using UncertainTea
     @test shifted_backend_report.supported
     @test shifted_backend_plan.numeric_slots == iid_backend_plan.numeric_slots
     @test shifted_backend_plan.index_slots == iid_backend_plan.index_slots
+    @test indexed_scale_backend_report.supported
+    @test indexed_scale_backend_plan.numeric_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:mu]]
+    @test indexed_scale_backend_plan.index_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:n]]
+    @test indexed_scale_backend_plan.index_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:i]]
+    @test !any(indexed_scale_backend_plan.generic_slots)
     @test coin_backend_report.supported
     @test isempty(coin_backend_plan.numeric_slots)
     @test isempty(coin_backend_plan.index_slots)

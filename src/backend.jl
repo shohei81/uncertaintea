@@ -518,7 +518,7 @@ function _backend_expr_is_numeric(expr::BackendPrimitiveExpr)
 end
 
 function _backend_expr_is_numeric(expr::BackendTupleExpr)
-    return all(_backend_expr_is_numeric, expr.arguments)
+    return false
 end
 
 function _backend_expr_is_numeric(expr::BackendBlockExpr)
@@ -735,6 +735,79 @@ function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr,
     return value
 end
 
+function _backend_numeric_error(env::PlanEnvironment, message::String)
+    throw(ArgumentError(message))
+end
+
+function _backend_numeric_error(env::BatchedPlanEnvironment, message::String)
+    throw(BatchedBackendFallback(message))
+end
+
+function _require_numeric_value(env, value, context::String)
+    value isa Real && !(value isa Bool) && return float(value)
+    _backend_numeric_error(env, "$context requires real values, got $(typeof(value))")
+end
+
+function _eval_backend_numeric_expr(env::PlanEnvironment, expr::BackendLiteralExpr)
+    return _require_numeric_value(env, expr.value, "backend numeric expression")
+end
+
+function _eval_backend_numeric_expr(env::BatchedPlanEnvironment, expr::BackendLiteralExpr, batch_index::Int)
+    return _require_numeric_value(env, expr.value, "batched backend numeric expression")
+end
+
+function _eval_backend_numeric_expr(env::PlanEnvironment, expr::BackendSlotExpr)
+    return _require_numeric_value(env, _environment_value(env, expr.slot), "backend numeric slot")
+end
+
+function _eval_backend_numeric_expr(env::BatchedPlanEnvironment, expr::BackendSlotExpr, batch_index::Int)
+    return _require_numeric_value(env, _eval_backend_expr(env, expr, batch_index), "batched backend numeric slot")
+end
+
+function _eval_backend_numeric_expr(env::PlanEnvironment, expr::BackendPrimitiveExpr)
+    if expr.op === Symbol(":") || expr.op === Symbol("=>")
+        _backend_numeric_error(env, "backend numeric expression cannot use `$(expr.op)`")
+    end
+    arguments = tuple((_eval_backend_numeric_expr(env, arg) for arg in expr.arguments)...)
+    return _require_numeric_value(env, _backend_primitive(expr.op, arguments...), "backend numeric primitive")
+end
+
+function _eval_backend_numeric_expr(env::BatchedPlanEnvironment, expr::BackendPrimitiveExpr, batch_index::Int)
+    if expr.op === Symbol(":") || expr.op === Symbol("=>")
+        _backend_numeric_error(env, "batched backend numeric expression cannot use `$(expr.op)`")
+    end
+    arguments = tuple((_eval_backend_numeric_expr(env, arg, batch_index) for arg in expr.arguments)...)
+    return _require_numeric_value(
+        env,
+        _backend_primitive(expr.op, arguments...),
+        "batched backend numeric primitive",
+    )
+end
+
+function _eval_backend_numeric_expr(env::PlanEnvironment, expr::BackendTupleExpr)
+    _backend_numeric_error(env, "backend numeric expression cannot be a tuple")
+end
+
+function _eval_backend_numeric_expr(env::BatchedPlanEnvironment, expr::BackendTupleExpr, batch_index::Int)
+    _backend_numeric_error(env, "batched backend numeric expression cannot be a tuple")
+end
+
+function _eval_backend_numeric_expr(env::PlanEnvironment, expr::BackendBlockExpr)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_backend_numeric_expr(env, arg)
+    end
+    return value
+end
+
+function _eval_backend_numeric_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr, batch_index::Int)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_backend_numeric_expr(env, arg, batch_index)
+    end
+    return value
+end
+
 function _backend_index_error(env::PlanEnvironment, message::String)
     throw(ArgumentError(message))
 end
@@ -931,7 +1004,7 @@ function _score_backend_step!(
         throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
     end
 
-    arguments = tuple((_eval_backend_expr(env, arg) for arg in step.arguments)...)
+    arguments = tuple((_eval_backend_numeric_expr(env, arg) for arg in step.arguments)...)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return _score_backend_family(step.family, arguments, value)
 end
@@ -1041,7 +1114,7 @@ function _score_backend_step!(
             throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
         end
 
-        arguments = tuple((_eval_backend_expr(env, arg, batch_index) for arg in step.arguments)...)
+        arguments = tuple((_eval_backend_numeric_expr(env, arg, batch_index) for arg in step.arguments)...)
         totals[batch_index] += _score_backend_family(step.family, arguments, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
@@ -1069,11 +1142,8 @@ function _score_backend_step!(
 )
     if env.numeric_slots[step.binding_slot]
         for batch_index in 1:env.batch_size
-            value = _eval_backend_expr(env, step.expr, batch_index)
-            value isa Real && !(value isa Bool) || throw(
-                BatchedBackendFallback("numeric backend slot $(step.binding_slot) produced a non-real deterministic value"),
-            )
-            env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+            env.numeric_values[step.binding_slot, batch_index] =
+                _eval_backend_numeric_expr(env, step.expr, batch_index)
         end
         env.assigned[step.binding_slot] = true
         return totals
