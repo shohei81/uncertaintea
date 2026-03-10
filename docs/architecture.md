@@ -80,6 +80,7 @@ Current backend-lowering subset:
 - distribution families: `normal`, `lognormal`, `bernoulli`
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
   `log1p`, `sqrt`, `abs`, `min`, `max`
+- batched backend execution assumes synchronized loop iterables across the batch
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

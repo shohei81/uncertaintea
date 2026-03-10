@@ -85,6 +85,8 @@ The next lowering layer is now explicit:
   the GPU-friendly subset
 - `backend_report(model)` reports whether a model stays inside that subset
 - unsupported models keep working through the compiled CPU fallback path
+- batched backend execution currently requires synchronized loop iterables across
+  the batch; divergent loop shapes fall back to the compiled CPU path
 
 ## Phase 2 Execution Strategy
 

@@ -92,6 +92,22 @@ struct BackendLoweringResult
     plan::Union{Nothing,BackendExecutionPlan}
 end
 
+struct BatchedBackendFallback <: Exception
+    message::String
+end
+
+mutable struct BatchedPlanEnvironment
+    layout::EnvironmentLayout
+    values::Vector{Vector{Any}}
+    assigned::BitVector
+    batch_size::Int
+end
+
+function BatchedPlanEnvironment(layout::EnvironmentLayout, batch_size::Int)
+    values = [Vector{Any}(undef, batch_size) for _ in layout.symbols]
+    return BatchedPlanEnvironment(layout, values, falses(length(layout.symbols)), batch_size)
+end
+
 function Base.show(io::IO, report::BackendLoweringReport)
     print(
         io,
@@ -107,6 +123,10 @@ end
 
 function Base.show(io::IO, plan::BackendExecutionPlan)
     print(io, "BackendExecutionPlan(target=", plan.target, ", steps=", length(plan.steps), ")")
+end
+
+function Base.showerror(io::IO, err::BatchedBackendFallback)
+    print(io, err.message)
 end
 
 function _backend_issue!(issues::Vector{String}, message::String)
@@ -275,8 +295,17 @@ function _eval_backend_expr(env::PlanEnvironment, expr::BackendLiteralExpr)
     return expr.value
 end
 
+function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendLiteralExpr, batch_index::Int)
+    return expr.value
+end
+
 function _eval_backend_expr(env::PlanEnvironment, expr::BackendSlotExpr)
     return _environment_value(env, expr.slot)
+end
+
+function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendSlotExpr, batch_index::Int)
+    env.assigned[expr.slot] || throw(ArgumentError("environment slot $(expr.slot) is not assigned"))
+    return env.values[expr.slot][batch_index]
 end
 
 function _backend_primitive(op::Symbol, args...)
@@ -326,14 +355,31 @@ function _eval_backend_expr(env::PlanEnvironment, expr::BackendPrimitiveExpr)
     return _backend_primitive(expr.op, arguments...)
 end
 
+function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendPrimitiveExpr, batch_index::Int)
+    arguments = tuple((_eval_backend_expr(env, arg, batch_index) for arg in expr.arguments)...)
+    return _backend_primitive(expr.op, arguments...)
+end
+
 function _eval_backend_expr(env::PlanEnvironment, expr::BackendTupleExpr)
     return tuple((_eval_backend_expr(env, arg) for arg in expr.arguments)...)
+end
+
+function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendTupleExpr, batch_index::Int)
+    return tuple((_eval_backend_expr(env, arg, batch_index) for arg in expr.arguments)...)
 end
 
 function _eval_backend_expr(env::PlanEnvironment, expr::BackendBlockExpr)
     value = nothing
     for arg in expr.arguments
         value = _eval_backend_expr(env, arg)
+    end
+    return value
+end
+
+function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr, batch_index::Int)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_backend_expr(env, arg, batch_index)
     end
     return value
 end
@@ -350,6 +396,18 @@ function _concrete_address(env::PlanEnvironment, address::BackendAddressSpec)
     return Tuple(parts)
 end
 
+function _concrete_address(env::BatchedPlanEnvironment, address::BackendAddressSpec, batch_index::Int)
+    parts = Any[]
+    for part in address.parts
+        if part isa BackendAddressLiteralPart
+            push!(parts, part.value)
+        else
+            push!(parts, _eval_backend_expr(env, part.expr, batch_index))
+        end
+    end
+    return Tuple(parts)
+end
+
 function _backend_distribution(family::Symbol, arguments::Tuple)
     family === :normal && return normal(arguments...)
     family === :lognormal && return lognormal(arguments...)
@@ -358,10 +416,22 @@ function _backend_distribution(family::Symbol, arguments::Tuple)
 end
 
 _score_backend_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
+_score_backend_steps!(totals::AbstractVector, ::Tuple{}, env::BatchedPlanEnvironment, params::AbstractMatrix, constraints) = totals
 
 function _score_backend_steps(steps::Tuple, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap)
     return _score_backend_step!(first(steps), env, params, constraints) +
            _score_backend_steps(Base.tail(steps), env, params, constraints)
+end
+
+function _score_backend_steps!(
+    totals::AbstractVector,
+    steps::Tuple,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    _score_backend_step!(first(steps), totals, env, params, constraints)
+    return _score_backend_steps!(totals, Base.tail(steps), env, params, constraints)
 end
 
 function _score_backend_step!(
@@ -395,6 +465,92 @@ function _score_backend_step!(
     return 0.0
 end
 
+function _batched_constraint(constraints::ChoiceMap, batch_index::Int)
+    return constraints
+end
+
+function _batched_constraint(constraints::AbstractVector, batch_index::Int)
+    return constraints[batch_index]
+end
+
+function _batched_environment_set_shared!(env::BatchedPlanEnvironment, slot::Int, value)
+    values = env.values[slot]
+    for batch_index in 1:env.batch_size
+        values[batch_index] = value
+    end
+    env.assigned[slot] = true
+    return values
+end
+
+function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, values::AbstractVector)
+    length(values) == env.batch_size ||
+        throw(DimensionMismatch("expected $(env.batch_size) batched values, got $(length(values))"))
+    storage = env.values[slot]
+    for batch_index in 1:env.batch_size
+        storage[batch_index] = values[batch_index]
+    end
+    env.assigned[slot] = true
+    return storage
+end
+
+function _batched_environment_restore!(
+    env::BatchedPlanEnvironment,
+    slot::Int,
+    previous_value::Vector{Any},
+    was_assigned::Bool,
+)
+    if was_assigned
+        env.values[slot] .= previous_value
+        env.assigned[slot] = true
+    else
+        env.assigned[slot] = false
+    end
+    return nothing
+end
+
+function _score_backend_step!(
+    step::BackendChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    binding_values = isnothing(step.binding_slot) ? nothing : env.values[step.binding_slot]
+    for batch_index in 1:env.batch_size
+        address = _concrete_address(env, step.address, batch_index)
+        constraint_map = _batched_constraint(constraints, batch_index)
+        value = if !isnothing(step.parameter_slot)
+            params[step.parameter_slot, batch_index]
+        elseif haskey(constraint_map, address)
+            constraint_map[address]
+        else
+            throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        end
+
+        arguments = tuple((_eval_backend_expr(env, arg, batch_index) for arg in step.arguments)...)
+        dist = _backend_distribution(step.family, arguments)
+        totals[batch_index] += logpdf(dist, value)
+        isnothing(binding_values) || (binding_values[batch_index] = value)
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendDeterministicPlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    values = env.values[step.binding_slot]
+    for batch_index in 1:env.batch_size
+        values[batch_index] = _eval_backend_expr(env, step.expr, batch_index)
+    end
+    env.assigned[step.binding_slot] = true
+    return totals
+end
+
 function _score_backend_step!(
     step::BackendLoopPlanStep,
     env::PlanEnvironment,
@@ -413,4 +569,36 @@ function _score_backend_step!(
 
     _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
     return total
+end
+
+function _score_backend_step!(
+    step::BackendLoopPlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    iterables = Vector{Any}(undef, env.batch_size)
+    for batch_index in 1:env.batch_size
+        iterables[batch_index] = _eval_backend_expr(env, step.iterable, batch_index)
+    end
+
+    reference_iterable = first(iterables)
+    for batch_index in 2:env.batch_size
+        iterables[batch_index] == reference_iterable || throw(
+            BatchedBackendFallback(
+                "batched backend evaluation requires synchronized loop iterables across the batch",
+            ),
+        )
+    end
+
+    had_previous = env.assigned[step.iterator_slot]
+    previous_value = had_previous ? copy(env.values[step.iterator_slot]) : Vector{Any}()
+    for item in reference_iterable
+        _batched_environment_set_shared!(env, step.iterator_slot, item)
+        _score_backend_steps!(totals, step.body, env, params, constraints)
+    end
+
+    _batched_environment_restore!(env, step.iterator_slot, previous_value, had_previous)
+    return totals
 end

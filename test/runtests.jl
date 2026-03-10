@@ -327,6 +327,17 @@ using UncertainTea
         choicemap((:y => 1, 0.5f0), (:y => 2, 0.2f0), (:y => 3, -0.1f0)),
     ]
     iid_batch_logjoint = batched_logjoint(iid_model, iid_batch_params, iid_batch_args, iid_batch_constraints)
+    iid_shared_batch_params = reshape(Float64[-0.15, 0.25], 1, 2)
+    iid_shared_batch_constraints = [
+        choicemap((:y => 1, 0.0f0), (:y => 2, -0.1f0), (:y => 3, 0.3f0)),
+        choicemap((:y => 1, 0.4f0), (:y => 2, 0.2f0), (:y => 3, -0.2f0)),
+    ]
+    iid_shared_batch_logjoint = batched_logjoint(
+        iid_model,
+        iid_shared_batch_params,
+        (3,),
+        iid_shared_batch_constraints,
+    )
     positive_batch_unconstrained = reshape(
         [
             positive_step_unconstrained[1] - 0.2,
@@ -401,6 +412,9 @@ using UncertainTea
     ]...) atol=1e-8
     @test iid_batch_logjoint ≈ [
         logjoint(iid_model, iid_batch_params[:, index], iid_batch_args[index], iid_batch_constraints[index]) for index in 1:2
+    ] atol=1e-8
+    @test iid_shared_batch_logjoint ≈ [
+        logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
     @test positive_batch_logjoint ≈ [
         logjoint_unconstrained(observed_positive_step, positive_batch_unconstrained[:, index], (), positive_batch_constraints[index]) for

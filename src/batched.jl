@@ -89,6 +89,41 @@ function _prepare_environment!(workspace::BatchedLogjointWorkspace, args::Tuple)
     return env
 end
 
+function _prepare_batched_environment!(
+    layout::EnvironmentLayout,
+    argument_slots::Vector{Int},
+    argument_count::Int,
+    args,
+    batch_size::Int,
+)
+    env = BatchedPlanEnvironment(layout, batch_size)
+    fill!(env.assigned, false)
+
+    if args isa Tuple
+        length(args) == argument_count ||
+            throw(DimensionMismatch("expected $argument_count model arguments, got $(length(args))"))
+        for (slot, value) in zip(argument_slots, args)
+            _batched_environment_set_shared!(env, slot, value)
+        end
+    else
+        length(args) == batch_size ||
+            throw(DimensionMismatch("expected $batch_size batched argument tuples, got $(length(args))"))
+        for argument_index in 1:argument_count
+            slot = argument_slots[argument_index]
+            values = Vector{Any}(undef, batch_size)
+            for batch_index in 1:batch_size
+                batch_args = args[batch_index]
+                length(batch_args) == argument_count ||
+                    throw(DimensionMismatch("expected $argument_count model arguments, got $(length(batch_args))"))
+                values[batch_index] = batch_args[argument_index]
+            end
+            _batched_environment_set!(env, slot, values)
+        end
+    end
+
+    return env
+end
+
 function _constrained_buffer!(workspace::BatchedLogjointWorkspace, params::AbstractVector)
     buffer = workspace.constrained_buffer[]
     if !(buffer isa AbstractVector) || length(buffer) != workspace.parameter_count || eltype(buffer) != eltype(params)
@@ -113,6 +148,44 @@ function _logjoint_with_workspace!(
     return _score_compiled_steps(workspace.compiled_plan.steps, env, params, constraints)
 end
 
+function _logjoint_with_batched_backend!(
+    workspace::BatchedLogjointWorkspace,
+    params::AbstractMatrix,
+    args,
+    constraints,
+)
+    batch_size = size(params, 2)
+    env = _prepare_batched_environment!(
+        workspace.environment.layout,
+        workspace.argument_slots,
+        workspace.argument_count,
+        args,
+        batch_size,
+    )
+    totals = zeros(Float64, batch_size)
+    _score_backend_steps!(totals, workspace.backend_plan.steps, env, params, constraints)
+    return totals
+end
+
+function _fallback_batched_logjoint!(
+    workspace::BatchedLogjointWorkspace,
+    params::AbstractMatrix,
+    args,
+    constraints,
+)
+    batch_size = size(params, 2)
+    values = Vector{Float64}(undef, batch_size)
+    for batch_index in 1:batch_size
+        values[batch_index] = _logjoint_with_workspace!(
+            workspace,
+            view(params, :, batch_index),
+            _batched_args(args, batch_index),
+            _batched_constraints(constraints, batch_index),
+        )
+    end
+    return values
+end
+
 function _logjoint_unconstrained_with_workspace!(
     model::TeaModel,
     workspace::BatchedLogjointWorkspace,
@@ -132,6 +205,49 @@ function _logjoint_unconstrained_with_workspace!(
         logabsdet += logabsdetjac(slot.transform, unconstrained_value)
     end
     return _logjoint_with_workspace!(workspace, constrained, args, constraints) + logabsdet
+end
+
+function _logjoint_unconstrained_batched_backend!(
+    model::TeaModel,
+    workspace::BatchedLogjointWorkspace,
+    params::AbstractMatrix,
+    args,
+    constraints,
+)
+    parameter_count, batch_size = size(params)
+    layout = parameterlayout(model)
+    constrained = Matrix{Float64}(undef, parameter_count, batch_size)
+    logabsdet = zeros(Float64, batch_size)
+    for slot in layout.slots
+        slot_index = slot.index
+        for batch_index in 1:batch_size
+            unconstrained_value = params[slot_index, batch_index]
+            constrained[slot_index, batch_index] = to_constrained(slot.transform, unconstrained_value)
+            logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
+        end
+    end
+    return _logjoint_with_batched_backend!(workspace, constrained, args, constraints) .+ logabsdet
+end
+
+function _fallback_batched_logjoint_unconstrained!(
+    model::TeaModel,
+    workspace::BatchedLogjointWorkspace,
+    params::AbstractMatrix,
+    args,
+    constraints,
+)
+    batch_size = size(params, 2)
+    values = Vector{Float64}(undef, batch_size)
+    for batch_index in 1:batch_size
+        values[batch_index] = _logjoint_unconstrained_with_workspace!(
+            model,
+            workspace,
+            view(params, :, batch_index),
+            _batched_args(args, batch_index),
+            _batched_constraints(constraints, batch_index),
+        )
+    end
+    return values
 end
 
 function _batched_gradient_column!(
@@ -211,16 +327,16 @@ function batched_logjoint(
     batch_size == 0 && return Float64[]
 
     workspace = BatchedLogjointWorkspace(model)
-    values = Vector{Float64}(undef, batch_size)
-    for batch_index in 1:batch_size
-        values[batch_index] = _logjoint_with_workspace!(
-            workspace,
-            view(params, :, batch_index),
-            _batched_args(batch_args, batch_index),
-            _batched_constraints(batch_constraints, batch_index),
-        )
+    if !isnothing(workspace.backend_plan)
+        try
+            return _logjoint_with_batched_backend!(workspace, params, batch_args, batch_constraints)
+        catch err
+            if !(err isa BatchedBackendFallback)
+                rethrow()
+            end
+        end
     end
-    return values
+    return _fallback_batched_logjoint!(workspace, params, batch_args, batch_constraints)
 end
 
 function batched_logjoint_unconstrained(
@@ -235,17 +351,16 @@ function batched_logjoint_unconstrained(
     batch_size == 0 && return Float64[]
 
     workspace = BatchedLogjointWorkspace(model)
-    values = Vector{Float64}(undef, batch_size)
-    for batch_index in 1:batch_size
-        values[batch_index] = _logjoint_unconstrained_with_workspace!(
-            model,
-            workspace,
-            view(params, :, batch_index),
-            _batched_args(batch_args, batch_index),
-            _batched_constraints(batch_constraints, batch_index),
-        )
+    if !isnothing(workspace.backend_plan)
+        try
+            return _logjoint_unconstrained_batched_backend!(model, workspace, params, batch_args, batch_constraints)
+        catch err
+            if !(err isa BatchedBackendFallback)
+                rethrow()
+            end
+        end
     end
-    return values
+    return _fallback_batched_logjoint_unconstrained!(model, workspace, params, batch_args, batch_constraints)
 end
 
 function batched_logjoint_gradient_unconstrained(
