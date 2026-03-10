@@ -86,6 +86,8 @@ Current backend-lowering subset:
 - address and loop-index evaluation use an integer-specific backend path
 - distribution arguments and numeric deterministic assignments use a dedicated
   numeric backend evaluator instead of the generic expression path
+- supported distribution choices lower to family-specific backend plan nodes
+  rather than a symbol-dispatched generic choice node
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

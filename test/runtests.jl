@@ -507,6 +507,7 @@ using UncertainTea
     @test gaussian_backend_plan.target == :gpu
     @test length(gaussian_backend_plan.steps) == 2
     @test gaussian_backend_plan.steps[1] isa UncertainTea.BackendChoicePlanStep
+    @test gaussian_backend_plan.steps[1] isa UncertainTea.BackendNormalChoicePlanStep
     @test gaussian_backend_plan.numeric_slots == BitVector([true])
     @test gaussian_backend_plan.index_slots == BitVector([false])
     @test gaussian_backend_plan.generic_slots == BitVector([false])
@@ -526,6 +527,7 @@ using UncertainTea
     @test indexed_scale_backend_plan.index_slots[indexed_scale_plan.environment_layout.slot_by_symbol[:i]]
     @test !any(indexed_scale_backend_plan.generic_slots)
     @test coin_backend_report.supported
+    @test coin_backend_plan.steps[1] isa UncertainTea.BackendBernoulliChoicePlanStep
     @test isempty(coin_backend_plan.numeric_slots)
     @test isempty(coin_backend_plan.index_slots)
     @test isempty(coin_backend_plan.generic_slots)

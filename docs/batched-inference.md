@@ -96,6 +96,8 @@ The next lowering layer is now explicit:
   evaluator instead of the generic expression path
 - distribution arguments and numeric deterministic assignments now use a
   numeric-specific evaluator instead of the generic expression path
+- supported choices now lower to family-specific backend plan nodes, so hot
+  scoring no longer branches on a distribution family symbol
 
 ## Phase 2 Execution Strategy
 

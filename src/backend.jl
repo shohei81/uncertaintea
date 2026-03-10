@@ -21,6 +21,7 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[:normal, :lognormal, :bernoul
 abstract type AbstractBackendExpr end
 abstract type AbstractBackendAddressPart end
 abstract type AbstractBackendPlanStep end
+abstract type BackendChoicePlanStep <: AbstractBackendPlanStep end
 
 struct BackendLiteralExpr{T} <: AbstractBackendExpr
     value::T
@@ -55,11 +56,28 @@ struct BackendAddressSpec{P<:Tuple}
     parts::P
 end
 
-struct BackendChoicePlanStep{A<:Tuple,AD<:BackendAddressSpec} <: AbstractBackendPlanStep
+struct BackendNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
+       BackendChoicePlanStep
     binding_slot::Union{Nothing,Int}
     address::AD
-    family::Symbol
-    arguments::A
+    mu::M
+    sigma::S
+    parameter_slot::Union{Nothing,Int}
+end
+
+struct BackendLognormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
+       BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    mu::M
+    sigma::S
+    parameter_slot::Union{Nothing,Int}
+end
+
+struct BackendBernoulliChoicePlanStep{P<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    probability::P
     parameter_slot::Union{Nothing,Int}
 end
 
@@ -267,8 +285,28 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
     address = _backend_lower_address(model, layout, step.address, issues)
     arguments = map(arg -> _backend_lower_expr(model, layout, arg, issues, "distribution argument"), step.rhs.arguments)
     (isnothing(address) || any(isnothing, arguments)) && return nothing
+    if step.rhs.family === :normal
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "normal expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendNormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+    elseif step.rhs.family === :lognormal
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "lognormal expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendLognormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+    elseif step.rhs.family === :bernoulli
+        length(arguments) == 1 || begin
+            _backend_issue!(issues, "bernoulli expects exactly 1 backend argument")
+            return nothing
+        end
+        return BackendBernoulliChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+    end
 
-    return BackendChoicePlanStep(step.binding_slot, address, step.rhs.family, tuple(arguments...), step.parameter_slot)
+    _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
+    return nothing
 end
 
 function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::DeterministicPlanStep, issues::Vector{String})
@@ -525,27 +563,55 @@ function _backend_expr_is_numeric(expr::BackendBlockExpr)
     return all(_backend_expr_is_numeric, expr.arguments)
 end
 
-function _collect_backend_slot_kinds!(
-    step::BackendChoicePlanStep,
+function _mark_backend_choice_address_slots!(
+    address::BackendAddressSpec,
     numeric_slots::BitVector,
     index_slots::BitVector,
     generic_slots::BitVector,
 )
-    for part in step.address.parts
+    for part in address.parts
         if part isa BackendAddressExprPart
             _mark_backend_index_expr_slots!(part.expr, numeric_slots, index_slots, generic_slots)
         end
     end
-    for arg in step.arguments
-        _mark_backend_numeric_expr_slots!(arg, numeric_slots, index_slots, generic_slots)
-    end
-    if !isnothing(step.binding_slot)
-        if step.family === :bernoulli
-            _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-        else
-            _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-        end
-    end
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendNormalChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendLognormalChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendBernoulliChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.probability, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
     return nothing
 end
 
@@ -959,15 +1025,28 @@ function _backend_bernoulli_logpdf(p, x)
     return value ? log(probability) : log1p(-probability)
 end
 
-function _score_backend_family(family::Symbol, arguments::Tuple, value)
-    if family === :normal
-        return _backend_normal_logpdf(arguments[1], arguments[2], value)
-    elseif family === :lognormal
-        return _backend_lognormal_logpdf(arguments[1], arguments[2], value)
-    elseif family === :bernoulli
-        return _backend_bernoulli_logpdf(arguments[1], value)
+function _backend_choice_value(parameter_slot::Union{Nothing,Int}, params::AbstractVector, constraints::ChoiceMap, address)
+    if !isnothing(parameter_slot)
+        return params[parameter_slot]
+    elseif haskey(constraints, address)
+        return constraints[address]
     end
-    throw(ArgumentError("unsupported backend distribution family `$family`"))
+    throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+end
+
+function _backend_choice_value(
+    parameter_slot::Union{Nothing,Int},
+    params::AbstractMatrix,
+    constraint_map::ChoiceMap,
+    address,
+    batch_index::Int,
+)
+    if !isnothing(parameter_slot)
+        return params[parameter_slot, batch_index]
+    elseif haskey(constraint_map, address)
+        return constraint_map[address]
+    end
+    throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
 end
 
 _score_backend_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
@@ -990,23 +1069,44 @@ function _score_backend_steps!(
 end
 
 function _score_backend_step!(
-    step::BackendChoicePlanStep,
+    step::BackendNormalChoicePlanStep,
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
 )
     address = _concrete_address(env, step.address)
-    value = if !isnothing(step.parameter_slot)
-        params[step.parameter_slot]
-    elseif haskey(constraints, address)
-        constraints[address]
-    else
-        throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
-    end
-
-    arguments = tuple((_eval_backend_numeric_expr(env, arg) for arg in step.arguments)...)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    mu = _eval_backend_numeric_expr(env, step.mu)
+    sigma = _eval_backend_numeric_expr(env, step.sigma)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
-    return _score_backend_family(step.family, arguments, value)
+    return _backend_normal_logpdf(mu, sigma, value)
+end
+
+function _score_backend_step!(
+    step::BackendLognormalChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    mu = _eval_backend_numeric_expr(env, step.mu)
+    sigma = _eval_backend_numeric_expr(env, step.sigma)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_lognormal_logpdf(mu, sigma, value)
+end
+
+function _score_backend_step!(
+    step::BackendBernoulliChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    probability = _eval_backend_numeric_expr(env, step.probability)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_bernoulli_logpdf(probability, value)
 end
 
 function _score_backend_step!(
@@ -1097,7 +1197,7 @@ function _batched_environment_restore!(
 end
 
 function _score_backend_step!(
-    step::BackendChoicePlanStep,
+    step::BackendNormalChoicePlanStep,
     totals::AbstractVector,
     env::BatchedPlanEnvironment,
     params::AbstractMatrix,
@@ -1106,16 +1206,71 @@ function _score_backend_step!(
     for batch_index in 1:env.batch_size
         address = _concrete_address(env, step.address, batch_index)
         constraint_map = _batched_constraint(constraints, batch_index)
-        value = if !isnothing(step.parameter_slot)
-            params[step.parameter_slot, batch_index]
-        elseif haskey(constraint_map, address)
-            constraint_map[address]
-        else
-            throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
+        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
+        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
         end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
 
-        arguments = tuple((_eval_backend_numeric_expr(env, arg, batch_index) for arg in step.arguments)...)
-        totals[batch_index] += _score_backend_family(step.family, arguments, value)
+function _score_backend_step!(
+    step::BackendLognormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    for batch_index in 1:env.batch_size
+        address = _concrete_address(env, step.address, batch_index)
+        constraint_map = _batched_constraint(constraints, batch_index)
+        value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
+        mu = _eval_backend_numeric_expr(env, step.mu, batch_index)
+        sigma = _eval_backend_numeric_expr(env, step.sigma, batch_index)
+        totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendBernoulliChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    for batch_index in 1:env.batch_size
+        address = _concrete_address(env, step.address, batch_index)
+        constraint_map = _batched_constraint(constraints, batch_index)
+        value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
+        probability = _eval_backend_numeric_expr(env, step.probability, batch_index)
+        totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
                 env.numeric_values[step.binding_slot, batch_index] = Float64(value)
