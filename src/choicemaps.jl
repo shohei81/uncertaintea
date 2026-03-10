@@ -50,34 +50,45 @@ end
 
 function _pushchoice!(cm::ChoiceMap, address, value)
     normalized = normalize_address(address)
-    for idx in eachindex(cm.entries)
-        if first(cm.entries[idx]) == normalized
-            cm.entries[idx] = normalized => value
-            return cm
-        end
+    index = _choice_index_normalized(cm, normalized)
+    if !isnothing(index)
+        cm.entries[index] = normalized => value
+        return cm
     end
     push!(cm.entries, normalized => value)
     return cm
 end
 
-function Base.getindex(cm::ChoiceMap, address)
-    normalized = normalize_address(address)
-    for entry in cm.entries
-        if first(entry) == normalized
-            return last(entry)
+function _choice_index_normalized(cm::ChoiceMap, normalized::Address)
+    for idx in eachindex(cm.entries)
+        if first(cm.entries[idx]) == normalized
+            return idx
         end
     end
-    throw(KeyError(normalized))
+    return nothing
+end
+
+function _choice_get_normalized(cm::ChoiceMap, normalized::Address)
+    index = _choice_index_normalized(cm, normalized)
+    isnothing(index) && throw(KeyError(normalized))
+    return last(cm.entries[index])
+end
+
+function _choice_tryget_normalized(cm::ChoiceMap, normalized::Address)
+    index = _choice_index_normalized(cm, normalized)
+    isnothing(index) && return false, nothing
+    return true, last(cm.entries[index])
+end
+
+function Base.getindex(cm::ChoiceMap, address)
+    normalized = normalize_address(address)
+    return _choice_get_normalized(cm, normalized)
 end
 
 function Base.haskey(cm::ChoiceMap, address)
     normalized = normalize_address(address)
-    for entry in cm.entries
-        if first(entry) == normalized
-            return true
-        end
-    end
-    return false
+    found, _ = _choice_tryget_normalized(cm, normalized)
+    return found
 end
 
 Base.length(cm::ChoiceMap) = length(cm.entries)

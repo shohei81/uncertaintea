@@ -98,6 +98,8 @@ The next lowering layer is now explicit:
   numeric-specific evaluator instead of the generic expression path
 - supported choices now lower to family-specific backend plan nodes, so hot
   scoring no longer branches on a distribution family symbol
+- normalized address lookup now uses a direct `ChoiceMap` helper, and concrete
+  addresses are assembled with tuple recursion instead of `Any[]` accumulation
 
 ## Phase 2 Execution Strategy
 

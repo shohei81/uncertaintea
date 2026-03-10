@@ -287,28 +287,36 @@ function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledBlockExpr)
     return value
 end
 
-function _concrete_address(model::TeaModel, env::PlanEnvironment, address::AddressSpec)
-    parts = Any[]
-    for part in address.parts
-        if part isa AddressLiteralPart
-            push!(parts, part.value)
-        else
-            push!(parts, _eval_plan_expr(model, env, part.value))
-        end
+_concrete_runtime_address_parts(model::TeaModel, env::PlanEnvironment, ::Tuple{}) = ()
+
+function _concrete_runtime_address_parts(model::TeaModel, env::PlanEnvironment, parts::Tuple)
+    part = first(parts)
+    head = if part isa AddressLiteralPart
+        part.value
+    else
+        _eval_plan_expr(model, env, part.value)
     end
-    return Tuple(parts)
+    return (head, _concrete_runtime_address_parts(model, env, Base.tail(parts))...)
+end
+
+function _concrete_address(model::TeaModel, env::PlanEnvironment, address::AddressSpec)
+    return _concrete_runtime_address_parts(model, env, address.parts)
+end
+
+_concrete_compiled_address_parts(env::PlanEnvironment, ::Tuple{}) = ()
+
+function _concrete_compiled_address_parts(env::PlanEnvironment, parts::Tuple)
+    part = first(parts)
+    head = if part isa CompiledAddressLiteralPart
+        part.value
+    else
+        _eval_compiled_expr(env, part.expr)
+    end
+    return (head, _concrete_compiled_address_parts(env, Base.tail(parts))...)
 end
 
 function _concrete_address(env::PlanEnvironment, address::CompiledAddressSpec)
-    parts = Any[]
-    for part in address.parts
-        if part isa CompiledAddressLiteralPart
-            push!(parts, part.value)
-        else
-            push!(parts, _eval_compiled_expr(env, part.expr))
-        end
-    end
-    return Tuple(parts)
+    return _concrete_compiled_address_parts(env, address.parts)
 end
 
 function _distribution_from_spec(model::TeaModel, env::PlanEnvironment, rhs::DistributionSpec)
@@ -339,10 +347,10 @@ function _score_distribution_instance!(
     address = _concrete_address(model, env, step.address)
     value = if !isnothing(step.parameter_slot)
         params[step.parameter_slot]
-    elseif haskey(constraints, address)
-        constraints[address]
     else
-        throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
+        found, constrained_value = _choice_tryget_normalized(constraints, address)
+        found || throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
+        constrained_value
     end
 
     dist = _distribution_from_spec(model, env, step.rhs)
@@ -359,10 +367,10 @@ function _score_plan_step!(
     address = _concrete_address(env, step.address)
     value = if !isnothing(step.parameter_slot)
         params[step.parameter_slot]
-    elseif haskey(constraints, address)
-        constraints[address]
     else
-        throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
+        found, constrained_value = _choice_tryget_normalized(constraints, address)
+        found || throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
+        constrained_value
     end
 
     dist = _compiled_distribution(step, env)

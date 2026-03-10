@@ -88,6 +88,8 @@ Current backend-lowering subset:
   numeric backend evaluator instead of the generic expression path
 - supported distribution choices lower to family-specific backend plan nodes
   rather than a symbol-dispatched generic choice node
+- compiled and backend evaluators now build concrete addresses through tuple
+  recursion and use normalized direct `ChoiceMap` lookup on the hot path
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

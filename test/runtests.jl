@@ -56,6 +56,11 @@ using UncertainTea
     @test logjoint(gaussian_mean, params, (), constraints) ≈
         assess(gaussian_mean, (), choicemap((:mu, trace[:mu]), (:y, 0.3f0))) atol=1e-6
 
+    nested_choices = choicemap((:state => 1 => :z, 2.5f0))
+    @test nested_choices[:state => 1 => :z] == 2.5f0
+    @test nested_choices[(:state, 1, :z)] == 2.5f0
+    @test haskey(nested_choices, (:state, 1, :z))
+
     @tea static function iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
         for i in 1:n

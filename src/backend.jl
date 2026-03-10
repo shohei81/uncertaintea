@@ -979,28 +979,36 @@ function _eval_backend_index_iterable_expr(env::BatchedPlanEnvironment, expr::Ba
     return value
 end
 
-function _concrete_address(env::PlanEnvironment, address::BackendAddressSpec)
-    parts = Any[]
-    for part in address.parts
-        if part isa BackendAddressLiteralPart
-            push!(parts, part.value)
-        else
-            push!(parts, _eval_backend_index_value_expr(env, part.expr))
-        end
+_concrete_backend_address_parts(env::PlanEnvironment, ::Tuple{}) = ()
+
+function _concrete_backend_address_parts(env::PlanEnvironment, parts::Tuple)
+    part = first(parts)
+    head = if part isa BackendAddressLiteralPart
+        part.value
+    else
+        _eval_backend_index_value_expr(env, part.expr)
     end
-    return Tuple(parts)
+    return (head, _concrete_backend_address_parts(env, Base.tail(parts))...)
+end
+
+function _concrete_address(env::PlanEnvironment, address::BackendAddressSpec)
+    return _concrete_backend_address_parts(env, address.parts)
+end
+
+_concrete_backend_address_parts(env::BatchedPlanEnvironment, ::Tuple{}, batch_index::Int) = ()
+
+function _concrete_backend_address_parts(env::BatchedPlanEnvironment, parts::Tuple, batch_index::Int)
+    part = first(parts)
+    head = if part isa BackendAddressLiteralPart
+        part.value
+    else
+        _eval_backend_index_value_expr(env, part.expr, batch_index)
+    end
+    return (head, _concrete_backend_address_parts(env, Base.tail(parts), batch_index)...)
 end
 
 function _concrete_address(env::BatchedPlanEnvironment, address::BackendAddressSpec, batch_index::Int)
-    parts = Any[]
-    for part in address.parts
-        if part isa BackendAddressLiteralPart
-            push!(parts, part.value)
-        else
-            push!(parts, _eval_backend_index_value_expr(env, part.expr, batch_index))
-        end
-    end
-    return Tuple(parts)
+    return _concrete_backend_address_parts(env, address.parts, batch_index)
 end
 
 function _backend_normal_logpdf(mu, sigma, x)
@@ -1028,9 +1036,9 @@ end
 function _backend_choice_value(parameter_slot::Union{Nothing,Int}, params::AbstractVector, constraints::ChoiceMap, address)
     if !isnothing(parameter_slot)
         return params[parameter_slot]
-    elseif haskey(constraints, address)
-        return constraints[address]
     end
+    found, constrained_value = _choice_tryget_normalized(constraints, address)
+    found && return constrained_value
     throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
 end
 
@@ -1043,9 +1051,9 @@ function _backend_choice_value(
 )
     if !isnothing(parameter_slot)
         return params[parameter_slot, batch_index]
-    elseif haskey(constraint_map, address)
-        return constraint_map[address]
     end
+    found, constrained_value = _choice_tryget_normalized(constraint_map, address)
+    found && return constrained_value
     throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
 end
 
