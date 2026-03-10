@@ -188,11 +188,39 @@ function logjoint_unconstrained(
     return logjoint(model, constrained, args, constraints; rng=rng) + logabsdet
 end
 
+struct LogjointGradientCache{F,C,V}
+    objective::F
+    config::C
+    buffer::V
+end
+
+function _logjoint_gradient_cache(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple=(),
+    constraints::ChoiceMap=choicemap(),
+)
+    seed = collect(params)
+    objective = theta -> logjoint_unconstrained(model, theta, args, constraints)
+    config = ForwardDiff.GradientConfig(objective, seed)
+    buffer = similar(seed)
+    return LogjointGradientCache(objective, config, buffer)
+end
+
+function _logjoint_gradient!(cache::LogjointGradientCache, params::AbstractVector)
+    ForwardDiff.gradient!(cache.buffer, cache.objective, params, cache.config)
+    return cache.buffer
+end
+
 function logjoint_gradient_unconstrained(
     model::TeaModel,
     params::AbstractVector,
     args::Tuple=(),
     constraints::ChoiceMap=choicemap(),
 )
-    return ForwardDiff.gradient(theta -> logjoint_unconstrained(model, theta, args, constraints), collect(params))
+    seed = collect(params)
+    cache = _logjoint_gradient_cache(model, seed, args, constraints)
+    gradient = similar(seed)
+    ForwardDiff.gradient!(gradient, cache.objective, seed, cache.config)
+    return gradient
 end

@@ -98,6 +98,7 @@ function _leapfrog(
     model::TeaModel,
     position::Vector{Float64},
     momentum::Vector{Float64},
+    gradient_cache::LogjointGradientCache,
     inverse_mass_matrix::Vector{Float64},
     args::Tuple,
     constraints::ChoiceMap,
@@ -107,13 +108,13 @@ function _leapfrog(
     q = copy(position)
     p = copy(momentum)
 
-    gradient = logjoint_gradient_unconstrained(model, q, args, constraints)
+    gradient = _logjoint_gradient!(gradient_cache, q)
     all(isfinite, gradient) || return nothing
     p .+= (step_size / 2) .* gradient
 
     for leapfrog_step in 1:num_leapfrog_steps
         q .+= step_size .* (inverse_mass_matrix .* p)
-        gradient = logjoint_gradient_unconstrained(model, q, args, constraints)
+        gradient = _logjoint_gradient!(gradient_cache, q)
         all(isfinite, gradient) || return nothing
 
         if leapfrog_step < num_leapfrog_steps
@@ -231,6 +232,7 @@ function hmc(
     current_logjoint = logjoint_unconstrained(model, position, args, constraints)
     isfinite(current_logjoint) ||
         throw(ArgumentError("initial HMC parameters produced a non-finite unconstrained logjoint"))
+    gradient_cache = _logjoint_gradient_cache(model, position, args, constraints)
 
     unconstrained_samples = Matrix{Float64}(undef, num_params, num_samples)
     constrained_samples = Matrix{Float64}(undef, num_params, num_samples)
@@ -250,6 +252,7 @@ function hmc(
             model,
             position,
             momentum,
+            gradient_cache,
             inverse_mass_matrix,
             args,
             constraints,
