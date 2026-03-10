@@ -32,8 +32,8 @@ It should not center the language around `@observe`.
 
 ```julia
 @tea (static) function gaussian_mean()
-    mu ~ normal(0f0, 1f0)
-    {:y} ~ normal(mu, 1f0)
+    mu ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(mu, 1.0f0)
     return mu
 end
 
@@ -51,8 +51,8 @@ Semantics:
 
 ```julia
 @tea (static) function latent_scale_model()
-    mu ~ normal(0f0, 1f0)
-    log_sigma ~ normal(0f0, 1f0)
+    mu ~ normal(0.0f0, 1.0f0)
+    log_sigma ~ normal(0.0f0, 1.0f0)
     sigma = exp(log_sigma)
     y = ({:y} ~ normal(mu, sigma))
     return (; mu, sigma, y)
@@ -65,9 +65,9 @@ This style stays close to Gen's explicit addressed choice syntax.
 
 ```julia
 @tea (static) function iid_model(n)
-    mu ~ normal(0f0, 1f0)
+    mu ~ normal(0.0f0, 1.0f0)
     for i in 1:n
-        {:y => i} ~ normal(mu, 1f0)
+        {:y => i} ~ normal(mu, 1.0f0)
     end
     return mu
 end
@@ -85,12 +85,12 @@ the shape-specialized execution cache.
 
 ```julia
 @tea (static) function step(prev)
-    z ~ normal(prev, 1f0)
+    z ~ normal(prev, 1.0f0)
     return z
 end
 
 @tea (static) function chain_model(T)
-    z = ({:z => 1} ~ step(0f0))
+    z = ({:z => 1} ~ step(0.0f0))
     for t in 2:T
         z = ({:z => t} ~ step(z))
     end
