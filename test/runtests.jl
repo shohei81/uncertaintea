@@ -168,6 +168,29 @@ using UncertainTea
     @test plan4.steps[1].parameter_slot == 1
     @test length(plan4.steps[2].scopes) == 2
 
+    @tea static function deterministic_scale()
+        mu ~ normal(0.0f0, 1.0f0)
+        log_sigma ~ normal(0.0f0, 1.0f0)
+        sigma = exp(log_sigma)
+        {:y} ~ normal(mu, sigma)
+        return (; mu, sigma)
+    end
+
+    deterministic_trace, _ = generate(deterministic_scale, (), choicemap((:y, 0.4f0)); rng=MersenneTwister(12))
+    deterministic_spec = modelspec(deterministic_scale)
+    deterministic_plan = executionplan(deterministic_scale)
+    deterministic_params = parameter_vector(deterministic_trace)
+
+    @test parametercount(deterministic_spec.parameter_layout) == 2
+    @test deterministic_plan.steps[3] isa DeterministicPlanStep
+    @test deterministic_plan.steps[3].binding == :sigma
+    @test logjoint(deterministic_scale, deterministic_params, (), choicemap((:y, 0.4f0))) ≈
+        assess(
+            deterministic_scale,
+            (),
+            choicemap((:mu, deterministic_trace[:mu]), (:log_sigma, deterministic_trace[:log_sigma]), (:y, 0.4f0)),
+        ) atol=1e-6
+
     @tea static function inline_scale()
         log_sigma ~ normal(0.0f0, 1.0f0)
         {:y} ~ normal(0.0f0, exp(log_sigma))

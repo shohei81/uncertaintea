@@ -117,6 +117,17 @@ function _score_plan_step!(
     throw(ArgumentError("lower-level logjoint does not support RHS type $(typeof(step.rhs))"))
 end
 
+function _score_plan_step!(
+    model::TeaModel,
+    step::DeterministicPlanStep,
+    env::Dict{Symbol,Any},
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    env[step.binding] = _eval_plan_expr(model, env, step.expr)
+    return 0.0
+end
+
 function _score_scoped_distribution!(
     model::TeaModel,
     step::ChoicePlanStep,

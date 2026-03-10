@@ -9,6 +9,7 @@ export DistributionSpec, GenerativeCallSpec, RawChoiceRhsSpec
 export LoopScopeSpec
 export ParameterLayout, ParameterSlotSpec
 export ExecutionPlan, ChoicePlanStep
+export DeterministicPlanStep
 export IdentityTransform, LogTransform
 export ChoiceMap, TeaModel, TeaTrace
 export StaticMode, DynamicMode

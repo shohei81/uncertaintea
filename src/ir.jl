@@ -58,7 +58,9 @@ struct ParameterLayout
     slots::Vector{ParameterSlotSpec}
 end
 
-struct ChoicePlanStep
+abstract type AbstractPlanStep end
+
+struct ChoicePlanStep <: AbstractPlanStep
     choice_index::Int
     binding::Union{Nothing,Symbol}
     address::AddressSpec
@@ -67,9 +69,14 @@ struct ChoicePlanStep
     parameter_slot::Union{Nothing,Int}
 end
 
+struct DeterministicPlanStep <: AbstractPlanStep
+    binding::Symbol
+    expr::Any
+end
+
 struct ExecutionPlan
     model_name::Symbol
-    steps::Vector{ChoicePlanStep}
+    steps::Vector{AbstractPlanStep}
     parameter_layout::ParameterLayout
 end
 
@@ -93,6 +100,21 @@ function ModelSpec(
 )
     argument_symbols = Symbol[arg for arg in arguments]
     plan = build_execution_plan(name, choices, parameter_layout)
+    return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, plan)
+end
+
+function ModelSpec(
+    name::Symbol,
+    mode::Symbol,
+    arguments,
+    choices::Vector{ChoiceSpec},
+    shape_specialized::Bool,
+    parameter_layout::ParameterLayout,
+    plan_steps,
+)
+    argument_symbols = Symbol[arg for arg in arguments]
+    steps = AbstractPlanStep[step for step in plan_steps]
+    plan = ExecutionPlan(name, steps, parameter_layout)
     return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, plan)
 end
 
@@ -124,7 +146,7 @@ function _parameter_slot_index(layout::ParameterLayout, choice_index::Int)
 end
 
 function build_execution_plan(name::Symbol, choices::Vector{ChoiceSpec}, layout::ParameterLayout)
-    steps = ChoicePlanStep[]
+    steps = AbstractPlanStep[]
     for (choice_index, choice) in enumerate(choices)
         push!(
             steps,
@@ -192,6 +214,10 @@ function Base.show(io::IO, step::ChoicePlanStep)
     isnothing(step.parameter_slot) || print(io, ", parameter_slot=", step.parameter_slot)
     isempty(step.scopes) || print(io, ", scopes=", length(step.scopes))
     print(io, ")")
+end
+
+function Base.show(io::IO, step::DeterministicPlanStep)
+    print(io, "DeterministicPlanStep(binding=", step.binding, ")")
 end
 
 function Base.show(io::IO, plan::ExecutionPlan)

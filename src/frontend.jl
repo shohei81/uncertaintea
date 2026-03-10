@@ -130,6 +130,7 @@ end
 
 function _parameter_layout_expr(choice_nodes)
     slot_exprs = Expr[]
+    slot_lookup = Dict{Int,Int}()
     slot_index = 1
 
     for (choice_index, node) in enumerate(choice_nodes)
@@ -147,11 +148,12 @@ function _parameter_layout_expr(choice_nodes)
                 $slot_index,
                 $transform,
             )))
+            slot_lookup[choice_index] = slot_index
             slot_index += 1
         end
     end
 
-    return :($(_qualify(:ParameterLayout))($(Expr(:vect, slot_exprs...))))
+    return :($(_qualify(:ParameterLayout))($(Expr(:vect, slot_exprs...)))), slot_lookup
 end
 
 function _supported_distribution_family(rhs)
@@ -265,16 +267,93 @@ function _collect_choice_spec_exprs!(expr, specs::Vector{Tuple{Expr,Tuple}}, loo
     return specs
 end
 
+function _collect_plan_nodes!(expr, nodes::Vector{Tuple}, loop_scopes::Tuple=())
+    if !(expr isa Expr)
+        return nodes
+    end
+
+    if expr.head == :block
+        for arg in expr.args
+            arg isa LineNumberNode && continue
+            _collect_plan_nodes!(arg, nodes, loop_scopes)
+        end
+        return nodes
+    end
+
+    if expr.head == :for && length(expr.args) == 2
+        scope = _parse_loop_scope(expr.args[1])
+        _collect_plan_nodes!(expr.args[2], nodes, (loop_scopes..., scope))
+        return nodes
+    end
+
+    if expr.head == :(=) && length(expr.args) == 2
+        lhs, rhs = expr.args
+        if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :~
+            push!(nodes, (:choice, rhs, loop_scopes))
+        elseif lhs isa Symbol && isempty(loop_scopes)
+            push!(nodes, (:deterministic, lhs, rhs))
+        end
+        return nodes
+    end
+
+    if expr.head == :call && !isempty(expr.args) && expr.args[1] === :~
+        push!(nodes, (:choice, expr, loop_scopes))
+        return nodes
+    end
+
+    for arg in expr.args
+        _collect_plan_nodes!(arg, nodes, loop_scopes)
+    end
+
+    return nodes
+end
+
+function _execution_plan_steps_expr(plan_nodes, slot_lookup)
+    step_exprs = Expr[]
+    choice_index = 0
+
+    for node in plan_nodes
+        if node[1] === :choice
+            choice_index += 1
+            choice_expr = node[2]
+            loop_scopes = node[3]
+            lhs = choice_expr.args[2]
+            binding = lhs isa Symbol ? QuoteNode(lhs) : :(nothing)
+            address = _address_spec_expr(lhs)
+            rhs_spec = _rhs_spec_expr(choice_expr.args[3])
+            scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, loop_scopes)...)
+            slot_expr = haskey(slot_lookup, choice_index) ? slot_lookup[choice_index] : :(nothing)
+            push!(step_exprs, :($(_qualify(:ChoicePlanStep))(
+                $choice_index,
+                $binding,
+                $address,
+                $rhs_spec,
+                $scopes_expr,
+                $slot_expr,
+            )))
+        elseif node[1] === :deterministic
+            push!(step_exprs, :($(_qualify(:DeterministicPlanStep))(
+                $(QuoteNode(node[2])),
+                $(QuoteNode(node[3])),
+            )))
+        end
+    end
+
+    return Expr(:vect, step_exprs...)
+end
+
 function _model_spec_expr(mode_expr, signature, body)
     name = signature.args[1]
     arguments = [_argument_name(arg) for arg in signature.args[2:end]]
     argument_expr = Expr(:vect, map(QuoteNode, arguments)...)
-    choice_nodes = Tuple{Expr,Tuple}[]
-    _collect_choice_spec_exprs!(body, choice_nodes)
+    plan_nodes = Tuple[]
+    _collect_plan_nodes!(body, plan_nodes)
+    choice_nodes = Tuple{Expr,Tuple}[ (node[2], node[3]) for node in plan_nodes if node[1] === :choice ]
     choice_exprs = map(node -> _choice_spec_expr(node[1], node[2]), choice_nodes)
     choices_expr = Expr(:vect, choice_exprs...)
     shape_specialized = any(node -> _address_has_dynamic_parts(node[1].args[2]) || any(scope -> _expr_has_dynamic_content(scope[2]), node[2]), choice_nodes)
-    parameter_layout_expr = _parameter_layout_expr(choice_nodes)
+    parameter_layout_expr, slot_lookup = _parameter_layout_expr(choice_nodes)
+    plan_steps_expr = _execution_plan_steps_expr(plan_nodes, slot_lookup)
 
     return :($(_qualify(:ModelSpec))(
         $(QuoteNode(name)),
@@ -283,6 +362,7 @@ function _model_spec_expr(mode_expr, signature, body)
         $choices_expr,
         $shape_specialized,
         $parameter_layout_expr,
+        $plan_steps_expr,
     ))
 end
 
