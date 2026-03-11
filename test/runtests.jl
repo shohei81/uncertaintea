@@ -1001,6 +1001,17 @@ using UncertainTea
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], falses(3)) ≈ 0.6 atol=1e-8
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], BitVector([false, true, false])) ≈
         0.4 atol=1e-8
+    @test UncertainTea._mass_adaptation_weight(true, 0.1, false) == 1.0
+    @test UncertainTea._mass_adaptation_weight(false, 0.25, false) == 0.25
+    @test UncertainTea._mass_adaptation_weight(false, 0.25, true) == 0.0
+    mass_adaptation_weights = zeros(3)
+    UncertainTea._mass_adaptation_weights!(
+        mass_adaptation_weights,
+        BitVector([true, false, false]),
+        [0.2, 0.3, 0.4],
+        BitVector([false, false, true]),
+    )
+    @test mass_adaptation_weights == [1.0, 0.3, 0.0]
     @test UncertainTea._running_variance_clip_scale(0) == 8.0
     @test UncertainTea._running_variance_clip_scale(4) == 8.0
     @test UncertainTea._running_variance_clip_scale(12) ≈ 6.5 atol=1e-8
@@ -1015,6 +1026,17 @@ using UncertainTea
     @test masked_variance_state.count == 2
     @test masked_variance_state.mean ≈ [3.0, 30.0] atol=1e-8
     @test masked_variance_state.m2 ≈ [8.0, 800.0] atol=1e-8
+    @test masked_variance_state.weight_sum == 2.0
+    @test masked_variance_state.weight_square_sum == 2.0
+    @test UncertainTea._running_variance_effective_count(masked_variance_state) == 2.0
+    weighted_variance_state = UncertainTea._running_variance_state(1)
+    UncertainTea._update_running_variance!(weighted_variance_state, [0.0], 1.0)
+    UncertainTea._update_running_variance!(weighted_variance_state, [10.0], 0.25)
+    @test weighted_variance_state.count == 2
+    @test weighted_variance_state.weight_sum ≈ 1.25 atol=1e-8
+    @test weighted_variance_state.weight_square_sum ≈ 1.0625 atol=1e-8
+    @test UncertainTea._running_variance_effective_count(weighted_variance_state) ≈
+        (1.25^2 / 1.0625) atol=1e-8
     robust_variance_state = UncertainTea._running_variance_state(1)
     for value in (0.0, 0.05, -0.05, 0.1, 100.0)
         UncertainTea._update_running_variance!(robust_variance_state, [value])

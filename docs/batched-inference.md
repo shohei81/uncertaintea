@@ -75,6 +75,8 @@ single-chain HMC, but it now supports the same basic warmup structure:
   dominate the shared diagonal mass estimate
 - the winsorization threshold now starts loose within each warmup window and
   tightens toward the target clip scale as more pooled samples arrive
+- pooled variance now uses acceptance-aware online weights, so rejected
+  positions contribute fractionally and divergent proposals contribute zero
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.

@@ -57,6 +57,8 @@ mutable struct RunningVarianceState
     m2::Vector{Float64}
     clipped_sample::Vector{Float64}
     count::Int
+    weight_sum::Float64
+    weight_square_sum::Float64
 end
 
 const _RUNNING_VARIANCE_CLIP_START = 4
@@ -88,6 +90,7 @@ mutable struct BatchedHMCWorkspace
     accept_prob::Vector{Float64}
     accepted_step::BitVector
     divergent_step::BitVector
+    mass_adaptation_weights::Vector{Float64}
     constrained_position::Matrix{Float64}
     sqrt_inverse_mass_matrix::Vector{Float64}
 end
@@ -122,6 +125,7 @@ function BatchedHMCWorkspace(
         Vector{Float64}(undef, num_chains),
         falses(num_chains),
         falses(num_chains),
+        Vector{Float64}(undef, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         sqrt.(Float64.(inverse_mass_matrix)),
     )
@@ -829,7 +833,7 @@ function _final_step_size(state::DualAveragingState)
 end
 
 function _running_variance_state(num_params::Int)
-    return RunningVarianceState(zeros(num_params), zeros(num_params), zeros(num_params), 0)
+    return RunningVarianceState(zeros(num_params), zeros(num_params), zeros(num_params), 0, 0.0, 0.0)
 end
 
 function _running_variance_clip_scale(count::Int)
@@ -894,41 +898,95 @@ function _warmup_schedule(num_warmup::Int)
     return WarmupSchedule(initial_buffer, window_ends, terminal_buffer)
 end
 
-function _update_running_variance!(state::RunningVarianceState, sample::AbstractVector)
+function _running_variance_effective_count(state::RunningVarianceState)
+    state.weight_square_sum <= 0 && return 0.0
+    return state.weight_sum^2 / state.weight_square_sum
+end
+
+function _update_running_variance!(
+    state::RunningVarianceState,
+    sample::AbstractVector,
+    weight::Real,
+)
+    weight_value = Float64(weight)
+    0 <= weight_value <= 1 || throw(ArgumentError("running variance weight must lie in [0, 1], got $weight"))
+    iszero(weight_value) && return nothing
+
     update_sample = _running_variance_sample!(state, sample)
     state.count += 1
+    new_weight_sum = state.weight_sum + weight_value
     @inbounds for index in eachindex(update_sample, state.mean, state.m2)
         delta = update_sample[index] - state.mean[index]
-        state.mean[index] += delta / state.count
+        state.mean[index] += (weight_value / new_weight_sum) * delta
         delta2 = update_sample[index] - state.mean[index]
-        state.m2[index] += delta * delta2
+        state.m2[index] += weight_value * delta * delta2
     end
+    state.weight_sum = new_weight_sum
+    state.weight_square_sum += weight_value^2
+    return nothing
+end
+
+function _update_running_variance!(state::RunningVarianceState, sample::AbstractVector)
+    _update_running_variance!(state, sample, 1.0)
     return nothing
 end
 
 function _update_running_variance!(
     state::RunningVarianceState,
     samples::AbstractMatrix,
-    include::AbstractVector,
+    weights::AbstractVector,
 )
-    size(samples, 2) == length(include) ||
-        throw(DimensionMismatch("expected $(size(samples, 2)) inclusion flags, got $(length(include))"))
+    size(samples, 2) == length(weights) ||
+        throw(DimensionMismatch("expected $(size(samples, 2)) running variance weights, got $(length(weights))"))
     for column_index in axes(samples, 2)
-        include[column_index] || continue
-        _update_running_variance!(state, view(samples, :, column_index))
+        _update_running_variance!(state, view(samples, :, column_index), weights[column_index])
     end
     return nothing
 end
 
 function _inverse_mass_matrix(state::RunningVarianceState, regularization::Float64)
-    if state.count < 2
+    effective_count = _running_variance_effective_count(state)
+    if effective_count < 2
         return ones(length(state.mean))
     end
 
-    variance = state.m2 ./ (state.count - 1)
-    shrinkage = state.count / (state.count + 5.0)
+    variance_denom = state.weight_sum - state.weight_square_sum / state.weight_sum
+    variance_denom <= 0 && return ones(length(state.mean))
+    variance = state.m2 ./ variance_denom
+    shrinkage = effective_count / (effective_count + 5.0)
     regularized_variance = shrinkage .* variance .+ (1 - shrinkage)
     return 1 ./ max.(regularized_variance, regularization)
+end
+
+function _mass_adaptation_weight(
+    accepted_step::Bool,
+    accept_prob::Real,
+    divergent_step::Bool,
+)
+    divergent_step && return 0.0
+    accepted_step && return 1.0
+    if !isfinite(accept_prob)
+        return 0.0
+    end
+    return clamp(Float64(accept_prob), 0.0, 1.0)
+end
+
+function _mass_adaptation_weights!(
+    destination::AbstractVector,
+    accepted_step::AbstractVector,
+    accept_prob::AbstractVector,
+    divergent_step::AbstractVector,
+)
+    length(destination) == length(accepted_step) == length(accept_prob) == length(divergent_step) ||
+        throw(DimensionMismatch("mass adaptation weights require matching vector lengths"))
+    @inbounds for index in eachindex(destination, accepted_step, accept_prob, divergent_step)
+        destination[index] = _mass_adaptation_weight(
+            accepted_step[index],
+            accept_prob[index],
+            divergent_step[index],
+        )
+    end
+    return destination
 end
 
 function _acceptance_probability(log_accept_ratio::Float64)
@@ -1247,9 +1305,13 @@ function hmc(
             if adapt_mass_matrix &&
                mass_window_index <= length(warmup_schedule.slow_window_ends) &&
                iteration > warmup_schedule.initial_buffer
-                _update_running_variance!(variance_state, position)
+                _update_running_variance!(
+                    variance_state,
+                    position,
+                    _mass_adaptation_weight(accepted_step, accept_prob, divergent_step),
+                )
                 if iteration == warmup_schedule.slow_window_ends[mass_window_index]
-                    if variance_state.count >= mass_matrix_min_samples
+                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
                     end
                     variance_state = _running_variance_state(num_params)
@@ -1275,7 +1337,7 @@ function hmc(
                 if adapt_step_size
                     hmc_step_size = _final_step_size(dual_state)
                 end
-                if adapt_mass_matrix && variance_state.count >= mass_matrix_min_samples
+                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                     inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
                 end
             end
@@ -1521,9 +1583,19 @@ function batched_hmc(
             if adapt_mass_matrix &&
                mass_window_index <= length(warmup_schedule.slow_window_ends) &&
                iteration > warmup_schedule.initial_buffer
-                _update_running_variance!(variance_state, position, .!divergent_step)
+                _mass_adaptation_weights!(
+                    workspace.mass_adaptation_weights,
+                    accepted_step,
+                    accept_prob,
+                    divergent_step,
+                )
+                _update_running_variance!(
+                    variance_state,
+                    position,
+                    workspace.mass_adaptation_weights,
+                )
                 if iteration == warmup_schedule.slow_window_ends[mass_window_index]
-                    if variance_state.count >= mass_matrix_min_samples
+                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
                     end
                     variance_state = _running_variance_state(num_params)
@@ -1551,7 +1623,7 @@ function batched_hmc(
                 if adapt_step_size
                     hmc_step_size = _final_step_size(dual_state)
                 end
-                if adapt_mass_matrix && variance_state.count >= mass_matrix_min_samples
+                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                     inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
                 end
             end
