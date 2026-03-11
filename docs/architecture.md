@@ -119,7 +119,8 @@ Current backend-lowering subset:
   states do not count like fully refreshed samples; both schedules are now
   explicitly tied to the current slow-window length, and each slow-window
   update is surfaced as a diagnostic summary after sampling and carried into
-  the high-level `summarize` output
+  the high-level `summarize` output, including a richer plain-text display for
+  interactive inspection
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

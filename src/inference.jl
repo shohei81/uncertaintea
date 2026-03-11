@@ -190,6 +190,39 @@ Base.lastindex(summary::HMCSummary) = lastindex(summary.parameters)
 Base.iterate(chains::HMCChains, state...) = iterate(chains.chains, state...)
 Base.iterate(summary::HMCSummary, state...) = iterate(summary.parameters, state...)
 
+function _summary_float(value::Real; digits::Int=4)
+    if isnan(value)
+        return "NaN"
+    elseif !isfinite(value)
+        return value > 0 ? "Inf" : "-Inf"
+    end
+    return string(round(Float64(value); digits=digits))
+end
+
+function _show_mass_adaptation_summary_line(io::IO, summary::HMCMassAdaptationSummary; indent::AbstractString="")
+    print(
+        io,
+        indent,
+        "window ",
+        summary.window_index,
+        " [",
+        summary.iteration_start,
+        ":",
+        summary.iteration_end,
+        "]",
+        " updated=",
+        summary.num_updated,
+        "/",
+        summary.chains,
+        " eff=",
+        _summary_float(summary.mean_effective_count; digits=2),
+        " mass=",
+        _summary_float(summary.mean_mass),
+        " clip=",
+        _summary_float(summary.mean_clip_scale_end; digits=2),
+    )
+end
+
 function Base.show(io::IO, summary::HMCMassAdaptationWindowSummary)
     print(
         io,
@@ -205,6 +238,19 @@ function Base.show(io::IO, summary::HMCMassAdaptationWindowSummary)
         summary.updated,
         ")",
     )
+end
+
+function Base.show(io::IO, ::MIME"text/plain", summary::HMCMassAdaptationWindowSummary)
+    println(io, "HMCMassAdaptationWindowSummary")
+    println(io, "  window: ", summary.window_index)
+    println(io, "  iterations: ", summary.iteration_start, ":", summary.iteration_end)
+    println(io, "  window_length: ", summary.window_length)
+    println(io, "  pooled_samples: ", summary.pooled_samples)
+    println(io, "  effective_count: ", _summary_float(summary.effective_count; digits=2))
+    println(io, "  mean_weight: ", _summary_float(summary.mean_weight; digits=3))
+    println(io, "  clip_scale: ", _summary_float(summary.clip_scale_start; digits=2), " -> ", _summary_float(summary.clip_scale_end; digits=2))
+    println(io, "  updated: ", summary.updated)
+    print(io, "  mass: mean=", _summary_float(summary.mass_mean), " min=", _summary_float(summary.mass_min), " max=", _summary_float(summary.mass_max))
 end
 
 function Base.show(io::IO, summary::HMCMassAdaptationSummary)
@@ -224,6 +270,21 @@ function Base.show(io::IO, summary::HMCMassAdaptationSummary)
     )
 end
 
+function Base.show(io::IO, ::MIME"text/plain", summary::HMCMassAdaptationSummary)
+    println(io, "HMCMassAdaptationSummary")
+    println(io, "  window: ", summary.window_index, " (", summary.iteration_start, ":", summary.iteration_end, ")")
+    println(io, "  chains: ", summary.chains, " updated=", summary.num_updated, "/", summary.chains)
+    println(io, "  window_length: ", summary.window_length)
+    println(io, "  pooled_samples_mean: ", _summary_float(summary.mean_pooled_samples; digits=2))
+    println(io, "  weight_sum_mean: ", _summary_float(summary.mean_weight_sum; digits=2))
+    println(io, "  effective_count: mean=", _summary_float(summary.mean_effective_count; digits=2),
+        " min=", _summary_float(summary.min_effective_count; digits=2),
+        " max=", _summary_float(summary.max_effective_count; digits=2))
+    println(io, "  mean_weight: ", _summary_float(summary.mean_weight; digits=3))
+    println(io, "  clip_scale_end_mean: ", _summary_float(summary.mean_clip_scale_end; digits=2))
+    print(io, "  mass: mean=", _summary_float(summary.mean_mass), " min=", _summary_float(summary.min_mass), " max=", _summary_float(summary.max_mass))
+end
+
 function Base.show(io::IO, diagnostics::HMCDiagnosticsSummary)
     print(
         io,
@@ -235,6 +296,31 @@ function Base.show(io::IO, diagnostics::HMCDiagnosticsSummary)
         length(diagnostics.mass_adaptation_windows),
         ")",
     )
+end
+
+function Base.show(io::IO, ::MIME"text/plain", diagnostics::HMCDiagnosticsSummary)
+    println(io, "HMCDiagnosticsSummary")
+    println(io, "  acceptance_rate: ", _summary_float(diagnostics.acceptance_rate; digits=3))
+    println(io, "  divergence_rate: ", _summary_float(diagnostics.divergence_rate; digits=3))
+    println(
+        io,
+        "  step_size: mean=",
+        _summary_float(diagnostics.mean_step_size),
+        " min=",
+        _summary_float(isempty(diagnostics.step_sizes) ? 0.0 : minimum(diagnostics.step_sizes)),
+        " max=",
+        _summary_float(isempty(diagnostics.step_sizes) ? 0.0 : maximum(diagnostics.step_sizes)),
+    )
+    if isempty(diagnostics.mass_adaptation_windows)
+        print(io, "  mass_adaptation_windows: none")
+        return nothing
+    end
+    println(io, "  mass_adaptation_windows:")
+    for summary in diagnostics.mass_adaptation_windows
+        _show_mass_adaptation_summary_line(io, summary; indent="    ")
+        println(io)
+    end
+    return nothing
 end
 
 function Base.show(io::IO, chain::HMCChain)
@@ -292,6 +378,63 @@ function Base.show(io::IO, summary::HMCSummary)
         summary.quantile_probs,
         ")",
     )
+end
+
+function Base.show(io::IO, ::MIME"text/plain", summary::HMCSummary)
+    println(io, "HMCSummary(", summary.model.name, ")")
+    println(io, "  space: ", summary.space)
+    println(io, "  quantiles: ", summary.quantile_probs)
+    println(io, "  parameters: ", length(summary))
+    max_parameters = min(length(summary.parameters), 5)
+    for parameter_index in 1:max_parameters
+        parameter = summary.parameters[parameter_index]
+        mid_quantile = parameter.quantiles[cld(length(parameter.quantiles), 2)]
+        println(
+            io,
+            "    ",
+            parameter.binding,
+            " @ ",
+            parameter.address,
+            ": mean=",
+            _summary_float(parameter.mean),
+            " sd=",
+            _summary_float(parameter.sd),
+            " median=",
+            _summary_float(mid_quantile),
+            " rhat=",
+            _summary_float(parameter.rhat; digits=3),
+            " ess=",
+            _summary_float(parameter.ess; digits=1),
+        )
+    end
+    if length(summary.parameters) > max_parameters
+        println(io, "    ... ", length(summary.parameters) - max_parameters, " more parameters")
+    end
+    println(io, "  diagnostics:")
+    print(io, "    acceptance_rate: ", _summary_float(summary.diagnostics.acceptance_rate; digits=3))
+    println(io)
+    print(io, "    divergence_rate: ", _summary_float(summary.diagnostics.divergence_rate; digits=3))
+    println(io)
+    print(
+        io,
+        "    step_size: mean=",
+        _summary_float(summary.diagnostics.mean_step_size),
+        " min=",
+        _summary_float(isempty(summary.diagnostics.step_sizes) ? 0.0 : minimum(summary.diagnostics.step_sizes)),
+        " max=",
+        _summary_float(isempty(summary.diagnostics.step_sizes) ? 0.0 : maximum(summary.diagnostics.step_sizes)),
+    )
+    println(io)
+    if isempty(summary.diagnostics.mass_adaptation_windows)
+        print(io, "    mass_adaptation_windows: none")
+        return nothing
+    end
+    println(io, "    mass_adaptation_windows:")
+    for window_summary in summary.diagnostics.mass_adaptation_windows
+        _show_mass_adaptation_summary_line(io, window_summary; indent="      ")
+        println(io)
+    end
+    return nothing
 end
 
 function acceptancerate(chain::HMCChain)

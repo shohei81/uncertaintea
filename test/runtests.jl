@@ -1362,6 +1362,19 @@ using UncertainTea
     @test massadaptationwindows(gaussian_summary)[1].iteration_end == 25
     @test massadaptationwindows(gaussian_summary)[1].mean_effective_count >= 3
     @test massadaptationwindows(gaussian_summary)[1].min_mass > 0
+    gaussian_summary_text = repr(MIME"text/plain"(), gaussian_summary)
+    @test occursin("HMCSummary(gaussian_mean)", gaussian_summary_text)
+    @test occursin("diagnostics:", gaussian_summary_text)
+    @test occursin("acceptance_rate:", gaussian_summary_text)
+    @test occursin("mass_adaptation_windows:", gaussian_summary_text)
+    @test occursin("mu @ mu:", gaussian_summary_text)
+    diagnostics_text = repr(MIME"text/plain"(), gaussian_summary.diagnostics)
+    @test occursin("HMCDiagnosticsSummary", diagnostics_text)
+    @test occursin("step_size:", diagnostics_text)
+    @test occursin("window 1 [6:25]", diagnostics_text)
+    mass_window_text = repr(MIME"text/plain"(), massadaptationwindows(gaussian_summary)[1])
+    @test occursin("HMCMassAdaptationSummary", mass_window_text)
+    @test occursin("chains: 3 updated=3/3", mass_window_text)
     @test gaussian_summary[1].binding == :mu
     @test gaussian_summary[1].address == :mu
     @test gaussian_summary[1].mean ≈ gaussian_pooled_mean atol=1e-8
@@ -1404,6 +1417,7 @@ using UncertainTea
     @test massadaptationwindows(gaussian_batched_summary)[1].chains == 3
     @test massadaptationwindows(gaussian_batched_summary)[1].window_length == 10
     @test massadaptationwindows(gaussian_batched_summary)[1].num_updated == 3
+    @test occursin("window 1 [6:15]", repr(MIME"text/plain"(), gaussian_batched_summary))
     @test !(isapprox(gaussian_batched_chain[1].step_size, gaussian_batched_baseline_chain[1].step_size; atol=1e-8) &&
         isapprox(gaussian_batched_chain[1].mass_matrix[1], gaussian_batched_baseline_chain[1].mass_matrix[1]; atol=1e-8))
     @test 0.0 <= acceptancerate(gaussian_batched_chain) <= 1.0
