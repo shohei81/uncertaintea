@@ -466,6 +466,8 @@ function _validate_batched_hmc_arguments(
     num_leapfrog_steps::Int,
     target_accept::Real,
     divergence_threshold::Real,
+    mass_matrix_regularization::Real,
+    mass_matrix_min_samples::Int,
     args,
     constraints,
 )
@@ -478,8 +480,8 @@ function _validate_batched_hmc_arguments(
         num_leapfrog_steps,
         target_accept,
         divergence_threshold,
-        1e-3,
-        1,
+        mass_matrix_regularization,
+        mass_matrix_min_samples,
     )
     _validate_batched_args(args, num_chains)
     _validate_batched_constraints(constraints, num_chains)
@@ -563,6 +565,18 @@ function _sample_batched_momentum!(
     return destination
 end
 
+function _update_sqrt_inverse_mass_matrix!(
+    destination::AbstractVector,
+    inverse_mass_matrix::AbstractVector,
+)
+    length(destination) == length(inverse_mass_matrix) ||
+        throw(DimensionMismatch("expected inverse mass matrix of length $(length(destination)), got $(length(inverse_mass_matrix))"))
+    for index in eachindex(destination, inverse_mass_matrix)
+        destination[index] = sqrt(Float64(inverse_mass_matrix[index]))
+    end
+    return destination
+end
+
 function _batched_kinetic_energy(
     momentum::AbstractMatrix,
     inverse_mass_matrix::AbstractVector,
@@ -633,6 +647,11 @@ function _batched_acceptance_probability!(
         destination[index] = _acceptance_probability(log_accept_ratio[index])
     end
     return destination
+end
+
+function _mean_acceptance_probability(accept_prob::AbstractVector)
+    isempty(accept_prob) && return 0.0
+    return sum(accept_prob) / length(accept_prob)
 end
 
 function _batched_leapfrog!(
@@ -885,6 +904,78 @@ function _proposal_diagnostics(
     energy_error = proposed_hamiltonian - current_hamiltonian
     divergent = !isfinite(energy_error) || abs(energy_error) > divergence_threshold
     return proposed_hamiltonian, energy_error, divergent
+end
+
+function _find_reasonable_batched_step_size(
+    workspace::BatchedHMCWorkspace,
+    model::TeaModel,
+    position::Matrix{Float64},
+    current_logjoint::AbstractVector,
+    current_gradient::Matrix{Float64},
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    rng::AbstractRNG,
+)
+    reasonable_step_size = step_size
+    min_step_size = 1e-8
+    max_step_size = 1e3
+    target_accept = 0.5
+
+    for _ in 0:20
+        _update_sqrt_inverse_mass_matrix!(workspace.sqrt_inverse_mass_matrix, inverse_mass_matrix)
+        _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
+        _, proposal_momentum, proposed_logjoint, _, valid = _batched_leapfrog!(
+            workspace,
+            model,
+            position,
+            current_gradient,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            reasonable_step_size,
+            1,
+        )
+
+        current_hamiltonian = _batched_hamiltonian!(
+            workspace.current_hamiltonian,
+            current_logjoint,
+            workspace.momentum,
+            inverse_mass_matrix,
+        )
+        proposed_hamiltonian = workspace.proposed_hamiltonian
+        copyto!(proposed_hamiltonian, current_hamiltonian)
+        log_accept_ratio = workspace.log_accept_ratio
+        fill!(log_accept_ratio, -Inf)
+        for chain_index in eachindex(current_logjoint)
+            if valid[chain_index]
+                proposed_hamiltonian[chain_index] = _hamiltonian(
+                    proposed_logjoint[chain_index],
+                    view(proposal_momentum, :, chain_index),
+                    inverse_mass_matrix,
+                )
+                log_accept_ratio[chain_index] =
+                    current_hamiltonian[chain_index] - proposed_hamiltonian[chain_index]
+            end
+        end
+
+        accept_prob = _batched_acceptance_probability!(workspace.accept_prob, log_accept_ratio)
+        mean_accept_prob = _mean_acceptance_probability(accept_prob)
+        direction = mean_accept_prob > target_accept ? 1.0 : -1.0
+        next_step_size = reasonable_step_size * (2.0 ^ direction)
+        if next_step_size < min_step_size || next_step_size > max_step_size
+            break
+        end
+
+        if (direction > 0 && mean_accept_prob <= target_accept) ||
+           (direction < 0 && mean_accept_prob >= target_accept)
+            break
+        end
+        reasonable_step_size = next_step_size
+    end
+
+    return clamp(reasonable_step_size, min_step_size, max_step_size)
 end
 
 function _find_reasonable_step_size(
@@ -1207,7 +1298,12 @@ function batched_hmc(
     num_leapfrog_steps::Int=10,
     initial_params=nothing,
     target_accept::Real=0.8,
+    adapt_step_size::Bool=true,
+    adapt_mass_matrix::Bool=true,
+    find_reasonable_step_size::Bool=false,
     divergence_threshold::Real=1000.0,
+    mass_matrix_regularization::Real=1e-3,
+    mass_matrix_min_samples::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
@@ -1220,6 +1316,8 @@ function batched_hmc(
         num_leapfrog_steps,
         target_accept,
         divergence_threshold,
+        mass_matrix_regularization,
+        mass_matrix_min_samples,
         args,
         constraints,
     )
@@ -1239,11 +1337,12 @@ function batched_hmc(
     workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
     current_logjoint = Vector{Float64}(undef, num_chains)
     current_gradient = workspace.current_gradient
-    _batched_logjoint_and_gradient_unconstrained!(
+    _, gradient = _batched_logjoint_and_gradient_unconstrained!(
         current_logjoint,
         workspace.gradient_cache,
         position,
     )
+    copyto!(current_gradient, gradient)
     all(isfinite, current_logjoint) ||
         throw(ArgumentError("initial batched HMC parameters produced a non-finite unconstrained logjoint"))
     all(isfinite, current_gradient) ||
@@ -1260,9 +1359,28 @@ function batched_hmc(
     hmc_step_size = Float64(step_size)
     hmc_target_accept = Float64(target_accept)
     hmc_divergence_threshold = Float64(divergence_threshold)
+    warmup_schedule = _warmup_schedule(num_warmup)
+    mass_window_index = 1
+    if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
+        hmc_step_size = _find_reasonable_batched_step_size(
+            workspace,
+            model,
+            position,
+            current_logjoint,
+            current_gradient,
+            inverse_mass_matrix,
+            batch_args,
+            batch_constraints,
+            hmc_step_size,
+            rng,
+        )
+    end
+    dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
+    variance_state = _running_variance_state(num_params)
 
     sample_index = 0
     for iteration in 1:total_iterations
+        _update_sqrt_inverse_mass_matrix!(workspace.sqrt_inverse_mass_matrix, inverse_mass_matrix)
         _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
         proposal_position, proposal_momentum, proposed_logjoint, proposal_gradient, valid = _batched_leapfrog!(
             workspace,
@@ -1316,6 +1434,51 @@ function batched_hmc(
                 copyto!(view(current_gradient, :, chain_index), view(proposal_gradient, :, chain_index))
                 current_logjoint[chain_index] = proposed_logjoint[chain_index]
                 accepted_step[chain_index] = true
+            end
+        end
+
+        if iteration <= num_warmup
+            if adapt_step_size
+                hmc_step_size = _update_step_size!(dual_state, _mean_acceptance_probability(accept_prob))
+            end
+
+            if adapt_mass_matrix &&
+               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
+               iteration > warmup_schedule.initial_buffer
+                for chain_index in 1:num_chains
+                    _update_running_variance!(variance_state, view(position, :, chain_index))
+                end
+                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
+                    if variance_state.count >= mass_matrix_min_samples
+                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                    end
+                    variance_state = _running_variance_state(num_params)
+                    mass_window_index += 1
+                    if adapt_step_size && iteration < num_warmup
+                        hmc_step_size = _find_reasonable_batched_step_size(
+                            workspace,
+                            model,
+                            position,
+                            current_logjoint,
+                            current_gradient,
+                            inverse_mass_matrix,
+                            batch_args,
+                            batch_constraints,
+                            hmc_step_size,
+                            rng,
+                        )
+                        dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
+                    end
+                end
+            end
+
+            if iteration == num_warmup
+                if adapt_step_size
+                    hmc_step_size = _final_step_size(dual_state)
+                end
+                if adapt_mass_matrix && variance_state.count >= mass_matrix_min_samples
+                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                end
             end
         end
 

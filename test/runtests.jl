@@ -1126,6 +1126,20 @@ using UncertainTea
         initial_params=gaussian_batch_params,
         rng=MersenneTwister(52),
     )
+    gaussian_batched_baseline_chain = batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=40,
+        num_warmup=20,
+        step_size=0.18,
+        num_leapfrog_steps=6,
+        initial_params=gaussian_batch_params,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        rng=MersenneTwister(52),
+    )
     gaussian_batched_chain_replay = batched_hmc(
         gaussian_mean,
         (),
@@ -1137,6 +1151,36 @@ using UncertainTea
         num_leapfrog_steps=6,
         initial_params=gaussian_batch_params,
         rng=MersenneTwister(52),
+    )
+    gaussian_batched_mass_chain = batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=20,
+        num_warmup=20,
+        step_size=0.18,
+        num_leapfrog_steps=6,
+        initial_params=gaussian_batch_params,
+        adapt_step_size=false,
+        adapt_mass_matrix=true,
+        mass_matrix_min_samples=3,
+        rng=MersenneTwister(55),
+    )
+    gaussian_batched_large_step_chain = batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=10,
+        num_warmup=0,
+        step_size=16.0,
+        num_leapfrog_steps=4,
+        initial_params=gaussian_batch_params,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        find_reasonable_step_size=true,
+        rng=MersenneTwister(56),
     )
     iid_batched_chain = batched_hmc(
         iid_model,
@@ -1234,8 +1278,16 @@ using UncertainTea
     @test length(gaussian_batched_chain.constraints) == 3
     @test gaussian_batched_chain[1].constraints[:y] == gaussian_batch_constraints[1][:y]
     @test gaussian_batched_chain[2].constraints[:y] == gaussian_batch_constraints[2][:y]
-    @test all(chain.step_size == 0.18 for chain in gaussian_batched_chain)
-    @test all(chain.mass_matrix == [1.0] for chain in gaussian_batched_chain)
+    @test all(chain.step_size > 0 for chain in gaussian_batched_chain)
+    @test all(chain.mass_matrix[1] > 0 for chain in gaussian_batched_chain)
+    @test all(chain.step_size == 0.18 for chain in gaussian_batched_baseline_chain)
+    @test all(chain.mass_matrix == [1.0] for chain in gaussian_batched_baseline_chain)
+    @test all(chain.step_size == 0.18 for chain in gaussian_batched_mass_chain)
+    @test all(chain.mass_matrix[1] != 1.0 for chain in gaussian_batched_mass_chain)
+    @test all(0 < chain.step_size < 16.0 for chain in gaussian_batched_large_step_chain)
+    @test all(all(isfinite, chain.logjoint_values) for chain in gaussian_batched_large_step_chain)
+    @test !(isapprox(gaussian_batched_chain[1].step_size, gaussian_batched_baseline_chain[1].step_size; atol=1e-8) &&
+        isapprox(gaussian_batched_chain[1].mass_matrix[1], gaussian_batched_baseline_chain[1].mass_matrix[1]; atol=1e-8))
     @test 0.0 <= acceptancerate(gaussian_batched_chain) <= 1.0
     @test 0.0 <= divergencerate(gaussian_batched_chain) <= 1.0
     @test length(gaussian_batched_rhat) == 1
@@ -1299,7 +1351,7 @@ using UncertainTea
     @test nchains(positive_batched_chain) == 3
     @test numsamples(positive_batched_chain) == 30
     @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_batched_chain)
-    @test all(chain.mass_matrix == [1.0] for chain in positive_batched_chain)
+    @test all(chain.mass_matrix[1] > 0 for chain in positive_batched_chain)
     @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
         positive_chain.constrained_samples[1, 1]
 

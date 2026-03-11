@@ -61,11 +61,14 @@ Accepted batching modes:
 - shared `ChoiceMap` for every batch element
 - `Vector{ChoiceMap}` for per-batch constraints
 
-The first `batched_hmc` implementation is intentionally narrow:
+The first `batched_hmc` implementation is intentionally narrower than the
+single-chain HMC, but it now supports the same basic warmup structure:
 
 - fixed-step HMC only
-- shared diagonal mass matrix across the whole batch
-- warmup as burn-in only
+- a shared diagonal mass matrix across the whole batch
+- dual-averaging step-size adaptation during warmup
+- windowed shared mass-matrix adaptation from pooled chain positions
+- optional initial step-size search
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.
