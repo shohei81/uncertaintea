@@ -1010,6 +1010,14 @@ using UncertainTea
     @test masked_variance_state.count == 2
     @test masked_variance_state.mean ≈ [3.0, 30.0] atol=1e-8
     @test masked_variance_state.m2 ≈ [8.0, 800.0] atol=1e-8
+    robust_variance_state = UncertainTea._running_variance_state(1)
+    for value in (0.0, 0.05, -0.05, 0.1, 100.0)
+        UncertainTea._update_running_variance!(robust_variance_state, [value])
+    end
+    @test robust_variance_state.count == 5
+    @test robust_variance_state.mean[1] < 1.0
+    @test robust_variance_state.m2[1] < 1.0
+    @test UncertainTea._inverse_mass_matrix(robust_variance_state, 1e-3)[1] > 1.0
 
     gaussian_chain = hmc(
         gaussian_mean,

@@ -55,8 +55,13 @@ end
 mutable struct RunningVarianceState
     mean::Vector{Float64}
     m2::Vector{Float64}
+    clipped_sample::Vector{Float64}
     count::Int
 end
+
+const _RUNNING_VARIANCE_CLIP_START = 4
+const _RUNNING_VARIANCE_CLIP_SCALE = 5.0
+const _RUNNING_VARIANCE_FLOOR = 1e-3
 
 struct WarmupSchedule
     initial_buffer::Int
@@ -822,7 +827,26 @@ function _final_step_size(state::DualAveragingState)
 end
 
 function _running_variance_state(num_params::Int)
-    return RunningVarianceState(zeros(num_params), zeros(num_params), 0)
+    return RunningVarianceState(zeros(num_params), zeros(num_params), zeros(num_params), 0)
+end
+
+function _running_variance_sample!(
+    state::RunningVarianceState,
+    sample::AbstractVector,
+)
+    clipped_sample = state.clipped_sample
+    if state.count < _RUNNING_VARIANCE_CLIP_START
+        copyto!(clipped_sample, sample)
+        return clipped_sample
+    end
+
+    @inbounds for index in eachindex(clipped_sample, sample, state.mean, state.m2)
+        variance = state.m2[index] / max(state.count - 1, 1)
+        bound = _RUNNING_VARIANCE_CLIP_SCALE * sqrt(max(variance, _RUNNING_VARIANCE_FLOOR))
+        delta = sample[index] - state.mean[index]
+        clipped_sample[index] = state.mean[index] + clamp(delta, -bound, bound)
+    end
+    return clipped_sample
 end
 
 function _warmup_schedule(num_warmup::Int)
@@ -861,11 +885,14 @@ function _warmup_schedule(num_warmup::Int)
 end
 
 function _update_running_variance!(state::RunningVarianceState, sample::AbstractVector)
+    update_sample = _running_variance_sample!(state, sample)
     state.count += 1
-    delta = sample .- state.mean
-    state.mean .+= delta ./ state.count
-    delta2 = sample .- state.mean
-    state.m2 .+= delta .* delta2
+    @inbounds for index in eachindex(update_sample, state.mean, state.m2)
+        delta = update_sample[index] - state.mean[index]
+        state.mean[index] += delta / state.count
+        delta2 = update_sample[index] - state.mean[index]
+        state.m2[index] += delta * delta2
+    end
     return nothing
 end
 
