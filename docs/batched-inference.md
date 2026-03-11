@@ -103,6 +103,10 @@ for dynamic trajectory building:
 - the single-chain `nuts` path now shares the same first-step continuation
   initialization logic, so batched and non-batched trajectories start from the
   same proposal-state transition before deeper tree growth diverges
+- both paths now also load that first-step current/proposed state into the
+  reusable subtree scratch workspace, so the remaining continuation logic can
+  start from the same mutable state buffers rather than per-step `NUTSState`
+  allocation
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

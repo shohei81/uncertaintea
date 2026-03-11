@@ -1318,6 +1318,20 @@ function _copyto_nuts_state!(destination::NUTSState, source::NUTSState)
     return destination
 end
 
+function _load_nuts_state!(
+    destination::NUTSState,
+    position::AbstractVector,
+    momentum::AbstractVector,
+    logjoint::Real,
+    gradient::AbstractVector,
+)
+    copyto!(destination.position, position)
+    copyto!(destination.momentum, momentum)
+    destination.logjoint = Float64(logjoint)
+    copyto!(destination.gradient, gradient)
+    return destination
+end
+
 function _initialize_nuts_continuation!(
     continuation::NUTSContinuationState,
     left::NUTSState,
@@ -1401,6 +1415,29 @@ function _initialize_nuts_first_step!(
         continuation.right.momentum,
     )
     return (moved, false)
+end
+
+function _initialize_nuts_first_trajectory!(
+    continuation::NUTSContinuationState,
+    tree_workspace::NUTSSubtreeWorkspace,
+    valid::Bool,
+    direction::Int,
+    initial_hamiltonian::Float64,
+    inverse_mass_matrix::Vector{Float64},
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    return _initialize_nuts_first_step!(
+        continuation,
+        tree_workspace.current,
+        tree_workspace.next,
+        valid,
+        direction,
+        initial_hamiltonian,
+        inverse_mass_matrix,
+        max_delta_energy,
+        rng,
+    )
 end
 
 function NUTSSubtreeWorkspace(num_params::Int)
@@ -1624,7 +1661,13 @@ function _nuts_proposal(
     tree_workspace = NUTSSubtreeWorkspace(length(position))
     continuation = NUTSContinuationState(length(position))
     initial_momentum = _sample_momentum(rng, inverse_mass_matrix)
-    initial_state = NUTSState(copy(position), initial_momentum, current_logjoint, copy(current_gradient))
+    initial_state = _load_nuts_state!(
+        tree_workspace.current,
+        position,
+        initial_momentum,
+        current_logjoint,
+        current_gradient,
+    )
     initial_hamiltonian = _hamiltonian(initial_state.logjoint, initial_state.momentum, inverse_mass_matrix)
     direction = rand(rng, Bool) ? 1 : -1
     first_step_valid = _leapfrog_step!(
@@ -1637,10 +1680,9 @@ function _nuts_proposal(
         constraints,
         direction * step_size,
     )
-    _initialize_nuts_first_step!(
+    _initialize_nuts_first_trajectory!(
         continuation,
-        initial_state,
-        tree_workspace.next,
+        tree_workspace,
         first_step_valid,
         direction,
         initial_hamiltonian,
@@ -1789,22 +1831,24 @@ function _initialize_batched_nuts_continuations!(
 
     for chain_index in 1:num_chains
         continuation = workspace.column_continuation_states[chain_index]
-        current_state = NUTSState(
-            copy(view(position, :, chain_index)),
-            copy(view(workspace.current_momentum, :, chain_index)),
+        tree_workspace = workspace.column_tree_workspaces[chain_index]
+        _load_nuts_state!(
+            tree_workspace.current,
+            view(position, :, chain_index),
+            view(workspace.current_momentum, :, chain_index),
             current_logjoint[chain_index],
-            copy(view(current_gradient, :, chain_index)),
+            view(current_gradient, :, chain_index),
         )
-        proposed_state = NUTSState(
-            copy(view(workspace.proposal_position, :, chain_index)),
-            copy(view(workspace.proposal_momentum, :, chain_index)),
+        _load_nuts_state!(
+            tree_workspace.next,
+            view(workspace.proposal_position, :, chain_index),
+            view(workspace.proposal_momentum, :, chain_index),
             workspace.proposed_logjoint[chain_index],
-            copy(view(workspace.proposal_gradient, :, chain_index)),
+            view(workspace.proposal_gradient, :, chain_index),
         )
-        moved, divergent = _initialize_nuts_first_step!(
+        moved, divergent = _initialize_nuts_first_trajectory!(
             continuation,
-            current_state,
-            proposed_state,
+            tree_workspace,
             workspace.step_valid[chain_index],
             workspace.step_direction[chain_index],
             workspace.current_energy[chain_index],

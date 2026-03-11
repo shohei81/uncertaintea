@@ -63,6 +63,9 @@ The current CPU NUTS path is intentionally narrow:
 - the single-chain `nuts` reference path now uses the same first-step
   continuation initialization logic before it enters the remaining
   chain-local tree-expansion loop
+- that shared first-step path now also seeds the mutable subtree scratch state
+  directly, so the remaining CPU reference control flow does not need fresh
+  `NUTSState` allocation just to enter continuation
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

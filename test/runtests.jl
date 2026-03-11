@@ -1140,6 +1140,29 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.column_continuation_states) == 3
     @test gaussian_nuts_workspace.column_continuation_states[1] isa UncertainTea.NUTSContinuationState
     @test length(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) == 1
+    gaussian_nuts_tree_current = gaussian_nuts_workspace.column_tree_workspaces[1].current
+    gaussian_nuts_tree_next = gaussian_nuts_workspace.column_tree_workspaces[1].next
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_batch_logjoint,
+        gaussian_batch_gradient,
+        [1.0],
+        (),
+        gaussian_batch_constraints,
+        0.15,
+        1000.0,
+        MersenneTwister(93),
+    )
+    @test gaussian_nuts_workspace.column_tree_workspaces[1].current === gaussian_nuts_tree_current
+    @test gaussian_nuts_workspace.column_tree_workspaces[1].next === gaussian_nuts_tree_next
+    @test gaussian_nuts_tree_current.position ≈ gaussian_batch_params[:, 1] atol=1e-8
+    @test gaussian_nuts_tree_current.logjoint ≈ gaussian_batch_logjoint[1] atol=1e-8
+    @test gaussian_nuts_tree_current.momentum ≈ view(gaussian_nuts_workspace.current_momentum, :, 1) atol=1e-8
+    @test gaussian_nuts_tree_next.logjoint ≈
+        logjoint_unconstrained(gaussian_mean, gaussian_nuts_tree_next.position, (), gaussian_batch_constraints[1]) atol=1e-8
+    @test gaussian_nuts_workspace.column_continuation_states[1].tree_depth == 1
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

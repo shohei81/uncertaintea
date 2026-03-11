@@ -125,7 +125,9 @@ Current backend-lowering subset:
   storage and pooled warmup adaptation; the first trajectory doubling step now
   uses a batched leapfrog-and-selection step, and its result now initializes
   each chain's reusable continuation state directly; single-chain `nuts`
-  initializes its continuation state through the same first-step helper; the
+  initializes its continuation state through the same first-step helper, and
+  both paths now seed that transition from the same reusable subtree scratch
+  states; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
