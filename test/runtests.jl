@@ -293,6 +293,15 @@ using UncertainTea
     @test logjoint(inline_scale, inline_params, (), choicemap((:y, 0.2f0))) ≈
         assess(inline_scale, (), choicemap((:log_sigma, inline_trace[:log_sigma]), (:y, 0.2f0))) atol=1e-6
 
+    @tea static function abs_scale_model()
+        log_sigma ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(0.0f0, exp(abs(log_sigma)))
+        return log_sigma
+    end
+
+    abs_scale_trace, _ = generate(abs_scale_model, (), choicemap((:y, 0.6f0)); rng=MersenneTwister(16))
+    abs_scale_params = parameter_vector(abs_scale_trace)
+
     @tea static function unsupported_backend_model()
         mu ~ normal(0.0f0, 1.0f0)
         sigma = sin(mu)
@@ -390,6 +399,12 @@ using UncertainTea
         (3,),
         iid_shared_batch_constraints[1],
     )
+    iid_shared_gradient_cache = BatchedLogjointGradientCache(
+        iid_model,
+        iid_shared_batch_params,
+        (3,),
+        iid_shared_batch_constraints,
+    )
     shifted_batch_params = reshape(Float64[-0.1, 0.3], 1, 2)
     shifted_batch_constraints = [
         choicemap((:y => 2, 0.0f0), (:y => 3, -0.1f0), (:y => 4, 0.2f0)),
@@ -467,6 +482,34 @@ using UncertainTea
         (),
         positive_batch_constraints,
     )
+    positive_batch_gradient_cache = BatchedLogjointGradientCache(
+        observed_positive_step,
+        positive_batch_unconstrained,
+        (),
+        positive_batch_constraints,
+    )
+    abs_scale_batch_params = reshape(
+        [abs_scale_params[1] - 0.25, abs_scale_params[1], abs_scale_params[1] + 0.35],
+        1,
+        3,
+    )
+    abs_scale_batch_constraints = [
+        choicemap((:y, 0.2f0)),
+        choicemap((:y, 0.6f0)),
+        choicemap((:y, 1.1f0)),
+    ]
+    abs_scale_gradient = batched_logjoint_gradient_unconstrained(
+        abs_scale_model,
+        abs_scale_batch_params,
+        (),
+        abs_scale_batch_constraints,
+    )
+    abs_scale_gradient_cache = BatchedLogjointGradientCache(
+        abs_scale_model,
+        abs_scale_batch_params,
+        (),
+        abs_scale_batch_constraints,
+    )
     unsupported_backend_params = reshape(Float64[-0.3, 0.2], 1, 2)
     unsupported_backend_constraints = [
         choicemap((:y, -0.1f0)),
@@ -531,9 +574,9 @@ using UncertainTea
     ]...) atol=1e-8
     @test batched_logjoint_gradient_unconstrained!(gaussian_batch_gradient_cache, gaussian_batch_params) ≈
         gaussian_batch_gradient atol=1e-8
-    @test isnothing(gaussian_batch_gradient_cache.flat_cache) == false
+    @test !isnothing(gaussian_batch_gradient_cache.backend_cache)
+    @test isnothing(gaussian_batch_gradient_cache.flat_cache)
     @test isempty(gaussian_batch_gradient_cache.column_caches)
-    @test length(gaussian_batch_gradient_cache.flat_cache.flat_buffer) == length(gaussian_batch_gradient_cache.gradient_buffer)
     @test gaussian_batch_gradient_shifted ≈ hcat([
         logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for
         index in 1:3
@@ -573,11 +616,15 @@ using UncertainTea
             iid_batch_constraints[index],
         ) for index in 1:2
     ]...) atol=1e-8
-    @test isnothing(heterogeneous_iid_gradient_cache.flat_cache) == false
+    @test isnothing(heterogeneous_iid_gradient_cache.backend_cache)
+    @test !isnothing(heterogeneous_iid_gradient_cache.flat_cache)
     @test isempty(heterogeneous_iid_gradient_cache.column_caches)
     @test iid_shared_batch_logjoint ≈ [
         logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
+    @test !isnothing(iid_shared_gradient_cache.backend_cache)
+    @test isnothing(iid_shared_gradient_cache.flat_cache)
+    @test isempty(iid_shared_gradient_cache.column_caches)
     @test iid_shared_single_constraint_logjoint ≈ [
         logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[1]) for index in 1:2
     ] atol=1e-8
@@ -695,6 +742,16 @@ using UncertainTea
             positive_batch_constraints[index],
         ) for index in 1:3
     ]...) atol=1e-8
+    @test !isnothing(positive_batch_gradient_cache.backend_cache)
+    @test isnothing(positive_batch_gradient_cache.flat_cache)
+    @test isempty(positive_batch_gradient_cache.column_caches)
+    @test abs_scale_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(abs_scale_model, abs_scale_batch_params[:, index], (), abs_scale_batch_constraints[index]) for
+        index in 1:3
+    ]...) atol=1e-8
+    @test isnothing(abs_scale_gradient_cache.backend_cache)
+    @test !isnothing(abs_scale_gradient_cache.flat_cache)
+    @test isempty(abs_scale_gradient_cache.column_caches)
     positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step)
     positive_workspace_values = UncertainTea._logjoint_unconstrained_batched_backend!(
         observed_positive_step,
