@@ -503,11 +503,13 @@ function _logjoint_gradient_cache(
     params::AbstractVector,
     args::Tuple=(),
     constraints::ChoiceMap=choicemap(),
+    buffer::AbstractVector=similar(collect(params)),
 )
     seed = collect(params)
+    length(buffer) == length(seed) ||
+        throw(DimensionMismatch("expected gradient buffer of length $(length(seed)), got $(length(buffer))"))
     objective = theta -> logjoint_unconstrained(model, theta, args, constraints)
     config = ForwardDiff.GradientConfig(objective, seed)
-    buffer = similar(seed)
     return LogjointGradientCache(objective, config, buffer)
 end
 

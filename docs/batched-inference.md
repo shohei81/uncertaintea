@@ -115,6 +115,10 @@ for dynamic trajectory building:
 - the remaining per-chain subtree builder scratch is now also view-backed by
   batched workspace matrices, so deeper tree expansion no longer owns separate
   vector storage per chain even though the control flow is still chain-local
+- per-chain gradient caches on that path now write into workspace-backed
+  `tree_next_gradient` columns, so the remaining chain-local cache objects are
+  mostly `ForwardDiff` config/objective wrappers rather than owners of gradient
+  output storage
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

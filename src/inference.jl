@@ -271,15 +271,6 @@ function BatchedNUTSWorkspace(
     batch_args = _validate_batched_args(args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
-    column_gradient_caches = Vector{LogjointGradientCache}(undef, num_chains)
-    for chain_index in 1:num_chains
-        column_gradient_caches[chain_index] = _logjoint_gradient_cache(
-            model,
-            collect(view(position, :, chain_index)),
-            _batched_args(batch_args, chain_index),
-            _batched_constraints(batch_constraints, chain_index),
-        )
-    end
     tree_current_position = Matrix{Float64}(undef, num_params, num_chains)
     tree_next_position = Matrix{Float64}(undef, num_params, num_chains)
     tree_left_position = Matrix{Float64}(undef, num_params, num_chains)
@@ -295,6 +286,16 @@ function BatchedNUTSWorkspace(
     tree_left_gradient = Matrix{Float64}(undef, num_params, num_chains)
     tree_right_gradient = Matrix{Float64}(undef, num_params, num_chains)
     tree_proposal_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    column_gradient_caches = Vector{LogjointGradientCache}(undef, num_chains)
+    for chain_index in 1:num_chains
+        column_gradient_caches[chain_index] = _logjoint_gradient_cache(
+            model,
+            collect(view(position, :, chain_index)),
+            _batched_args(batch_args, chain_index),
+            _batched_constraints(batch_constraints, chain_index),
+            view(tree_next_gradient, :, chain_index),
+        )
+    end
     column_tree_workspaces = [
         NUTSSubtreeWorkspace(
             NUTSState(view(tree_current_position, :, chain_index), view(tree_current_momentum, :, chain_index), 0.0, view(tree_current_gradient, :, chain_index)),

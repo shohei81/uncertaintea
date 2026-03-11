@@ -68,8 +68,8 @@ The current CPU NUTS path is intentionally narrow:
   `NUTSState` allocation just to enter continuation
 - the batched reference path now keeps continuation frontier/proposal vectors
   and continuation control metadata in batch-owned buffers, leaving mainly the
-  gradient cache as chain-local state while subtree scratch storage itself is
-  also batch-owned
+  `ForwardDiff` config/objective as chain-local state while subtree scratch and
+  gradient output storage are batch-owned
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

@@ -130,7 +130,8 @@ Current backend-lowering subset:
   states; on the batched path, continuation frontier/proposal vectors and
   continuation control metadata now live in batched workspace buffers, and the
   per-chain subtree scratch itself is now view-backed by those batch-owned
-  matrices; the
+  matrices; per-chain gradient caches on that path also now target
+  workspace-backed gradient columns; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
