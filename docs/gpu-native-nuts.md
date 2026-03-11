@@ -67,8 +67,8 @@ The current CPU NUTS path is intentionally narrow:
   directly, so the remaining CPU reference control flow does not need fresh
   `NUTSState` allocation just to enter continuation
 - the batched reference path now keeps continuation frontier/proposal vectors
-  in batch-owned matrices, so only the remaining log-density scalars and
-  control metadata stay chain-local
+  and continuation control metadata in batch-owned buffers, leaving mainly the
+  per-chain subtree builder and gradient cache as chain-local state
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

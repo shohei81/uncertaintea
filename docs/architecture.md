@@ -127,9 +127,8 @@ Current backend-lowering subset:
   each chain's reusable continuation state directly; single-chain `nuts`
   initializes its continuation state through the same first-step helper, and
   both paths now seed that transition from the same reusable subtree scratch
-  states; on the batched path, continuation frontier/proposal vectors now live
-  in batched workspace matrices while log-density scalars and control metadata
-  remain chain-local; the
+  states; on the batched path, continuation frontier/proposal vectors and
+  continuation control metadata now live in batched workspace buffers; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

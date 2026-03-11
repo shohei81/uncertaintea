@@ -1174,7 +1174,10 @@ using UncertainTea
     @test gaussian_nuts_workspace.column_continuation_states[1].left.position ≈ view(gaussian_nuts_workspace.left_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].right.position ≈ view(gaussian_nuts_workspace.right_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].proposal.position ≈ view(gaussian_nuts_workspace.proposal_position, :, 1) atol=1e-8
-    @test gaussian_nuts_workspace.column_continuation_states[1].tree_depth == 1
+    @test gaussian_nuts_workspace.tree_depths[1] == 1
+    @test gaussian_nuts_workspace.integration_steps[1] in 0:1
+    @test isfinite(gaussian_nuts_workspace.continuation_log_weight[1])
+    @test gaussian_nuts_workspace.continuation_accept_stat_count[1] in 0:1
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)
