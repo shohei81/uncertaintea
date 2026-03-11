@@ -125,9 +125,10 @@ Current backend-lowering subset:
   storage and pooled warmup adaptation; the first trajectory doubling step now
   uses a batched leapfrog-and-selection step, and the associated frontier state
   already lives in batched workspace storage, with chain-local continuation now
-  seeded from workspace views rather than copied frontier vectors, but deeper
-  tree growth is still performed chain-by-chain rather than through a
-  backend-lowered batched tree kernel
+  seeded from workspace views rather than copied frontier vectors; the
+  remaining chain-local subtree builder also reuses a per-chain current/next
+  scratch workspace, but deeper tree growth is still performed chain-by-chain
+  rather than through a backend-lowered batched tree kernel
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

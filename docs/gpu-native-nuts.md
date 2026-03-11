@@ -61,6 +61,9 @@ The current CPU NUTS path is intentionally narrow:
   and accumulated proposal weights do not need per-chain objects at that point
 - view-backed seed states for the remaining chain-local continuation, so the
   frontier handoff no longer copies those vectors up front
+- per-chain current/next subtree scratch for the remaining CPU reference tree
+  expansion, reducing integration-step allocations while the control flow is
+  still chain-local
 - iterative subtree doubling
 - multinomial proposal selection
 - dual-averaging step-size adaptation

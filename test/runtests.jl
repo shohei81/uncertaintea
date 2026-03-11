@@ -1131,6 +1131,10 @@ using UncertainTea
     @test parent(gaussian_nuts_state.position) === gaussian_nuts_workspace.proposal_position
     @test parent(gaussian_nuts_state.momentum) === gaussian_nuts_workspace.proposal_momentum
     @test parent(gaussian_nuts_state.gradient) === gaussian_nuts_workspace.proposal_gradient
+    @test length(gaussian_nuts_workspace.column_tree_workspaces) == 3
+    @test gaussian_nuts_workspace.column_tree_workspaces[1] isa UncertainTea.NUTSSubtreeWorkspace
+    @test length(gaussian_nuts_workspace.column_tree_workspaces[1].current.position) == 1
+    @test gaussian_nuts_workspace.column_tree_workspaces[1] === gaussian_nuts_workspace.column_tree_workspaces[1]
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

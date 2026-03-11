@@ -125,6 +125,18 @@ struct WarmupSchedule
     terminal_buffer::Int
 end
 
+mutable struct NUTSState{P<:AbstractVector{Float64}, M<:AbstractVector{Float64}, G<:AbstractVector{Float64}}
+    position::P
+    momentum::M
+    logjoint::Float64
+    gradient::G
+end
+
+mutable struct NUTSSubtreeWorkspace
+    current::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+    next::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+end
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -180,6 +192,7 @@ mutable struct BatchedNUTSWorkspace
     mass_adaptation_weights::Vector{Float64}
     constrained_position::Matrix{Float64}
     column_gradient_caches::Vector{LogjointGradientCache}
+    column_tree_workspaces::Vector{NUTSSubtreeWorkspace}
 end
 
 function BatchedHMCWorkspace(
@@ -237,6 +250,7 @@ function BatchedNUTSWorkspace(
             _batched_constraints(batch_constraints, chain_index),
         )
     end
+    column_tree_workspaces = [NUTSSubtreeWorkspace(num_params) for _ in 1:num_chains]
     return BatchedNUTSWorkspace(
         gradient_cache,
         Matrix{Float64}(undef, num_params, num_chains),
@@ -270,6 +284,7 @@ function BatchedNUTSWorkspace(
         Vector{Float64}(undef, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         column_gradient_caches,
+        column_tree_workspaces,
     )
 end
 
@@ -1287,13 +1302,6 @@ function _hamiltonian(logjoint_value::Float64, momentum::AbstractVector, inverse
     return -logjoint_value + _kinetic_energy(momentum, inverse_mass_matrix)
 end
 
-struct NUTSState{P<:AbstractVector{Float64}, M<:AbstractVector{Float64}, G<:AbstractVector{Float64}}
-    position::P
-    momentum::M
-    logjoint::Float64
-    gradient::G
-end
-
 struct NUTSSubtree
     left::NUTSState
     right::NUTSState
@@ -1310,6 +1318,19 @@ function _copy_nuts_state(state::NUTSState)
     return NUTSState(copy(state.position), copy(state.momentum), state.logjoint, copy(state.gradient))
 end
 
+function _copyto_nuts_state!(destination::NUTSState, source::NUTSState)
+    copyto!(destination.position, source.position)
+    copyto!(destination.momentum, source.momentum)
+    destination.logjoint = source.logjoint
+    copyto!(destination.gradient, source.gradient)
+    return destination
+end
+
+function NUTSSubtreeWorkspace(num_params::Int)
+    state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
+    return NUTSSubtreeWorkspace(state(), state())
+end
+
 function _logaddexp(x::Float64, y::Float64)
     if x == -Inf
         return y
@@ -1320,7 +1341,8 @@ function _logaddexp(x::Float64, y::Float64)
     return high + log1p(exp(min(x, y) - high))
 end
 
-function _leapfrog_step(
+function _leapfrog_step!(
+    destination::NUTSState,
     model::TeaModel,
     state::NUTSState,
     gradient_cache::LogjointGradientCache,
@@ -1329,17 +1351,21 @@ function _leapfrog_step(
     constraints::ChoiceMap,
     step_size::Float64,
 )
-    q = copy(state.position)
-    p = copy(state.momentum)
+    q = destination.position
+    p = destination.momentum
+    gradient = destination.gradient
+    copyto!(q, state.position)
+    copyto!(p, state.momentum)
     p .+= (step_size / 2) .* state.gradient
     q .+= step_size .* (inverse_mass_matrix .* p)
     proposed_logjoint = logjoint_unconstrained(model, q, args, constraints)
-    isfinite(proposed_logjoint) || return nothing
+    isfinite(proposed_logjoint) || return false
     proposed_gradient = _logjoint_gradient!(gradient_cache, q)
-    all(isfinite, proposed_gradient) || return nothing
-    gradient = copy(proposed_gradient)
+    all(isfinite, proposed_gradient) || return false
+    copyto!(gradient, proposed_gradient)
     p .+= (step_size / 2) .* gradient
-    return NUTSState(q, p, proposed_logjoint, gradient)
+    destination.logjoint = proposed_logjoint
+    return true
 end
 
 function _is_turning(
@@ -1353,6 +1379,7 @@ function _is_turning(
 end
 
 function _build_nuts_subtree(
+    subtree_workspace::NUTSSubtreeWorkspace,
     model::TeaModel,
     start_state::NUTSState,
     gradient_cache::LogjointGradientCache,
@@ -1369,7 +1396,9 @@ function _build_nuts_subtree(
     left = _copy_nuts_state(start_state)
     right = _copy_nuts_state(start_state)
     proposal = _copy_nuts_state(start_state)
-    current = start_state
+    current = subtree_workspace.current
+    next = subtree_workspace.next
+    _copyto_nuts_state!(current, start_state)
     log_weight = -Inf
     accept_stat_sum = 0.0
     accept_stat_count = 0
@@ -1378,7 +1407,8 @@ function _build_nuts_subtree(
     divergent = false
 
     for _ in 1:(1 << depth)
-        next_state = _leapfrog_step(
+        if !_leapfrog_step!(
+            next,
             model,
             current,
             gradient_cache,
@@ -1387,19 +1417,18 @@ function _build_nuts_subtree(
             constraints,
             direction * step_size,
         )
-        if isnothing(next_state)
             divergent = true
             break
         end
-        current = next_state
+        current, next = next, current
         integration_steps += 1
         if direction < 0
-            left = _copy_nuts_state(next_state)
+            left = _copy_nuts_state(current)
         else
-            right = _copy_nuts_state(next_state)
+            right = _copy_nuts_state(current)
         end
 
-        proposed_hamiltonian = _hamiltonian(next_state.logjoint, next_state.momentum, inverse_mass_matrix)
+        proposed_hamiltonian = _hamiltonian(current.logjoint, current.momentum, inverse_mass_matrix)
         delta_energy = proposed_hamiltonian - initial_hamiltonian
         if !isfinite(delta_energy) || delta_energy > max_delta_energy
             divergent = true
@@ -1411,7 +1440,7 @@ function _build_nuts_subtree(
         candidate_log_weight = -proposed_hamiltonian
         combined_log_weight = _logaddexp(log_weight, candidate_log_weight)
         if !isfinite(log_weight) || log(rand(rng)) < candidate_log_weight - combined_log_weight
-            proposal = _copy_nuts_state(next_state)
+            proposal = _copy_nuts_state(current)
         end
         log_weight = combined_log_weight
 
@@ -1447,6 +1476,7 @@ function _continue_nuts_proposal(
     turning::Bool,
     divergent::Bool,
     gradient_cache::LogjointGradientCache,
+    tree_workspace::NUTSSubtreeWorkspace,
     inverse_mass_matrix::Vector{Float64},
     args::Tuple,
     constraints::ChoiceMap,
@@ -1458,6 +1488,7 @@ function _continue_nuts_proposal(
     while tree_depth < max_tree_depth && !divergent && !turning
         direction = rand(rng, Bool) ? 1 : -1
         subtree = _build_nuts_subtree(
+            tree_workspace,
             model,
             direction < 0 ? left : right,
             gradient_cache,
@@ -1520,6 +1551,7 @@ function _nuts_proposal(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    tree_workspace = NUTSSubtreeWorkspace(length(position))
     initial_momentum = _sample_momentum(rng, inverse_mass_matrix)
     initial_state = NUTSState(copy(position), initial_momentum, current_logjoint, copy(current_gradient))
     initial_hamiltonian = _hamiltonian(initial_state.logjoint, initial_state.momentum, inverse_mass_matrix)
@@ -1538,6 +1570,7 @@ function _nuts_proposal(
         false,
         false,
         gradient_cache,
+        tree_workspace,
         inverse_mass_matrix,
         args,
         constraints,
@@ -1611,6 +1644,7 @@ function _batched_nuts_proposals!(
                 workspace.turning_step[chain_index],
                 workspace.divergent_step[chain_index],
                 workspace.column_gradient_caches[chain_index],
+                workspace.column_tree_workspaces[chain_index],
                 inverse_mass_matrix,
                 _batched_args(args, chain_index),
                 _batched_constraints(constraints, chain_index),

@@ -102,6 +102,9 @@ for dynamic trajectory building:
   that first doubling step now also live in batched workspace storage
 - chain-local continuation now seeds from views into that batched frontier
   storage instead of copying those frontier vectors into new seed states
+- deeper chain-local subtree expansion now also reuses a per-chain
+  current/next subtree scratch workspace, reducing per-step allocations inside
+  the remaining CPU reference tree builder
 - deeper tree growth is still chain-local and iterative after that first
   batched doubling step
 - this is a staging layer toward a future backend-lowered NUTS state machine,
