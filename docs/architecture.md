@@ -131,7 +131,8 @@ Current backend-lowering subset:
   continuation control metadata now live in batched workspace buffers, and the
   per-chain subtree scratch itself is now view-backed by those batch-owned
   matrices; per-chain gradient caches on that path also now target
-  workspace-backed gradient columns; the
+  workspace-backed gradient columns, and they reuse a shared
+  `ForwardDiff` objective/config when batch inputs are homogeneous; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

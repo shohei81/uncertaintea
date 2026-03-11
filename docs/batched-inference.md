@@ -119,6 +119,9 @@ for dynamic trajectory building:
   `tree_next_gradient` columns, so the remaining chain-local cache objects are
   mostly `ForwardDiff` config/objective wrappers rather than owners of gradient
   output storage
+- when batched chains share the same `args` and `constraints`, those remaining
+  wrappers now also share a single `ForwardDiff` objective/config and differ
+  only in which workspace-backed gradient column they write into
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

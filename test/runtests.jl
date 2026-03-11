@@ -1121,6 +1121,12 @@ using UncertainTea
         (),
         gaussian_batch_constraints,
     )
+    gaussian_shared_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
     gaussian_nuts_state = UncertainTea._batched_nuts_state(
         gaussian_nuts_workspace.proposal_position,
         gaussian_nuts_workspace.proposal_momentum,
@@ -1142,6 +1148,11 @@ using UncertainTea
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.gradient) === gaussian_nuts_workspace.tree_current_gradient
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].next.position) === gaussian_nuts_workspace.tree_next_position
     @test parent(gaussian_nuts_workspace.column_gradient_caches[1].buffer) === gaussian_nuts_workspace.tree_next_gradient
+    @test gaussian_shared_nuts_workspace.column_gradient_caches[1].objective ===
+        gaussian_shared_nuts_workspace.column_gradient_caches[2].objective
+    @test gaussian_shared_nuts_workspace.column_gradient_caches[1].config ===
+        gaussian_shared_nuts_workspace.column_gradient_caches[2].config
+    @test parent(gaussian_shared_nuts_workspace.column_gradient_caches[1].buffer) === gaussian_shared_nuts_workspace.tree_next_gradient
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].left.position) === gaussian_nuts_workspace.tree_left_position
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) === gaussian_nuts_workspace.tree_right_position
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) === gaussian_nuts_workspace.tree_proposal_position

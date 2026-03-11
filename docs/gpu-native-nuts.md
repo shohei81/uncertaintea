@@ -69,7 +69,8 @@ The current CPU NUTS path is intentionally narrow:
 - the batched reference path now keeps continuation frontier/proposal vectors
   and continuation control metadata in batch-owned buffers, leaving mainly the
   `ForwardDiff` config/objective as chain-local state while subtree scratch and
-  gradient output storage are batch-owned
+  gradient output storage are batch-owned; homogeneous batch inputs now let
+  even that config/objective layer be shared across chains
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

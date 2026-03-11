@@ -286,16 +286,13 @@ function BatchedNUTSWorkspace(
     tree_left_gradient = Matrix{Float64}(undef, num_params, num_chains)
     tree_right_gradient = Matrix{Float64}(undef, num_params, num_chains)
     tree_proposal_gradient = Matrix{Float64}(undef, num_params, num_chains)
-    column_gradient_caches = Vector{LogjointGradientCache}(undef, num_chains)
-    for chain_index in 1:num_chains
-        column_gradient_caches[chain_index] = _logjoint_gradient_cache(
-            model,
-            collect(view(position, :, chain_index)),
-            _batched_args(batch_args, chain_index),
-            _batched_constraints(batch_constraints, chain_index),
-            view(tree_next_gradient, :, chain_index),
-        )
-    end
+    column_gradient_caches = _batched_nuts_column_gradient_caches(
+        model,
+        position,
+        batch_args,
+        batch_constraints,
+        tree_next_gradient,
+    )
     column_tree_workspaces = [
         NUTSSubtreeWorkspace(
             NUTSState(view(tree_current_position, :, chain_index), view(tree_current_momentum, :, chain_index), 0.0, view(tree_current_gradient, :, chain_index)),
@@ -378,6 +375,55 @@ function BatchedNUTSWorkspace(
         column_tree_workspaces,
         column_continuation_states,
     )
+end
+
+function _batched_nuts_column_gradient_caches(
+    model::TeaModel,
+    position::AbstractMatrix,
+    batch_args::Tuple,
+    batch_constraints::ChoiceMap,
+    gradient_buffer::AbstractMatrix,
+)
+    num_chains = size(position, 2)
+    num_chains == 0 && return LogjointGradientCache[]
+    first_cache = _logjoint_gradient_cache(
+        model,
+        collect(view(position, :, 1)),
+        batch_args,
+        batch_constraints,
+        view(gradient_buffer, :, 1),
+    )
+    caches = Vector{typeof(first_cache)}(undef, num_chains)
+    caches[1] = first_cache
+    for chain_index in 2:num_chains
+        caches[chain_index] = LogjointGradientCache(
+            first_cache.objective,
+            first_cache.config,
+            view(gradient_buffer, :, chain_index),
+        )
+    end
+    return caches
+end
+
+function _batched_nuts_column_gradient_caches(
+    model::TeaModel,
+    position::AbstractMatrix,
+    batch_args,
+    batch_constraints,
+    gradient_buffer::AbstractMatrix,
+)
+    num_chains = size(position, 2)
+    caches = Vector{LogjointGradientCache}(undef, num_chains)
+    for chain_index in 1:num_chains
+        caches[chain_index] = _logjoint_gradient_cache(
+            model,
+            collect(view(position, :, chain_index)),
+            _batched_args(batch_args, chain_index),
+            _batched_constraints(batch_constraints, chain_index),
+            view(gradient_buffer, :, chain_index),
+        )
+    end
+    return caches
 end
 
 Base.length(chain::HMCChain) = size(chain.unconstrained_samples, 2)
