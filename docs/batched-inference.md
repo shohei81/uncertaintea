@@ -98,6 +98,8 @@ for dynamic trajectory building:
 - warmup uses the same pooled diagonal-mass adaptation as `batched_hmc`
 - the first trajectory doubling step now executes as a true batched leapfrog
   and batched multinomial selection step over the whole chain matrix
+- the left/right frontier, proposal state, and tree-weight accumulators for
+  that first doubling step now also live in batched workspace storage
 - deeper tree growth is still chain-local and iterative after that first
   batched doubling step
 - this is a staging layer toward a future backend-lowered NUTS state machine,
