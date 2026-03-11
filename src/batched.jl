@@ -449,13 +449,24 @@ function _batched_logjoint_unconstrained_with_workspace!(
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, args, constraints)
 end
 
-const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :exp, :log, :log1p, :sqrt, :abs])
+const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :^, :exp, :log, :log1p, :sqrt, :abs])
 
 _backend_gradient_supported_expr(::BackendLiteralExpr) = true
 _backend_gradient_supported_expr(::BackendSlotExpr) = true
 _backend_gradient_supported_expr(::BackendTupleExpr) = false
 
+function _backend_gradient_supported_constant_expr(expr::BackendLiteralExpr)
+    return expr.value isa Real && !(expr.value isa Bool)
+end
+
+_backend_gradient_supported_constant_expr(expr::AbstractBackendExpr) = false
+
 function _backend_gradient_supported_expr(expr::BackendPrimitiveExpr)
+    if expr.op === :^
+        length(expr.arguments) == 2 || return false
+        return _backend_gradient_supported_expr(expr.arguments[1]) &&
+               _backend_gradient_supported_constant_expr(expr.arguments[2])
+    end
     expr.op in BACKEND_GRADIENT_SUPPORTED_PRIMITIVES || return false
     return all(_backend_gradient_supported_expr, expr.arguments)
 end
@@ -652,6 +663,17 @@ function _apply_backend_numeric_gradient_binary!(
                      lhs_value * rhs_gradients[parameter_index, batch_index]) / denominator
             end
             values[batch_index] = lhs_value / rhs_value
+        end
+    elseif op === :^
+        for batch_index in eachindex(values, rhs_values)
+            lhs_value = values[batch_index]
+            exponent = rhs_values[batch_index]
+            power = lhs_value ^ exponent
+            factor = exponent * (lhs_value ^ (exponent - 1))
+            for parameter_index in axes(gradients, 1)
+                gradients[parameter_index, batch_index] *= factor
+            end
+            values[batch_index] = power
         end
     else
         _backend_numeric_error(env, "batched backend gradient does not support binary primitive `$(op)`")

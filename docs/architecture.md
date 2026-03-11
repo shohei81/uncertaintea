@@ -101,8 +101,9 @@ Current backend-lowering subset:
   for the differentiable backend subset and only fall back to the flat
   `ForwardDiff` objective or the older column-wise cache when that subset does
   not apply
-- the differentiable backend primitive subset now includes `abs` in addition to
-  the earlier arithmetic and log/exp primitives
+- the differentiable backend primitive subset now includes `abs` and `^` with
+  a literal exponent in addition to the earlier arithmetic and log/exp
+  primitives
 - batched HMC now keeps a sampler workspace for momentum, proposals,
   diagnostics, and constrained-position scratch so repeated sampling no longer
   rebuilds those buffers every iteration

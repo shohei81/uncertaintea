@@ -302,6 +302,15 @@ using UncertainTea
     abs_scale_trace, _ = generate(abs_scale_model, (), choicemap((:y, 0.6f0)); rng=MersenneTwister(16))
     abs_scale_params = parameter_vector(abs_scale_trace)
 
+    @tea static function power_scale_model()
+        log_sigma ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(0.0f0, exp(log_sigma) ^ 2)
+        return log_sigma
+    end
+
+    power_scale_trace, _ = generate(power_scale_model, (), choicemap((:y, 0.4f0)); rng=MersenneTwister(17))
+    power_scale_params = parameter_vector(power_scale_trace)
+
     @tea static function unsupported_backend_model()
         mu ~ normal(0.0f0, 1.0f0)
         sigma = sin(mu)
@@ -509,6 +518,28 @@ using UncertainTea
         abs_scale_batch_params,
         (),
         abs_scale_batch_constraints,
+    )
+    power_scale_batch_params = reshape(
+        [power_scale_params[1] - 0.2, power_scale_params[1], power_scale_params[1] + 0.3],
+        1,
+        3,
+    )
+    power_scale_batch_constraints = [
+        choicemap((:y, 0.2f0)),
+        choicemap((:y, 0.4f0)),
+        choicemap((:y, 0.9f0)),
+    ]
+    power_scale_gradient = batched_logjoint_gradient_unconstrained(
+        power_scale_model,
+        power_scale_batch_params,
+        (),
+        power_scale_batch_constraints,
+    )
+    power_scale_gradient_cache = BatchedLogjointGradientCache(
+        power_scale_model,
+        power_scale_batch_params,
+        (),
+        power_scale_batch_constraints,
     )
     unsupported_backend_params = reshape(Float64[-0.3, 0.2], 1, 2)
     unsupported_backend_constraints = [
@@ -773,6 +804,13 @@ using UncertainTea
     ] atol=1e-8
     @test abs_scale_combined_gradient === abs_scale_gradient_cache.gradient_buffer
     @test abs_scale_combined_gradient ≈ abs_scale_gradient atol=1e-8
+    @test power_scale_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(power_scale_model, power_scale_batch_params[:, index], (), power_scale_batch_constraints[index]) for
+        index in 1:3
+    ]...) atol=1e-8
+    @test !isnothing(power_scale_gradient_cache.backend_cache)
+    @test isnothing(power_scale_gradient_cache.flat_cache)
+    @test isempty(power_scale_gradient_cache.column_caches)
     positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step)
     positive_workspace_values = UncertainTea._logjoint_unconstrained_batched_backend!(
         observed_positive_step,
