@@ -758,8 +758,8 @@ using UncertainTea
         logjoint_gradient_unconstrained(abs_scale_model, abs_scale_batch_params[:, index], (), abs_scale_batch_constraints[index]) for
         index in 1:3
     ]...) atol=1e-8
-    @test isnothing(abs_scale_gradient_cache.backend_cache)
-    @test !isnothing(abs_scale_gradient_cache.flat_cache)
+    @test !isnothing(abs_scale_gradient_cache.backend_cache)
+    @test isnothing(abs_scale_gradient_cache.flat_cache)
     @test isempty(abs_scale_gradient_cache.column_caches)
     abs_scale_combined_values = fill(-1.0, 3)
     abs_scale_combined_gradient = UncertainTea._batched_logjoint_and_gradient_unconstrained!(

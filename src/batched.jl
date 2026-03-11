@@ -449,7 +449,7 @@ function _batched_logjoint_unconstrained_with_workspace!(
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, args, constraints)
 end
 
-const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :exp, :log, :log1p, :sqrt])
+const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :exp, :log, :log1p, :sqrt, :abs])
 
 _backend_gradient_supported_expr(::BackendLiteralExpr) = true
 _backend_gradient_supported_expr(::BackendSlotExpr) = true
@@ -591,6 +591,15 @@ function _apply_backend_numeric_gradient_unary!(
             factor = 2 * root
             for parameter_index in axes(gradients, 1)
                 gradients[parameter_index, batch_index] /= factor
+            end
+        end
+    elseif op === :abs
+        for batch_index in eachindex(values)
+            original = values[batch_index]
+            values[batch_index] = abs(original)
+            factor = original > 0 ? 1.0 : (original < 0 ? -1.0 : 0.0)
+            for parameter_index in axes(gradients, 1)
+                gradients[parameter_index, batch_index] *= factor
             end
         end
     else
