@@ -1001,6 +1001,15 @@ using UncertainTea
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], falses(3)) ≈ 0.6 atol=1e-8
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], BitVector([false, true, false])) ≈
         0.4 atol=1e-8
+    masked_variance_state = UncertainTea._running_variance_state(2)
+    UncertainTea._update_running_variance!(
+        masked_variance_state,
+        [1.0 2.0 5.0; 10.0 20.0 50.0],
+        BitVector([true, false, true]),
+    )
+    @test masked_variance_state.count == 2
+    @test masked_variance_state.mean ≈ [3.0, 30.0] atol=1e-8
+    @test masked_variance_state.m2 ≈ [8.0, 800.0] atol=1e-8
 
     gaussian_chain = hmc(
         gaussian_mean,

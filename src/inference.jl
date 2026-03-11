@@ -869,6 +869,20 @@ function _update_running_variance!(state::RunningVarianceState, sample::Abstract
     return nothing
 end
 
+function _update_running_variance!(
+    state::RunningVarianceState,
+    samples::AbstractMatrix,
+    include::AbstractVector,
+)
+    size(samples, 2) == length(include) ||
+        throw(DimensionMismatch("expected $(size(samples, 2)) inclusion flags, got $(length(include))"))
+    for column_index in axes(samples, 2)
+        include[column_index] || continue
+        _update_running_variance!(state, view(samples, :, column_index))
+    end
+    return nothing
+end
+
 function _inverse_mass_matrix(state::RunningVarianceState, regularization::Float64)
     if state.count < 2
         return ones(length(state.mean))
@@ -1470,9 +1484,7 @@ function batched_hmc(
             if adapt_mass_matrix &&
                mass_window_index <= length(warmup_schedule.slow_window_ends) &&
                iteration > warmup_schedule.initial_buffer
-                for chain_index in 1:num_chains
-                    _update_running_variance!(variance_state, view(position, :, chain_index))
-                end
+                _update_running_variance!(variance_state, position, .!divergent_step)
                 if iteration == warmup_schedule.slow_window_ends[mass_window_index]
                     if variance_state.count >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))

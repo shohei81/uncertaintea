@@ -113,7 +113,7 @@ Current backend-lowering subset:
 - batched HMC warmup now mirrors the single-chain structure more closely:
   dual-averaging step-size adaptation, optional reasonable-step-size search,
   divergence-aware acceptance aggregation, and windowed shared diagonal mass
-  adaptation from pooled chain positions
+  adaptation from pooled non-divergent chain positions
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
