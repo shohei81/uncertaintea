@@ -449,7 +449,7 @@ function _batched_logjoint_unconstrained_with_workspace!(
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, args, constraints)
 end
 
-const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :^, :exp, :log, :log1p, :sqrt, :abs, :min, :max])
+const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :^, :%, :exp, :log, :log1p, :sqrt, :abs, :min, :max])
 
 _backend_gradient_supported_expr(::BackendLiteralExpr) = true
 _backend_gradient_supported_expr(::BackendSlotExpr) = true
@@ -462,7 +462,7 @@ end
 _backend_gradient_supported_constant_expr(expr::AbstractBackendExpr) = false
 
 function _backend_gradient_supported_expr(expr::BackendPrimitiveExpr)
-    if expr.op === :^
+    if expr.op === :^ || expr.op === :%
         length(expr.arguments) == 2 || return false
         return _backend_gradient_supported_expr(expr.arguments[1]) &&
                _backend_gradient_supported_constant_expr(expr.arguments[2])
@@ -674,6 +674,10 @@ function _apply_backend_numeric_gradient_binary!(
                 gradients[parameter_index, batch_index] *= factor
             end
             values[batch_index] = power
+        end
+    elseif op === :%
+        for batch_index in eachindex(values, rhs_values)
+            values[batch_index] = values[batch_index] % rhs_values[batch_index]
         end
     elseif op === :min
         for batch_index in eachindex(values, rhs_values)

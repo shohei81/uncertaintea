@@ -133,8 +133,8 @@ The next lowering layer is now explicit:
   for a differentiable subset of the lowered GPU plan
 - that manual path currently covers `normal` / `lognormal` choices, observed
   `bernoulli`, numeric deterministic assignments, and the primitive subset
-  `+`, `-`, `*`, `/`, `exp`, `log`, `log1p`, `sqrt`, `abs`, `min`, `max`, and
-  `^` with a literal exponent
+  `+`, `-`, `*`, `/`, `exp`, `log`, `log1p`, `sqrt`, `abs`, `min`, `max`, `%`
+  with a literal divisor, and `^` with a literal exponent
 - backend-lowered models outside that differentiable subset fall back to the
   flat `ForwardDiff` objective over the whole `num_params x batch` state, and
   fully unsupported models still fall back to the older column-wise cache

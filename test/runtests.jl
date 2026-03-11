@@ -329,6 +329,15 @@ using UncertainTea
     max_scale_trace, _ = generate(max_scale_model, (), choicemap((:y, 0.5f0)); rng=MersenneTwister(19))
     max_scale_params = parameter_vector(max_scale_trace)
 
+    @tea static function mod_scale_model()
+        log_sigma ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(0.0f0, exp(log_sigma % 0.5f0))
+        return log_sigma
+    end
+
+    mod_scale_trace, _ = generate(mod_scale_model, (), choicemap((:y, 0.5f0)); rng=MersenneTwister(20))
+    mod_scale_params = parameter_vector(mod_scale_trace)
+
     @tea static function unsupported_backend_model()
         mu ~ normal(0.0f0, 1.0f0)
         sigma = sin(mu)
@@ -602,6 +611,28 @@ using UncertainTea
         max_scale_batch_params,
         (),
         max_scale_batch_constraints,
+    )
+    mod_scale_batch_params = reshape(
+        [0.1, 0.6, 0.85],
+        1,
+        3,
+    )
+    mod_scale_batch_constraints = [
+        choicemap((:y, 0.2f0)),
+        choicemap((:y, 0.4f0)),
+        choicemap((:y, 0.8f0)),
+    ]
+    mod_scale_gradient = batched_logjoint_gradient_unconstrained(
+        mod_scale_model,
+        mod_scale_batch_params,
+        (),
+        mod_scale_batch_constraints,
+    )
+    mod_scale_gradient_cache = BatchedLogjointGradientCache(
+        mod_scale_model,
+        mod_scale_batch_params,
+        (),
+        mod_scale_batch_constraints,
     )
     unsupported_backend_params = reshape(Float64[-0.3, 0.2], 1, 2)
     unsupported_backend_constraints = [
@@ -911,6 +942,25 @@ using UncertainTea
     ] atol=1e-8
     @test max_scale_combined_gradient === max_scale_gradient_cache.gradient_buffer
     @test max_scale_combined_gradient ≈ max_scale_gradient atol=1e-8
+    @test mod_scale_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(mod_scale_model, mod_scale_batch_params[:, index], (), mod_scale_batch_constraints[index]) for
+        index in 1:3
+    ]...) atol=1e-8
+    @test !isnothing(mod_scale_gradient_cache.backend_cache)
+    @test isnothing(mod_scale_gradient_cache.flat_cache)
+    @test isempty(mod_scale_gradient_cache.column_caches)
+    mod_scale_combined_values = fill(-1.0, 3)
+    mod_scale_combined_gradient = UncertainTea._batched_logjoint_and_gradient_unconstrained!(
+        mod_scale_combined_values,
+        mod_scale_gradient_cache,
+        mod_scale_batch_params,
+    )[2]
+    @test mod_scale_combined_values ≈ [
+        logjoint_unconstrained(mod_scale_model, mod_scale_batch_params[:, index], (), mod_scale_batch_constraints[index]) for
+        index in 1:3
+    ] atol=1e-8
+    @test mod_scale_combined_gradient === mod_scale_gradient_cache.gradient_buffer
+    @test mod_scale_combined_gradient ≈ mod_scale_gradient atol=1e-8
     positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step)
     positive_workspace_values = UncertainTea._logjoint_unconstrained_batched_backend!(
         observed_positive_step,
