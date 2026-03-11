@@ -1720,13 +1720,13 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
+    choice_values = env.observed_values
     probability_values = _batched_numeric_scratch!(env, 1)
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
     for batch_index in 1:env.batch_size
-        address = _concrete_batched_address(address_parts, batch_index)
-        constraint_map = _batched_constraint(constraints, batch_index)
-        value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
+        value = choice_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
         if !isnothing(step.binding_slot)

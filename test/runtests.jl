@@ -491,6 +491,7 @@ using UncertainTea
     indexed_scale_backend_plan = backend_execution_plan(indexed_scale_model)
     coin_backend_report = backend_report(observed_coin)
     coin_backend_plan = backend_execution_plan(observed_coin)
+    coin_workspace = UncertainTea.BatchedLogjointWorkspace(observed_coin)
     coin_batch_logjoint = batched_logjoint(
         observed_coin,
         zeros(0, 3),
@@ -826,6 +827,27 @@ using UncertainTea
         logjoint(observed_coin, Float64[], (), choicemap((:y, false))),
         logjoint(observed_coin, Float64[], (), choicemap((:y, true))),
     ] atol=2e-8
+    coin_workspace_values = UncertainTea._logjoint_with_batched_backend!(
+        coin_workspace,
+        zeros(0, 3),
+        (),
+        [
+            choicemap((:y, true)),
+            choicemap((:y, false)),
+            choicemap((:y, true)),
+        ],
+    )
+    coin_workspace_env = coin_workspace.batched_environment[]
+    coin_workspace_observed = coin_workspace_env.observed_values
+    @test coin_workspace_values ≈ coin_batch_logjoint atol=2e-8
+    @test UncertainTea._logjoint_with_batched_backend!(
+        coin_workspace,
+        zeros(0, 3),
+        (),
+        choicemap((:y, true)),
+    ) ≈ fill(logjoint(observed_coin, Float64[], (), choicemap((:y, true))), 3) atol=2e-8
+    @test coin_workspace.batched_environment[] === coin_workspace_env
+    @test coin_workspace_env.observed_values === coin_workspace_observed
     @test deterministic_backend_report.supported
     @test length(deterministic_backend_plan.steps) == 4
     @test deterministic_backend_plan.steps[3] isa UncertainTea.BackendDeterministicPlanStep

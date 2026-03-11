@@ -119,9 +119,9 @@ The next lowering layer is now explicit:
   instead of materializing one iterable object per column before checking
 - supported observed-loop scoring now batches `ChoiceMap` value lookup for each
   synchronized address and reuses a shared observed-value buffer across items
-- batched `normal` / `lognormal` choice scoring now fills a shared numeric
-  choice-value buffer before scoring, removing per-column choice lookup calls
-  from the hot scoring loop
+- batched supported choice scoring now fills a shared numeric choice-value
+  buffer before scoring, removing per-column choice lookup calls from the hot
+  scoring loop for `normal`, `lognormal`, and `bernoulli`
 
 ## Phase 2 Execution Strategy
 
