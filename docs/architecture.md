@@ -111,6 +111,9 @@ Current backend-lowering subset:
 - synchronized backend loops now derive their reference iterable from
   batch-wide evaluated range endpoints instead of building one iterable per
   batch element before comparison
+- observed-loop fast paths now batch constraint lookup per synchronized address
+  and reuse a shared observed-value buffer instead of re-querying each
+  `ChoiceMap` inside the innermost scoring loop
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

@@ -117,6 +117,8 @@ The next lowering layer is now explicit:
   scratch buffers on the batched path, reducing per-column address evaluation
 - synchronized loop iterables now compare batch-wide evaluated range endpoints
   instead of materializing one iterable object per column before checking
+- supported observed-loop scoring now batches `ChoiceMap` value lookup for each
+  synchronized address and reuses a shared observed-value buffer across items
 
 ## Phase 2 Execution Strategy
 

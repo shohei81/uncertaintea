@@ -384,6 +384,12 @@ using UncertainTea
         (3,),
         iid_shared_batch_constraints,
     )
+    iid_shared_single_constraint_logjoint = batched_logjoint(
+        iid_model,
+        iid_shared_batch_params,
+        (3,),
+        iid_shared_batch_constraints[1],
+    )
     shifted_batch_params = reshape(Float64[-0.1, 0.3], 1, 2)
     shifted_batch_constraints = [
         choicemap((:y => 2, 0.0f0), (:y => 3, -0.1f0), (:y => 4, 0.2f0)),
@@ -567,6 +573,9 @@ using UncertainTea
     @test iid_shared_batch_logjoint ≈ [
         logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
     ] atol=1e-8
+    @test iid_shared_single_constraint_logjoint ≈ [
+        logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[1]) for index in 1:2
+    ] atol=1e-8
     iid_shared_workspace_values = UncertainTea._logjoint_with_batched_backend!(
         iid_shared_workspace,
         iid_shared_batch_params,
@@ -575,7 +584,14 @@ using UncertainTea
     )
     iid_shared_workspace_env = iid_shared_workspace.batched_environment[]
     iid_shared_iterable_scratch = iid_shared_workspace_env.index_scratch[1]
+    iid_shared_observed_values = iid_shared_workspace_env.observed_values
     @test iid_shared_workspace_values ≈ iid_shared_batch_logjoint atol=1e-8
+    @test UncertainTea._logjoint_with_batched_backend!(
+        iid_shared_workspace,
+        iid_shared_batch_params,
+        (3,),
+        iid_shared_batch_constraints[1],
+    ) ≈ iid_shared_single_constraint_logjoint atol=1e-8
     @test !isempty(iid_shared_workspace_env.index_scratch)
     @test UncertainTea._logjoint_with_batched_backend!(
         iid_shared_workspace,
@@ -588,6 +604,7 @@ using UncertainTea
     ] atol=1e-8
     @test iid_shared_workspace.batched_environment[] === iid_shared_workspace_env
     @test iid_shared_workspace_env.index_scratch[1] === iid_shared_iterable_scratch
+    @test iid_shared_workspace_env.observed_values === iid_shared_observed_values
     @test shifted_batch_logjoint ≈ [
         logjoint(shifted_iid_model, shifted_batch_params[:, index], (3,), shifted_batch_constraints[index]) for index in 1:2
     ] atol=1e-8

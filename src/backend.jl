@@ -127,6 +127,7 @@ mutable struct BatchedPlanEnvironment
     generic_values::Vector{Vector{Any}}
     numeric_scratch::Vector{Vector{Float64}}
     index_scratch::Vector{Vector{Int}}
+    observed_values::Vector{Float64}
     assigned::BitVector
     batch_size::Int
 end
@@ -151,6 +152,7 @@ function BatchedPlanEnvironment(
         generic_values,
         Vector{Vector{Float64}}(),
         Vector{Vector{Int}}(),
+        Vector{Float64}(undef, batch_size),
         falses(length(layout.symbols)),
         batch_size,
     )
@@ -1406,6 +1408,41 @@ function _backend_observed_choice_value(constraint_map::ChoiceMap, address)
     throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
 end
 
+function _batched_backend_observed_value(value)
+    if value isa Bool
+        return value ? 1.0 : 0.0
+    elseif value isa Real
+        return Float64(value)
+    end
+    throw(BatchedBackendFallback("batched backend observed choice values must be real or Bool, got $(typeof(value))"))
+end
+
+function _batched_observed_choice_values!(
+    destination::AbstractVector{Float64},
+    constraints::ChoiceMap,
+    address,
+)
+    found, constrained_value = _choice_tryget_normalized(constraints, address)
+    found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+    fill!(destination, _batched_backend_observed_value(constrained_value))
+    return destination
+end
+
+function _batched_observed_choice_values!(
+    destination::AbstractVector{Float64},
+    constraints::AbstractVector,
+    address,
+)
+    length(destination) == length(constraints) ||
+        throw(DimensionMismatch("expected $(length(destination)) batched constraints, got $(length(constraints))"))
+    for batch_index in eachindex(destination, constraints)
+        found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        destination[batch_index] = _batched_backend_observed_value(constrained_value)
+    end
+    return destination
+end
+
 _score_backend_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
 _score_backend_steps!(totals::AbstractVector, ::Tuple{}, env::BatchedPlanEnvironment, params::AbstractMatrix, constraints) = totals
 
@@ -1668,11 +1705,12 @@ function _score_backend_observed_loop_choice!(
 )
     mu_values = _batched_numeric_scratch!(env, 1)
     sigma_values = _batched_numeric_scratch!(env, 2)
+    observed_values = env.observed_values
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
+    _batched_observed_choice_values!(observed_values, constraints, address)
     for batch_index in 1:env.batch_size
-        constraint_map = _batched_constraint(constraints, batch_index)
-        value = _backend_observed_choice_value(constraint_map, address)
+        value = observed_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
@@ -1690,11 +1728,12 @@ function _score_backend_observed_loop_choice!(
 )
     mu_values = _batched_numeric_scratch!(env, 1)
     sigma_values = _batched_numeric_scratch!(env, 2)
+    observed_values = env.observed_values
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
+    _batched_observed_choice_values!(observed_values, constraints, address)
     for batch_index in 1:env.batch_size
-        constraint_map = _batched_constraint(constraints, batch_index)
-        value = _backend_observed_choice_value(constraint_map, address)
+        value = observed_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)
@@ -1711,10 +1750,11 @@ function _score_backend_observed_loop_choice!(
     address,
 )
     probability_values = _batched_numeric_scratch!(env, 1)
+    observed_values = env.observed_values
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
+    _batched_observed_choice_values!(observed_values, constraints, address)
     for batch_index in 1:env.batch_size
-        constraint_map = _batched_constraint(constraints, batch_index)
-        value = _backend_observed_choice_value(constraint_map, address)
+        value = observed_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
     end
