@@ -97,8 +97,8 @@ Current backend-lowering subset:
   generic body scorer
 - batched backend workspaces now reuse their environment and temporary buffers
   across repeated evaluations with the same batch shape
-- batched gradient caches now keep monomorphic column caches and write gradients
-  directly into the shared output matrix
+- batched gradient caches now use a flat `ForwardDiff` objective for
+  backend-lowered batches and keep the older column-wise cache as a fallback
 - batched HMC now keeps a sampler workspace for momentum, proposals,
   diagnostics, and constrained-position scratch so repeated sampling no longer
   rebuilds those buffers every iteration

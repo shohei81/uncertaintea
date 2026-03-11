@@ -531,8 +531,9 @@ using UncertainTea
     ]...) atol=1e-8
     @test batched_logjoint_gradient_unconstrained!(gaussian_batch_gradient_cache, gaussian_batch_params) ≈
         gaussian_batch_gradient atol=1e-8
-    @test eltype(gaussian_batch_gradient_cache.column_caches) !== Any
-    @test parent(gaussian_batch_gradient_cache.column_caches[1].buffer) === gaussian_batch_gradient_cache.gradient_buffer
+    @test isnothing(gaussian_batch_gradient_cache.flat_cache) == false
+    @test isempty(gaussian_batch_gradient_cache.column_caches)
+    @test length(gaussian_batch_gradient_cache.flat_cache.flat_buffer) == length(gaussian_batch_gradient_cache.gradient_buffer)
     @test gaussian_batch_gradient_shifted ≈ hcat([
         logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for
         index in 1:3
@@ -572,7 +573,8 @@ using UncertainTea
             iid_batch_constraints[index],
         ) for index in 1:2
     ]...) atol=1e-8
-    @test eltype(heterogeneous_iid_gradient_cache.column_caches) !== Any
+    @test isnothing(heterogeneous_iid_gradient_cache.flat_cache) == false
+    @test isempty(heterogeneous_iid_gradient_cache.column_caches)
     @test iid_shared_batch_logjoint ≈ [
         logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
     ] atol=1e-8

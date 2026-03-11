@@ -107,8 +107,9 @@ The next lowering layer is now explicit:
   iterator
 - batched backend evaluation now reuses its environment, totals buffer, and
   unconstrained temporary buffers when the batch shape stays fixed
-- batched gradient caches now reuse typed column caches and let `ForwardDiff`
-  write directly into the shared gradient matrix
+- batched gradient caches now prefer a flat `ForwardDiff` objective over the
+  whole `num_params x batch` state for backend-lowered models, while keeping
+  the older column-wise cache as a fallback for unsupported batches
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
 - backend numeric expressions for supported models now evaluate batch-wide into

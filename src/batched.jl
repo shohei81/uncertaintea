@@ -36,9 +36,44 @@ struct BatchedGradientColumnCache{F,C,V}
     buffer::V
 end
 
-struct BatchedLogjointGradientCache{C<:AbstractVector,G<:AbstractMatrix}
+struct BatchedFlatGradientObjective{M,W,A,C}
+    model::M
+    workspace::W
+    args::A
+    constraints::C
+    parameter_count::Int
+    batch_size::Int
+end
+
+function (objective::BatchedFlatGradientObjective)(theta)
+    params = reshape(theta, objective.parameter_count, objective.batch_size)
+    totals = _batched_totals_buffer!(objective.workspace, objective.batch_size, eltype(theta))
+    _batched_logjoint_unconstrained_with_workspace!(
+        totals,
+        objective.model,
+        objective.workspace,
+        params,
+        objective.args,
+        objective.constraints,
+    )
+
+    total = zero(eltype(theta))
+    for value in totals
+        total += value
+    end
+    return total
+end
+
+struct BatchedFlatGradientCache{O,C,B}
+    objective::O
+    config::C
+    flat_buffer::B
+end
+
+struct BatchedLogjointGradientCache{C,F,G<:AbstractMatrix}
     model::TeaModel
     column_caches::C
+    flat_cache::F
     gradient_buffer::G
     parameter_count::Int
     batch_size::Int
@@ -115,15 +150,16 @@ function _prepare_environment!(workspace::BatchedLogjointWorkspace, args::Tuple)
     return env
 end
 
-function _batched_environment!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+function _batched_environment!(workspace::BatchedLogjointWorkspace, batch_size::Int, ::Type{T}=Float64) where {T<:Real}
     env = workspace.batched_environment[]
-    if !(env isa BatchedPlanEnvironment) || env.batch_size != batch_size
+    if !(env isa BatchedPlanEnvironment{T}) || env.batch_size != batch_size
         env = BatchedPlanEnvironment(
             workspace.environment.layout,
             workspace.backend_plan.numeric_slots,
             workspace.backend_plan.index_slots,
             workspace.backend_plan.generic_slots,
             batch_size,
+            T,
         )
         workspace.batched_environment[] = env
     end
@@ -139,8 +175,13 @@ function _batched_argument_buffer!(workspace::BatchedLogjointWorkspace, batch_si
     return buffer
 end
 
-function _prepare_batched_environment!(workspace::BatchedLogjointWorkspace, args, batch_size::Int)
-    env = _batched_environment!(workspace, batch_size)
+function _prepare_batched_environment!(
+    workspace::BatchedLogjointWorkspace,
+    args,
+    batch_size::Int,
+    ::Type{T}=Float64,
+) where {T<:Real}
+    env = _batched_environment!(workspace, batch_size, T)
     fill!(env.assigned, false)
 
     if args isa Tuple
@@ -178,32 +219,49 @@ function _constrained_buffer!(workspace::BatchedLogjointWorkspace, params::Abstr
 end
 
 function _batched_totals_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    return _batched_totals_buffer!(workspace, batch_size, Float64)
+end
+
+function _batched_totals_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int, ::Type{T}) where {T<:Real}
     buffer = workspace.batched_totals_buffer[]
-    if !(buffer isa Vector{Float64}) || length(buffer) != batch_size
-        buffer = zeros(Float64, batch_size)
+    if !(buffer isa Vector{T}) || length(buffer) != batch_size
+        buffer = zeros(T, batch_size)
         workspace.batched_totals_buffer[] = buffer
     else
-        fill!(buffer, 0.0)
+        fill!(buffer, zero(T))
     end
     return buffer
 end
 
 function _batched_constrained_buffer!(workspace::BatchedLogjointWorkspace, parameter_count::Int, batch_size::Int)
+    return _batched_constrained_buffer!(workspace, parameter_count, batch_size, Float64)
+end
+
+function _batched_constrained_buffer!(
+    workspace::BatchedLogjointWorkspace,
+    parameter_count::Int,
+    batch_size::Int,
+    ::Type{T},
+) where {T<:Real}
     buffer = workspace.batched_constrained_buffer[]
-    if !(buffer isa Matrix{Float64}) || size(buffer) != (parameter_count, batch_size)
-        buffer = Matrix{Float64}(undef, parameter_count, batch_size)
+    if !(buffer isa Matrix{T}) || size(buffer) != (parameter_count, batch_size)
+        buffer = Matrix{T}(undef, parameter_count, batch_size)
         workspace.batched_constrained_buffer[] = buffer
     end
     return buffer
 end
 
 function _batched_logabsdet_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    return _batched_logabsdet_buffer!(workspace, batch_size, Float64)
+end
+
+function _batched_logabsdet_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int, ::Type{T}) where {T<:Real}
     buffer = workspace.batched_logabsdet_buffer[]
-    if !(buffer isa Vector{Float64}) || length(buffer) != batch_size
-        buffer = zeros(Float64, batch_size)
+    if !(buffer isa Vector{T}) || length(buffer) != batch_size
+        buffer = zeros(T, batch_size)
         workspace.batched_logabsdet_buffer[] = buffer
     else
-        fill!(buffer, 0.0)
+        fill!(buffer, zero(T))
     end
     return buffer
 end
@@ -230,8 +288,8 @@ function _logjoint_with_batched_backend!(
     constraints,
 )
     batch_size = size(params, 2)
-    env = _prepare_batched_environment!(workspace, args, batch_size)
-    totals = _batched_totals_buffer!(workspace, batch_size)
+    env = _prepare_batched_environment!(workspace, args, batch_size, eltype(params))
+    totals = _batched_totals_buffer!(workspace, batch_size, eltype(params))
     _score_backend_steps!(totals, workspace.backend_plan.steps, env, params, constraints)
     return totals
 end
@@ -288,8 +346,9 @@ function _logjoint_unconstrained_batched_backend!(
     length(destination) == batch_size ||
         throw(DimensionMismatch("expected unconstrained batched destination of length $batch_size, got $(length(destination))"))
     layout = parameterlayout(model)
-    constrained = _batched_constrained_buffer!(workspace, parameter_count, batch_size)
-    logabsdet = _batched_logabsdet_buffer!(workspace, batch_size)
+    value_type = eltype(destination)
+    constrained = _batched_constrained_buffer!(workspace, parameter_count, batch_size, value_type)
+    logabsdet = _batched_logabsdet_buffer!(workspace, batch_size, value_type)
     for slot in layout.slots
         slot_index = slot.index
         for batch_index in 1:batch_size
@@ -312,7 +371,7 @@ function _logjoint_unconstrained_batched_backend!(
     args,
     constraints,
 )
-    values = Vector{Float64}(undef, size(params, 2))
+    values = Vector{eltype(params)}(undef, size(params, 2))
     return _logjoint_unconstrained_batched_backend!(values, model, workspace, params, args, constraints)
 end
 
@@ -346,7 +405,7 @@ function _fallback_batched_logjoint_unconstrained!(
     args,
     constraints,
 )
-    values = Vector{Float64}(undef, size(params, 2))
+    values = Vector{eltype(params)}(undef, size(params, 2))
     return _fallback_batched_logjoint_unconstrained!(values, model, workspace, params, args, constraints)
 end
 
@@ -377,7 +436,7 @@ function _batched_logjoint_unconstrained_with_workspace!(
     args,
     constraints,
 )
-    values = Vector{Float64}(undef, size(params, 2))
+    values = Vector{eltype(params)}(undef, size(params, 2))
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, args, constraints)
 end
 
@@ -416,6 +475,34 @@ function _batched_gradient_column_cache(
     return BatchedGradientColumnCache(objective, config, buffer)
 end
 
+function _batched_flat_gradient_cache(
+    model::TeaModel,
+    gradient_buffer::AbstractMatrix,
+    params::AbstractMatrix,
+    batch_args,
+    batch_constraints,
+)
+    workspace = BatchedLogjointWorkspace(model)
+    objective = BatchedFlatGradientObjective(
+        model,
+        workspace,
+        batch_args,
+        batch_constraints,
+        size(params, 1),
+        size(params, 2),
+    )
+    seed = collect(vec(params))
+    probe = _batched_totals_buffer!(workspace, size(params, 2), eltype(params))
+    try
+        _batched_logjoint_unconstrained_with_workspace!(probe, model, workspace, params, batch_args, batch_constraints)
+    catch err
+        err isa BatchedBackendFallback || rethrow()
+        return nothing
+    end
+    config = ForwardDiff.GradientConfig(objective, seed)
+    return BatchedFlatGradientCache(objective, config, vec(gradient_buffer))
+end
+
 function BatchedLogjointGradientCache(
     model::TeaModel,
     params::AbstractMatrix,
@@ -428,7 +515,13 @@ function BatchedLogjointGradientCache(
     parameter_count = size(params, 1)
     gradient_buffer = Matrix{Float64}(undef, parameter_count, batch_size)
     if batch_size == 0
-        return BatchedLogjointGradientCache(model, Any[], gradient_buffer, parameter_count, batch_size)
+        return BatchedLogjointGradientCache(model, Any[], nothing, gradient_buffer, parameter_count, batch_size)
+    end
+
+    flat_cache = isnothing(_backend_execution_plan(model)) ? nothing :
+        _batched_flat_gradient_cache(model, gradient_buffer, params, batch_args, batch_constraints)
+    if !isnothing(flat_cache)
+        return BatchedLogjointGradientCache(model, Any[], flat_cache, gradient_buffer, parameter_count, batch_size)
     end
 
     first_cache = _batched_gradient_column_cache(model, gradient_buffer, params, batch_args, batch_constraints, 1)
@@ -445,7 +538,7 @@ function BatchedLogjointGradientCache(
         )
     end
 
-    return BatchedLogjointGradientCache(model, column_caches, gradient_buffer, parameter_count, batch_size)
+    return BatchedLogjointGradientCache(model, column_caches, nothing, gradient_buffer, parameter_count, batch_size)
 end
 
 function batched_logjoint_gradient_unconstrained!(
@@ -456,6 +549,11 @@ function batched_logjoint_gradient_unconstrained!(
         throw(DimensionMismatch("expected $(cache.parameter_count) parameters, got $(size(params, 1))"))
     size(params, 2) == cache.batch_size ||
         throw(DimensionMismatch("expected $(cache.batch_size) batch elements, got $(size(params, 2))"))
+
+    if !isnothing(cache.flat_cache)
+        ForwardDiff.gradient!(cache.flat_cache.flat_buffer, cache.flat_cache.objective, vec(params), cache.flat_cache.config)
+        return cache.gradient_buffer
+    end
 
     for batch_index in 1:cache.batch_size
         column_cache = cache.column_caches[batch_index]

@@ -117,17 +117,17 @@ struct BatchedBackendFallback <: Exception
     message::String
 end
 
-mutable struct BatchedPlanEnvironment
+mutable struct BatchedPlanEnvironment{T<:Real}
     layout::EnvironmentLayout
     numeric_slots::BitVector
     index_slots::BitVector
     generic_slots::BitVector
-    numeric_values::Matrix{Float64}
+    numeric_values::Matrix{T}
     index_values::Matrix{Int}
     generic_values::Vector{Vector{Any}}
-    numeric_scratch::Vector{Vector{Float64}}
+    numeric_scratch::Vector{Vector{T}}
     index_scratch::Vector{Vector{Int}}
-    observed_values::Vector{Float64}
+    observed_values::Vector{T}
     assigned::BitVector
     batch_size::Int
 end
@@ -138,8 +138,9 @@ function BatchedPlanEnvironment(
     index_slots::BitVector,
     generic_slots::BitVector,
     batch_size::Int,
-)
-    numeric_values = zeros(Float64, length(layout.symbols), batch_size)
+    ::Type{T}=Float64,
+) where {T<:Real}
+    numeric_values = Matrix{T}(undef, length(layout.symbols), batch_size)
     index_values = zeros(Int, length(layout.symbols), batch_size)
     generic_values = [Vector{Any}(undef, batch_size) for _ in layout.symbols]
     return BatchedPlanEnvironment(
@@ -150,9 +151,9 @@ function BatchedPlanEnvironment(
         numeric_values,
         index_values,
         generic_values,
-        Vector{Vector{Float64}}(),
+        Vector{Vector{T}}(),
         Vector{Vector{Int}}(),
-        Vector{Float64}(undef, batch_size),
+        Vector{T}(undef, batch_size),
         falses(length(layout.symbols)),
         batch_size,
     )
@@ -918,7 +919,7 @@ end
 function _batched_numeric_scratch!(env::BatchedPlanEnvironment, depth::Int)
     depth > 0 || throw(ArgumentError("batched numeric scratch depth must be positive"))
     while length(env.numeric_scratch) < depth
-        push!(env.numeric_scratch, Vector{Float64}(undef, env.batch_size))
+        push!(env.numeric_scratch, Vector{eltype(env.numeric_values)}(undef, env.batch_size))
     end
     buffer = env.numeric_scratch[depth]
     length(buffer) == env.batch_size || resize!(buffer, env.batch_size)
@@ -990,7 +991,7 @@ function _eval_backend_numeric_expr!(
         return destination
     elseif env.index_slots[expr.slot]
         for batch_index in eachindex(destination)
-            destination[batch_index] = Float64(env.index_values[expr.slot, batch_index])
+            destination[batch_index] = convert(eltype(destination), env.index_values[expr.slot, batch_index])
         end
         return destination
     end
@@ -1408,28 +1409,28 @@ function _backend_observed_choice_value(constraint_map::ChoiceMap, address)
     throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
 end
 
-function _batched_backend_observed_value(value)
+function _batched_backend_observed_value(value, ::Type{T}=Float64) where {T<:Real}
     if value isa Bool
-        return value ? 1.0 : 0.0
+        return value ? one(T) : zero(T)
     elseif value isa Real
-        return Float64(value)
+        return convert(T, value)
     end
     throw(BatchedBackendFallback("batched backend observed choice values must be real or Bool, got $(typeof(value))"))
 end
 
 function _batched_observed_choice_values!(
-    destination::AbstractVector{Float64},
+    destination::AbstractVector,
     constraints::ChoiceMap,
     address,
 )
     found, constrained_value = _choice_tryget_normalized(constraints, address)
     found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
-    fill!(destination, _batched_backend_observed_value(constrained_value))
+    fill!(destination, _batched_backend_observed_value(constrained_value, eltype(destination)))
     return destination
 end
 
 function _batched_observed_choice_values!(
-    destination::AbstractVector{Float64},
+    destination::AbstractVector,
     constraints::AbstractVector,
     address,
 )
@@ -1438,13 +1439,13 @@ function _batched_observed_choice_values!(
     for batch_index in eachindex(destination, constraints)
         found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
-        destination[batch_index] = _batched_backend_observed_value(constrained_value)
+        destination[batch_index] = _batched_backend_observed_value(constrained_value, eltype(destination))
     end
     return destination
 end
 
 function _batched_choice_numeric_values!(
-    destination::AbstractVector{Float64},
+    destination::AbstractVector,
     parameter_slot::Int,
     params::AbstractMatrix,
     constraints,
@@ -1457,7 +1458,7 @@ function _batched_choice_numeric_values!(
 end
 
 function _batched_choice_numeric_values!(
-    destination::AbstractVector{Float64},
+    destination::AbstractVector,
     ::Nothing,
     params::AbstractMatrix,
     constraints::ChoiceMap,
@@ -1469,13 +1470,13 @@ function _batched_choice_numeric_values!(
         address = _concrete_batched_address(address_parts, batch_index)
         found, constrained_value = _choice_tryget_normalized(constraints, address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
-        destination[batch_index] = _batched_backend_observed_value(constrained_value)
+        destination[batch_index] = _batched_backend_observed_value(constrained_value, eltype(destination))
     end
     return destination
 end
 
 function _batched_choice_numeric_values!(
-    destination::AbstractVector{Float64},
+    destination::AbstractVector,
     ::Nothing,
     params::AbstractMatrix,
     constraints::AbstractVector,
@@ -1489,7 +1490,7 @@ function _batched_choice_numeric_values!(
         address = _concrete_batched_address(address_parts, batch_index)
         found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
-        destination[batch_index] = _batched_backend_observed_value(constrained_value)
+        destination[batch_index] = _batched_backend_observed_value(constrained_value, eltype(destination))
     end
     return destination
 end
@@ -1577,7 +1578,7 @@ function _batched_environment_set_shared!(env::BatchedPlanEnvironment, slot::Int
         value isa Real && !(value isa Bool) || throw(
             BatchedBackendFallback("numeric backend slot $slot received non-real shared value"),
         )
-        env.numeric_values[slot, :] .= Float64(value)
+        env.numeric_values[slot, :] .= convert(eltype(env.numeric_values), value)
     elseif env.index_slots[slot]
         value isa Integer || throw(
             BatchedBackendFallback("index backend slot $slot received non-integer shared value"),
@@ -1602,7 +1603,7 @@ function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, value
             value isa Real && !(value isa Bool) || throw(
                 BatchedBackendFallback("numeric backend slot $slot received non-real batched value"),
             )
-            env.numeric_values[slot, batch_index] = Float64(value)
+            env.numeric_values[slot, batch_index] = convert(eltype(env.numeric_values), value)
         end
     elseif env.index_slots[slot]
         for batch_index in 1:env.batch_size
@@ -1662,7 +1663,7 @@ function _score_backend_step!(
         totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
-                env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
             elseif env.index_slots[step.binding_slot]
                 value isa Integer || throw(
                     BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
@@ -1698,7 +1699,7 @@ function _score_backend_step!(
         totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
-                env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
             elseif env.index_slots[step.binding_slot]
                 value isa Integer || throw(
                     BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
@@ -1731,7 +1732,7 @@ function _score_backend_step!(
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
-                env.numeric_values[step.binding_slot, batch_index] = Float64(value)
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
             elseif env.index_slots[step.binding_slot]
                 value isa Integer || throw(
                     BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
