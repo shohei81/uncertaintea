@@ -56,6 +56,7 @@ mutable struct RunningVarianceState
     mean::Vector{Float64}
     m2::Vector{Float64}
     clipped_sample::Vector{Float64}
+    window_length::Int
     count::Int
     weight_sum::Float64
     weight_square_sum::Float64
@@ -64,7 +65,7 @@ end
 const _RUNNING_VARIANCE_CLIP_START = 4
 const _RUNNING_VARIANCE_CLIP_SCALE_EARLY = 8.0
 const _RUNNING_VARIANCE_CLIP_SCALE_LATE = 5.0
-const _RUNNING_VARIANCE_CLIP_TAPER = 16
+const _RUNNING_VARIANCE_REJECTION_WEIGHT_EARLY = 1.0
 const _RUNNING_VARIANCE_FLOOR = 1e-3
 
 struct WarmupSchedule
@@ -832,13 +833,40 @@ function _final_step_size(state::DualAveragingState)
     return exp(state.log_step_size_avg)
 end
 
-function _running_variance_state(num_params::Int)
-    return RunningVarianceState(zeros(num_params), zeros(num_params), zeros(num_params), 0, 0.0, 0.0)
+function _running_variance_state(num_params::Int, window_length::Int=_RUNNING_VARIANCE_CLIP_START + 16)
+    window_length > 0 || throw(ArgumentError("running variance state requires window_length > 0"))
+    return RunningVarianceState(
+        zeros(num_params),
+        zeros(num_params),
+        zeros(num_params),
+        window_length,
+        0,
+        0.0,
+        0.0,
+    )
 end
 
-function _running_variance_clip_scale(count::Int)
-    count <= _RUNNING_VARIANCE_CLIP_START && return _RUNNING_VARIANCE_CLIP_SCALE_EARLY
-    progress = min(count - _RUNNING_VARIANCE_CLIP_START, _RUNNING_VARIANCE_CLIP_TAPER) / _RUNNING_VARIANCE_CLIP_TAPER
+function _warmup_window_length(schedule::WarmupSchedule, window_index::Int)
+    1 <= window_index <= length(schedule.slow_window_ends) ||
+        throw(BoundsError(schedule.slow_window_ends, window_index))
+    window_start = window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index - 1] + 1
+    return schedule.slow_window_ends[window_index] - window_start + 1
+end
+
+function _running_variance_window_progress(state::RunningVarianceState)
+    if state.window_length <= _RUNNING_VARIANCE_CLIP_START
+        return 1.0
+    end
+    return min(
+        max(state.count - _RUNNING_VARIANCE_CLIP_START, 0) /
+        (state.window_length - _RUNNING_VARIANCE_CLIP_START),
+        1.0,
+    )
+end
+
+function _running_variance_clip_scale(state::RunningVarianceState)
+    state.count <= _RUNNING_VARIANCE_CLIP_START && return _RUNNING_VARIANCE_CLIP_SCALE_EARLY
+    progress = _running_variance_window_progress(state)
     return _RUNNING_VARIANCE_CLIP_SCALE_EARLY +
         (_RUNNING_VARIANCE_CLIP_SCALE_LATE - _RUNNING_VARIANCE_CLIP_SCALE_EARLY) * progress
 end
@@ -853,7 +881,7 @@ function _running_variance_sample!(
         return clipped_sample
     end
 
-    clip_scale = _running_variance_clip_scale(state.count)
+    clip_scale = _running_variance_clip_scale(state)
     @inbounds for index in eachindex(clipped_sample, sample, state.mean, state.m2)
         variance = state.m2[index] / max(state.count - 1, 1)
         bound = clip_scale * sqrt(max(variance, _RUNNING_VARIANCE_FLOOR))
@@ -959,6 +987,7 @@ function _inverse_mass_matrix(state::RunningVarianceState, regularization::Float
 end
 
 function _mass_adaptation_weight(
+    state::RunningVarianceState,
     accepted_step::Bool,
     accept_prob::Real,
     divergent_step::Bool,
@@ -968,10 +997,14 @@ function _mass_adaptation_weight(
     if !isfinite(accept_prob)
         return 0.0
     end
-    return clamp(Float64(accept_prob), 0.0, 1.0)
+    progress = _running_variance_window_progress(state)
+    rejection_weight = clamp(Float64(accept_prob), 0.0, 1.0)
+    return _RUNNING_VARIANCE_REJECTION_WEIGHT_EARLY +
+        (rejection_weight - _RUNNING_VARIANCE_REJECTION_WEIGHT_EARLY) * progress
 end
 
 function _mass_adaptation_weights!(
+    state::RunningVarianceState,
     destination::AbstractVector,
     accepted_step::AbstractVector,
     accept_prob::AbstractVector,
@@ -981,6 +1014,7 @@ function _mass_adaptation_weights!(
         throw(DimensionMismatch("mass adaptation weights require matching vector lengths"))
     @inbounds for index in eachindex(destination, accepted_step, accept_prob, divergent_step)
         destination[index] = _mass_adaptation_weight(
+            state,
             accepted_step[index],
             accept_prob[index],
             divergent_step[index],
@@ -1255,7 +1289,11 @@ function hmc(
         )
     end
     dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
-    variance_state = _running_variance_state(num_params)
+    variance_state = _running_variance_state(
+        num_params,
+        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
+            _warmup_window_length(warmup_schedule, mass_window_index),
+    )
 
     sample_index = 0
     for iteration in 1:total_iterations
@@ -1308,14 +1346,21 @@ function hmc(
                 _update_running_variance!(
                     variance_state,
                     position,
-                    _mass_adaptation_weight(accepted_step, accept_prob, divergent_step),
+                    _mass_adaptation_weight(variance_state, accepted_step, accept_prob, divergent_step),
                 )
                 if iteration == warmup_schedule.slow_window_ends[mass_window_index]
                     if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
                     end
-                    variance_state = _running_variance_state(num_params)
                     mass_window_index += 1
+                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
+                        variance_state = _running_variance_state(
+                            num_params,
+                            _warmup_window_length(warmup_schedule, mass_window_index),
+                        )
+                    else
+                        variance_state = _running_variance_state(num_params)
+                    end
                     if adapt_step_size && iteration < num_warmup
                         hmc_step_size = _find_reasonable_step_size(
                             model,
@@ -1511,7 +1556,11 @@ function batched_hmc(
         )
     end
     dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
-    variance_state = _running_variance_state(num_params)
+    variance_state = _running_variance_state(
+        num_params,
+        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
+            _warmup_window_length(warmup_schedule, mass_window_index),
+    )
 
     sample_index = 0
     for iteration in 1:total_iterations
@@ -1584,6 +1633,7 @@ function batched_hmc(
                mass_window_index <= length(warmup_schedule.slow_window_ends) &&
                iteration > warmup_schedule.initial_buffer
                 _mass_adaptation_weights!(
+                    variance_state,
                     workspace.mass_adaptation_weights,
                     accepted_step,
                     accept_prob,
@@ -1598,8 +1648,15 @@ function batched_hmc(
                     if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
                     end
-                    variance_state = _running_variance_state(num_params)
                     mass_window_index += 1
+                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
+                        variance_state = _running_variance_state(
+                            num_params,
+                            _warmup_window_length(warmup_schedule, mass_window_index),
+                        )
+                    else
+                        variance_state = _running_variance_state(num_params)
+                    end
                     if adapt_step_size && iteration < num_warmup
                         hmc_step_size = _find_reasonable_batched_step_size(
                             workspace,

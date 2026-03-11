@@ -77,6 +77,9 @@ single-chain HMC, but it now supports the same basic warmup structure:
   tightens toward the target clip scale as more pooled samples arrive
 - pooled variance now uses acceptance-aware online weights, so rejected
   positions contribute fractionally and divergent proposals contribute zero
+- both the clip threshold and the rejection-weight taper are now parameterized
+  by each slow warmup window length instead of an implicit global sample-count
+  heuristic
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.

@@ -998,25 +998,37 @@ using UncertainTea
     @test long_warmup_schedule.initial_buffer == 15
     @test long_warmup_schedule.slow_window_ends == [40, 90, 135]
     @test long_warmup_schedule.terminal_buffer == 15
+    @test UncertainTea._warmup_window_length(short_warmup_schedule, 1) == 7
+    @test UncertainTea._warmup_window_length(long_warmup_schedule, 1) == 25
+    @test UncertainTea._warmup_window_length(long_warmup_schedule, 2) == 50
+    @test UncertainTea._warmup_window_length(long_warmup_schedule, 3) == 45
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], falses(3)) ≈ 0.6 atol=1e-8
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], BitVector([false, true, false])) ≈
         0.4 atol=1e-8
-    @test UncertainTea._mass_adaptation_weight(true, 0.1, false) == 1.0
-    @test UncertainTea._mass_adaptation_weight(false, 0.25, false) == 0.25
-    @test UncertainTea._mass_adaptation_weight(false, 0.25, true) == 0.0
+    early_window_state = UncertainTea._running_variance_state(1, 24)
+    late_window_state = UncertainTea._running_variance_state(1, 24)
+    late_window_state.count = 24
+    @test UncertainTea._mass_adaptation_weight(early_window_state, true, 0.1, false) == 1.0
+    @test UncertainTea._mass_adaptation_weight(early_window_state, false, 0.25, false) == 1.0
+    @test UncertainTea._mass_adaptation_weight(late_window_state, false, 0.25, false) == 0.25
+    @test UncertainTea._mass_adaptation_weight(early_window_state, false, 0.25, true) == 0.0
     mass_adaptation_weights = zeros(3)
     UncertainTea._mass_adaptation_weights!(
+        late_window_state,
         mass_adaptation_weights,
         BitVector([true, false, false]),
         [0.2, 0.3, 0.4],
         BitVector([false, false, true]),
     )
-    @test mass_adaptation_weights == [1.0, 0.3, 0.0]
-    @test UncertainTea._running_variance_clip_scale(0) == 8.0
-    @test UncertainTea._running_variance_clip_scale(4) == 8.0
-    @test UncertainTea._running_variance_clip_scale(12) ≈ 6.5 atol=1e-8
-    @test UncertainTea._running_variance_clip_scale(20) == 5.0
-    @test UncertainTea._running_variance_clip_scale(200) == 5.0
+    @test mass_adaptation_weights ≈ [1.0, 0.3, 0.0] atol=1e-8
+    @test UncertainTea._running_variance_clip_scale(early_window_state) == 8.0
+    early_window_state.count = 4
+    @test UncertainTea._running_variance_clip_scale(early_window_state) == 8.0
+    early_window_state.count = 14
+    @test UncertainTea._running_variance_clip_scale(early_window_state) ≈ 6.5 atol=1e-8
+    @test UncertainTea._running_variance_window_progress(early_window_state) ≈ 0.5 atol=1e-8
+    @test UncertainTea._running_variance_clip_scale(late_window_state) == 5.0
+    @test UncertainTea._running_variance_window_progress(late_window_state) == 1.0
     masked_variance_state = UncertainTea._running_variance_state(2)
     UncertainTea._update_running_variance!(
         masked_variance_state,

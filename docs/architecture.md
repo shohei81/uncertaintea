@@ -116,7 +116,8 @@ Current backend-lowering subset:
   adaptation from pooled non-divergent chain positions using winsorized online
   variance updates whose clip threshold anneals from a loose early-window value
   to a tighter steady-state value, with acceptance-aware weights so rejected
-  states do not count like fully refreshed samples
+  states do not count like fully refreshed samples; both schedules are now
+  explicitly tied to the current slow-window length
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
