@@ -1115,6 +1115,22 @@ using UncertainTea
     @test gaussian_hmc_proposal_replay[3] === gaussian_hmc_proposal[3]
     @test gaussian_hmc_proposal_replay[4] === gaussian_hmc_proposal[4]
     @test gaussian_hmc_proposal_replay[5] === gaussian_hmc_proposal[5]
+    gaussian_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        gaussian_batch_constraints,
+    )
+    gaussian_nuts_state = UncertainTea._batched_nuts_state(
+        gaussian_nuts_workspace.proposal_position,
+        gaussian_nuts_workspace.proposal_momentum,
+        gaussian_nuts_workspace.proposed_logjoint,
+        gaussian_nuts_workspace.proposal_gradient,
+        1,
+    )
+    @test parent(gaussian_nuts_state.position) === gaussian_nuts_workspace.proposal_position
+    @test parent(gaussian_nuts_state.momentum) === gaussian_nuts_workspace.proposal_momentum
+    @test parent(gaussian_nuts_state.gradient) === gaussian_nuts_workspace.proposal_gradient
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

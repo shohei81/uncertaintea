@@ -100,6 +100,8 @@ for dynamic trajectory building:
   and batched multinomial selection step over the whole chain matrix
 - the left/right frontier, proposal state, and tree-weight accumulators for
   that first doubling step now also live in batched workspace storage
+- chain-local continuation now seeds from views into that batched frontier
+  storage instead of copying those frontier vectors into new seed states
 - deeper tree growth is still chain-local and iterative after that first
   batched doubling step
 - this is a staging layer toward a future backend-lowered NUTS state machine,

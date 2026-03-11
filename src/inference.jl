@@ -1287,11 +1287,11 @@ function _hamiltonian(logjoint_value::Float64, momentum::AbstractVector, inverse
     return -logjoint_value + _kinetic_energy(momentum, inverse_mass_matrix)
 end
 
-struct NUTSState
-    position::Vector{Float64}
-    momentum::Vector{Float64}
+struct NUTSState{P<:AbstractVector{Float64}, M<:AbstractVector{Float64}, G<:AbstractVector{Float64}}
+    position::P
+    momentum::M
     logjoint::Float64
-    gradient::Vector{Float64}
+    gradient::G
 end
 
 struct NUTSSubtree
@@ -1434,7 +1434,7 @@ end
 
 function _continue_nuts_proposal(
     model::TeaModel,
-    position::Vector{Float64},
+    position::AbstractVector{Float64},
     initial_hamiltonian::Float64,
     left::NUTSState,
     right::NUTSState,
@@ -1508,9 +1508,9 @@ end
 
 function _nuts_proposal(
     model::TeaModel,
-    position::Vector{Float64},
+    position::AbstractVector{Float64},
     current_logjoint::Float64,
-    current_gradient::Vector{Float64},
+    current_gradient::AbstractVector{Float64},
     gradient_cache::LogjointGradientCache,
     inverse_mass_matrix::Vector{Float64},
     args::Tuple,
@@ -1580,7 +1580,7 @@ function _batched_nuts_proposals!(
         proposal, accept_stat, tree_depth, integration_steps, proposed_energy, energy_error, divergent_step, moved_step =
             _continue_nuts_proposal(
                 model,
-                copy(view(position, :, chain_index)),
+                view(position, :, chain_index),
                 workspace.current_energy[chain_index],
                 _batched_nuts_state(
                     workspace.left_position,
@@ -1641,10 +1641,10 @@ function _batched_nuts_state(
     chain_index::Int,
 )
     return NUTSState(
-        copy(view(position, :, chain_index)),
-        copy(view(momentum, :, chain_index)),
+        view(position, :, chain_index),
+        view(momentum, :, chain_index),
         logjoint[chain_index],
-        copy(view(gradient, :, chain_index)),
+        view(gradient, :, chain_index),
     )
 end
 

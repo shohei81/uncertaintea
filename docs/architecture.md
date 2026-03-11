@@ -124,9 +124,10 @@ Current backend-lowering subset:
 - batched NUTS now exists as a CPU reference state machine with `param x chain`
   storage and pooled warmup adaptation; the first trajectory doubling step now
   uses a batched leapfrog-and-selection step, and the associated frontier state
-  already lives in batched workspace storage, but deeper tree growth is still
-  performed chain-by-chain rather than through a backend-lowered batched tree
-  kernel
+  already lives in batched workspace storage, with chain-local continuation now
+  seeded from workspace views rather than copied frontier vectors, but deeper
+  tree growth is still performed chain-by-chain rather than through a
+  backend-lowered batched tree kernel
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
