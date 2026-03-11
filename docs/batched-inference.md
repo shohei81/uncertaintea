@@ -47,6 +47,7 @@ The initial API should be:
 - `batched_logjoint_unconstrained(model, params, args, constraints)`
 - `batched_logjoint_gradient_unconstrained(model, params, args, constraints)`
 - `batched_hmc(model, args, constraints; ...)`
+- `batched_nuts(model, args, constraints; ...)`
 
 For repeated gradient evaluations on a fixed batch shape, phase 1 also supports
 an explicit cache:
@@ -89,6 +90,15 @@ single-chain HMC, but it now supports the same basic warmup structure:
 - the `text/plain` display for summaries and diagnostics now expands those
   fields into a compact multi-line report for interactive inspection
 - CPU reference path built on the compiled batched evaluator
+
+The current `batched_nuts` implementation is the analogous CPU reference step
+for dynamic trajectory building:
+
+- state is stored in `param x chain` matrices
+- warmup uses the same pooled diagonal-mass adaptation as `batched_hmc`
+- tree growth is still chain-local and iterative
+- this is a staging layer toward a future backend-lowered NUTS state machine,
+  not the final GPU implementation
 
 Phase 1 intentionally uses the existing single-item evaluator internally.
 That gives us:

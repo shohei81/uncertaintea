@@ -1455,6 +1455,30 @@ using UncertainTea
         initial_params=gaussian_batch_params,
         rng=MersenneTwister(52),
     )
+    gaussian_batched_nuts_chain = batched_nuts(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=24,
+        num_warmup=18,
+        step_size=0.15,
+        max_tree_depth=6,
+        initial_params=gaussian_batch_params,
+        rng=MersenneTwister(63),
+    )
+    gaussian_batched_nuts_chain_replay = batched_nuts(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=24,
+        num_warmup=18,
+        step_size=0.15,
+        max_tree_depth=6,
+        initial_params=gaussian_batch_params,
+        rng=MersenneTwister(63),
+    )
     gaussian_batched_mass_chain = batched_hmc(
         gaussian_mean,
         (),
@@ -1537,6 +1561,7 @@ using UncertainTea
     gaussian_nuts_rhat = rhat(gaussian_nuts_multichain)
     gaussian_nuts_ess = ess(gaussian_nuts_multichain)
     gaussian_nuts_summary = summarize(gaussian_nuts_multichain)
+    gaussian_batched_nuts_summary = summarize(gaussian_batched_nuts_chain)
     positive_summary = summarize(positive_multichain; quantiles=(0.25, 0.5, 0.75))
     gaussian_pooled_draws = vcat([vec(chain.constrained_samples[1, :]) for chain in gaussian_multichain]...)
     gaussian_pooled_mean = sum(gaussian_pooled_draws) / length(gaussian_pooled_draws)
@@ -1710,6 +1735,23 @@ using UncertainTea
     @test gaussian_batched_chain[1].unconstrained_samples[:, 1] ==
         gaussian_batched_chain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_batched_chain[1].accepted == gaussian_batched_chain_replay[1].accepted
+    @test nchains(gaussian_batched_nuts_chain) == 3
+    @test numsamples(gaussian_batched_nuts_chain) == 24
+    @test gaussian_batched_nuts_chain.args == ()
+    @test length(gaussian_batched_nuts_chain.constraints) == 3
+    @test all(chain.sampler == :nuts for chain in gaussian_batched_nuts_chain)
+    @test all(chain.step_size > 0 for chain in gaussian_batched_nuts_chain)
+    @test all(chain.mass_matrix[1] > 0 for chain in gaussian_batched_nuts_chain)
+    @test all(length(massadaptationwindows(chain)) == 1 for chain in gaussian_batched_nuts_chain)
+    @test all(all(1 <= depth <= chain.max_tree_depth for depth in treedepths(chain)) for chain in gaussian_batched_nuts_chain)
+    @test all(all(1 <= steps <= (2 ^ chain.max_tree_depth - 1) for steps in integrationsteps(chain)) for chain in gaussian_batched_nuts_chain)
+    @test acceptancerate(gaussian_batched_nuts_summary) == acceptancerate(gaussian_batched_nuts_chain)
+    @test divergencerate(gaussian_batched_nuts_summary) == divergencerate(gaussian_batched_nuts_chain)
+    @test length(massadaptationwindows(gaussian_batched_nuts_summary)) == 1
+    @test massadaptationwindows(gaussian_batched_nuts_summary)[1].chains == 3
+    @test gaussian_batched_nuts_chain[1].unconstrained_samples[:, 1] ==
+        gaussian_batched_nuts_chain_replay[1].unconstrained_samples[:, 1]
+    @test gaussian_batched_nuts_chain[1].tree_depths == gaussian_batched_nuts_chain_replay[1].tree_depths
     @test nchains(iid_batched_chain) == 2
     @test numsamples(iid_batched_chain) == 24
     @test iid_batched_chain.args == iid_batch_args
@@ -1784,6 +1826,7 @@ using UncertainTea
     @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
     @test_throws ArgumentError nuts_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
     @test_throws ArgumentError batched_hmc(gaussian_mean, (), gaussian_batch_constraints; num_chains=0, num_samples=10)
+    @test_throws ArgumentError batched_nuts(gaussian_mean, (), gaussian_batch_constraints; num_chains=0, num_samples=10)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, zeros(2, 3), (), gaussian_batch_constraints)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints[1:2])
     @test_throws ArgumentError batched_logjoint(gaussian_mean, gaussian_batch_params, [1, 2, 3], gaussian_batch_constraints)
@@ -1816,6 +1859,14 @@ using UncertainTea
         initial_params=zeros(1, 2),
     )
     @test_throws DimensionMismatch batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=10,
+        initial_params=zeros(1, 2),
+    )
+    @test_throws DimensionMismatch batched_nuts(
         gaussian_mean,
         (),
         gaussian_batch_constraints;

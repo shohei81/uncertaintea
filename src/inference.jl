@@ -147,6 +147,24 @@ mutable struct BatchedHMCWorkspace
     sqrt_inverse_mass_matrix::Vector{Float64}
 end
 
+mutable struct BatchedNUTSWorkspace
+    gradient_cache::BatchedLogjointGradientCache
+    current_gradient::Matrix{Float64}
+    proposal_position::Matrix{Float64}
+    proposal_gradient::Matrix{Float64}
+    proposed_logjoint::Vector{Float64}
+    proposed_energy::Vector{Float64}
+    energy_error::Vector{Float64}
+    accept_prob::Vector{Float64}
+    accepted_step::BitVector
+    divergent_step::BitVector
+    tree_depths::Vector{Int}
+    integration_steps::Vector{Int}
+    mass_adaptation_weights::Vector{Float64}
+    constrained_position::Matrix{Float64}
+    column_gradient_caches::Vector{LogjointGradientCache}
+end
+
 function BatchedHMCWorkspace(
     model::TeaModel,
     position::AbstractMatrix,
@@ -180,6 +198,44 @@ function BatchedHMCWorkspace(
         Vector{Float64}(undef, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         sqrt.(Float64.(inverse_mass_matrix)),
+    )
+end
+
+function BatchedNUTSWorkspace(
+    model::TeaModel,
+    position::AbstractMatrix,
+    args=(),
+    constraints=choicemap(),
+)
+    num_params, num_chains = size(position)
+    batch_args = _validate_batched_args(args, num_chains)
+    batch_constraints = _validate_batched_constraints(constraints, num_chains)
+    gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
+    column_gradient_caches = Vector{LogjointGradientCache}(undef, num_chains)
+    for chain_index in 1:num_chains
+        column_gradient_caches[chain_index] = _logjoint_gradient_cache(
+            model,
+            collect(view(position, :, chain_index)),
+            _batched_args(batch_args, chain_index),
+            _batched_constraints(batch_constraints, chain_index),
+        )
+    end
+    return BatchedNUTSWorkspace(
+        gradient_cache,
+        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        falses(num_chains),
+        falses(num_chains),
+        zeros(Int, num_chains),
+        zeros(Int, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
+        column_gradient_caches,
     )
 end
 
@@ -862,6 +918,37 @@ function _validate_batched_hmc_arguments(
     return nothing
 end
 
+function _validate_batched_nuts_arguments(
+    num_chains::Int,
+    num_params::Int,
+    num_samples::Int,
+    num_warmup::Int,
+    step_size::Real,
+    max_tree_depth::Int,
+    target_accept::Real,
+    max_delta_energy::Real,
+    mass_matrix_regularization::Real,
+    mass_matrix_min_samples::Int,
+    args,
+    constraints,
+)
+    _validate_hmc_chains_arguments(num_chains, "NUTS")
+    _validate_nuts_arguments(
+        num_params,
+        num_samples,
+        num_warmup,
+        step_size,
+        max_tree_depth,
+        target_accept,
+        max_delta_energy,
+        mass_matrix_regularization,
+        mass_matrix_min_samples,
+    )
+    _validate_batched_args(args, num_chains)
+    _validate_batched_constraints(constraints, num_chains)
+    return nothing
+end
+
 function _initial_hmc_position(
     model::TeaModel,
     args::Tuple,
@@ -1388,6 +1475,51 @@ function _nuts_proposal(
     energy_error = proposed_hamiltonian - initial_hamiltonian
     moved = any(proposal.position .!= position)
     return proposal, accept_stat, tree_depth, integration_steps, proposed_hamiltonian, energy_error, divergent, moved
+end
+
+function _batched_nuts_proposals!(
+    workspace::BatchedNUTSWorkspace,
+    model::TeaModel,
+    position::AbstractMatrix{Float64},
+    current_logjoint::AbstractVector{Float64},
+    current_gradient::AbstractMatrix{Float64},
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_tree_depth::Int,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    num_chains = size(position, 2)
+    for chain_index in 1:num_chains
+        proposal, accept_stat, tree_depth, integration_steps, proposed_energy, energy_error, divergent_step, moved_step =
+            _nuts_proposal(
+                model,
+                collect(view(position, :, chain_index)),
+                current_logjoint[chain_index],
+                collect(view(current_gradient, :, chain_index)),
+                workspace.column_gradient_caches[chain_index],
+                inverse_mass_matrix,
+                _batched_args(args, chain_index),
+                _batched_constraints(constraints, chain_index),
+                step_size,
+                max_tree_depth,
+                max_delta_energy,
+                rng,
+            )
+        copyto!(view(workspace.proposal_position, :, chain_index), proposal.position)
+        copyto!(view(workspace.proposal_gradient, :, chain_index), proposal.gradient)
+        workspace.proposed_logjoint[chain_index] = proposal.logjoint
+        workspace.proposed_energy[chain_index] = proposed_energy
+        workspace.energy_error[chain_index] = energy_error
+        workspace.accept_prob[chain_index] = accept_stat
+        workspace.accepted_step[chain_index] = moved_step
+        workspace.divergent_step[chain_index] = divergent_step
+        workspace.tree_depths[chain_index] = tree_depth
+        workspace.integration_steps[chain_index] = integration_steps
+    end
+    return workspace
 end
 
 function _dual_averaging_state(step_size::Float64, target_accept::Float64)
@@ -2354,6 +2486,267 @@ function nuts_chains(
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
             rng=chain_rng,
+        )
+    end
+
+    return HMCChains(model, args, constraints, chains)
+end
+
+function batched_nuts(
+    model::TeaModel,
+    args=(),
+    constraints=choicemap();
+    num_chains::Int,
+    num_samples::Int,
+    num_warmup::Int=0,
+    step_size::Real=0.1,
+    max_tree_depth::Int=10,
+    initial_params=nothing,
+    target_accept::Real=0.8,
+    adapt_step_size::Bool=true,
+    adapt_mass_matrix::Bool=true,
+    find_reasonable_step_size::Bool=false,
+    max_delta_energy::Real=1000.0,
+    mass_matrix_regularization::Real=1e-3,
+    mass_matrix_min_samples::Int=10,
+    rng::AbstractRNG=Random.default_rng(),
+)
+    num_params = parametercount(parameterlayout(model))
+    _validate_batched_nuts_arguments(
+        num_chains,
+        num_params,
+        num_samples,
+        num_warmup,
+        step_size,
+        max_tree_depth,
+        target_accept,
+        max_delta_energy,
+        mass_matrix_regularization,
+        mass_matrix_min_samples,
+        args,
+        constraints,
+    )
+
+    batch_args = _validate_batched_args(args, num_chains)
+    batch_constraints = _validate_batched_constraints(constraints, num_chains)
+    position = _initial_batched_hmc_positions(
+        model,
+        batch_args,
+        batch_constraints,
+        initial_params,
+        rng,
+        num_params,
+        num_chains,
+    )
+    workspace = BatchedNUTSWorkspace(model, position, batch_args, batch_constraints)
+    current_logjoint = Vector{Float64}(undef, num_chains)
+    current_gradient = workspace.current_gradient
+    _, gradient = _batched_logjoint_and_gradient_unconstrained!(
+        current_logjoint,
+        workspace.gradient_cache,
+        position,
+    )
+    copyto!(current_gradient, gradient)
+    all(isfinite, current_logjoint) ||
+        throw(ArgumentError("initial batched NUTS parameters produced a non-finite unconstrained logjoint"))
+    all(isfinite, current_gradient) ||
+        throw(ArgumentError("initial batched NUTS parameters produced a non-finite unconstrained gradient"))
+
+    unconstrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
+    constrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
+    logjoint_values = Matrix{Float64}(undef, num_samples, num_chains)
+    acceptance_stats = Matrix{Float64}(undef, num_samples, num_chains)
+    energies = Matrix{Float64}(undef, num_samples, num_chains)
+    energy_errors = Matrix{Float64}(undef, num_samples, num_chains)
+    accepted = falses(num_samples, num_chains)
+    divergent = falses(num_samples, num_chains)
+    tree_depths = Matrix{Int}(undef, num_samples, num_chains)
+    integration_steps_values = Matrix{Int}(undef, num_samples, num_chains)
+    total_iterations = num_warmup + num_samples
+    nuts_step_size = Float64(step_size)
+    nuts_target_accept = Float64(target_accept)
+    nuts_max_delta_energy = Float64(max_delta_energy)
+    inverse_mass_matrix = ones(num_params)
+    warmup_schedule = _warmup_schedule(num_warmup)
+    mass_window_index = 1
+    step_size_workspace = nothing
+    if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
+        step_size_workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
+        nuts_step_size = _find_reasonable_batched_step_size(
+            step_size_workspace,
+            model,
+            position,
+            current_logjoint,
+            current_gradient,
+            inverse_mass_matrix,
+            batch_args,
+            batch_constraints,
+            nuts_step_size,
+            nuts_max_delta_energy,
+            rng,
+        )
+    end
+    dual_state = _dual_averaging_state(nuts_step_size, nuts_target_accept)
+    variance_state = _running_variance_state(
+        num_params,
+        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
+            _warmup_window_length(warmup_schedule, mass_window_index),
+    )
+    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
+
+    sample_index = 0
+    for iteration in 1:total_iterations
+        _batched_nuts_proposals!(
+            workspace,
+            model,
+            position,
+            current_logjoint,
+            current_gradient,
+            inverse_mass_matrix,
+            batch_args,
+            batch_constraints,
+            nuts_step_size,
+            max_tree_depth,
+            nuts_max_delta_energy,
+            rng,
+        )
+
+        for chain_index in 1:num_chains
+            if workspace.accepted_step[chain_index]
+                copyto!(view(position, :, chain_index), view(workspace.proposal_position, :, chain_index))
+                copyto!(view(current_gradient, :, chain_index), view(workspace.proposal_gradient, :, chain_index))
+                current_logjoint[chain_index] = workspace.proposed_logjoint[chain_index]
+            end
+        end
+
+        if iteration <= num_warmup
+            if adapt_step_size
+                nuts_step_size = _update_step_size!(
+                    dual_state,
+                    _mean_batched_adaptation_probability(workspace.accept_prob, workspace.divergent_step),
+                )
+            end
+
+            if adapt_mass_matrix &&
+               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
+               iteration > warmup_schedule.initial_buffer
+                @inbounds for chain_index in 1:num_chains
+                    workspace.mass_adaptation_weights[chain_index] = _mass_adaptation_weight(
+                        variance_state,
+                        false,
+                        workspace.accept_prob[chain_index],
+                        workspace.divergent_step[chain_index],
+                    )
+                end
+                _update_running_variance!(
+                    variance_state,
+                    position,
+                    workspace.mass_adaptation_weights,
+                )
+                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
+                    mass_updated = false
+                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
+                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                        mass_updated = true
+                    end
+                    push!(
+                        mass_adaptation_windows,
+                        _mass_adaptation_window_summary(
+                            warmup_schedule,
+                            mass_window_index,
+                            variance_state,
+                            inverse_mass_matrix,
+                            mass_updated,
+                        ),
+                    )
+                    mass_window_index += 1
+                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
+                        variance_state = _running_variance_state(
+                            num_params,
+                            _warmup_window_length(warmup_schedule, mass_window_index),
+                        )
+                    else
+                        variance_state = _running_variance_state(num_params)
+                    end
+                    if adapt_step_size && iteration < num_warmup
+                        if isnothing(step_size_workspace)
+                            step_size_workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
+                        end
+                        nuts_step_size = _find_reasonable_batched_step_size(
+                            step_size_workspace,
+                            model,
+                            position,
+                            current_logjoint,
+                            current_gradient,
+                            inverse_mass_matrix,
+                            batch_args,
+                            batch_constraints,
+                            nuts_step_size,
+                            nuts_max_delta_energy,
+                            rng,
+                        )
+                        dual_state = _dual_averaging_state(nuts_step_size, nuts_target_accept)
+                    end
+                end
+            end
+
+            if iteration == num_warmup
+                if adapt_step_size
+                    nuts_step_size = _final_step_size(dual_state)
+                end
+                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
+                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                end
+            end
+        else
+            sample_index += 1
+            for chain_index in 1:num_chains
+                copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
+                _transform_to_constrained!(
+                    view(workspace.constrained_position, :, chain_index),
+                    model,
+                    view(position, :, chain_index),
+                )
+                copyto!(
+                    view(constrained_samples, :, sample_index, chain_index),
+                    view(workspace.constrained_position, :, chain_index),
+                )
+                logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
+                acceptance_stats[sample_index, chain_index] = workspace.accept_prob[chain_index]
+                energies[sample_index, chain_index] = workspace.proposed_energy[chain_index]
+                energy_errors[sample_index, chain_index] = workspace.energy_error[chain_index]
+                accepted[sample_index, chain_index] = workspace.accepted_step[chain_index]
+                divergent[sample_index, chain_index] = workspace.divergent_step[chain_index]
+                tree_depths[sample_index, chain_index] = workspace.tree_depths[chain_index]
+                integration_steps_values[sample_index, chain_index] = workspace.integration_steps[chain_index]
+            end
+        end
+    end
+
+    mass_matrix = 1 ./ inverse_mass_matrix
+    chains = Vector{HMCChain}(undef, num_chains)
+    for chain_index in 1:num_chains
+        chains[chain_index] = HMCChain(
+            :nuts,
+            model,
+            _batched_args(batch_args, chain_index),
+            _batched_constraints(batch_constraints, chain_index),
+            unconstrained_samples[:, :, chain_index],
+            constrained_samples[:, :, chain_index],
+            vec(logjoint_values[:, chain_index]),
+            vec(acceptance_stats[:, chain_index]),
+            vec(energies[:, chain_index]),
+            vec(energy_errors[:, chain_index]),
+            vec(accepted[:, chain_index]),
+            vec(divergent[:, chain_index]),
+            nuts_step_size,
+            copy(mass_matrix),
+            0,
+            max_tree_depth,
+            vec(tree_depths[:, chain_index]),
+            vec(integration_steps_values[:, chain_index]),
+            nuts_target_accept,
+            copy(mass_adaptation_windows),
         )
     end
 
