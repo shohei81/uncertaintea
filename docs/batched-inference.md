@@ -69,6 +69,7 @@ single-chain HMC, but it now supports the same basic warmup structure:
 - dual-averaging step-size adaptation during warmup
 - windowed shared mass-matrix adaptation from pooled chain positions
 - optional initial step-size search
+- divergence-aware aggregation of per-chain acceptance when adapting step size
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.

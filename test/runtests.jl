@@ -998,6 +998,9 @@ using UncertainTea
     @test long_warmup_schedule.initial_buffer == 15
     @test long_warmup_schedule.slow_window_ends == [40, 90, 135]
     @test long_warmup_schedule.terminal_buffer == 15
+    @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], falses(3)) ≈ 0.6 atol=1e-8
+    @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], BitVector([false, true, false])) ≈
+        0.4 atol=1e-8
 
     gaussian_chain = hmc(
         gaussian_mean,
@@ -1182,6 +1185,22 @@ using UncertainTea
         find_reasonable_step_size=true,
         rng=MersenneTwister(56),
     )
+    gaussian_batched_divergence_adapt_chain = batched_hmc(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=10,
+        num_warmup=15,
+        step_size=2.0,
+        num_leapfrog_steps=8,
+        initial_params=gaussian_batch_params,
+        adapt_step_size=true,
+        adapt_mass_matrix=false,
+        find_reasonable_step_size=false,
+        divergence_threshold=1.0,
+        rng=MersenneTwister(57),
+    )
     iid_batched_chain = batched_hmc(
         iid_model,
         iid_batch_args,
@@ -1286,6 +1305,7 @@ using UncertainTea
     @test all(chain.mass_matrix[1] != 1.0 for chain in gaussian_batched_mass_chain)
     @test all(0 < chain.step_size < 16.0 for chain in gaussian_batched_large_step_chain)
     @test all(all(isfinite, chain.logjoint_values) for chain in gaussian_batched_large_step_chain)
+    @test all(chain.step_size < 2.0 for chain in gaussian_batched_divergence_adapt_chain)
     @test !(isapprox(gaussian_batched_chain[1].step_size, gaussian_batched_baseline_chain[1].step_size; atol=1e-8) &&
         isapprox(gaussian_batched_chain[1].mass_matrix[1], gaussian_batched_baseline_chain[1].mass_matrix[1]; atol=1e-8))
     @test 0.0 <= acceptancerate(gaussian_batched_chain) <= 1.0

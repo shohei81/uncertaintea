@@ -654,6 +654,21 @@ function _mean_acceptance_probability(accept_prob::AbstractVector)
     return sum(accept_prob) / length(accept_prob)
 end
 
+function _mean_batched_adaptation_probability(
+    accept_prob::AbstractVector,
+    divergent::AbstractVector,
+)
+    length(accept_prob) == length(divergent) ||
+        throw(DimensionMismatch("expected acceptance and divergence vectors of matching length, got $(length(accept_prob)) and $(length(divergent))"))
+    isempty(accept_prob) && return 0.0
+
+    total = 0.0
+    for index in eachindex(accept_prob, divergent)
+        total += divergent[index] ? 0.0 : accept_prob[index]
+    end
+    return total / length(accept_prob)
+end
+
 function _batched_leapfrog!(
     workspace::BatchedHMCWorkspace,
     model::TeaModel,
@@ -916,6 +931,7 @@ function _find_reasonable_batched_step_size(
     args,
     constraints,
     step_size::Float64,
+    divergence_threshold::Float64,
     rng::AbstractRNG,
 )
     reasonable_step_size = step_size
@@ -948,6 +964,8 @@ function _find_reasonable_batched_step_size(
         copyto!(proposed_hamiltonian, current_hamiltonian)
         log_accept_ratio = workspace.log_accept_ratio
         fill!(log_accept_ratio, -Inf)
+        divergent_step = workspace.divergent_step
+        fill!(divergent_step, true)
         for chain_index in eachindex(current_logjoint)
             if valid[chain_index]
                 proposed_hamiltonian[chain_index] = _hamiltonian(
@@ -957,11 +975,14 @@ function _find_reasonable_batched_step_size(
                 )
                 log_accept_ratio[chain_index] =
                     current_hamiltonian[chain_index] - proposed_hamiltonian[chain_index]
+                energy_error = proposed_hamiltonian[chain_index] - current_hamiltonian[chain_index]
+                divergent_step[chain_index] =
+                    !isfinite(energy_error) || abs(energy_error) > divergence_threshold
             end
         end
 
         accept_prob = _batched_acceptance_probability!(workspace.accept_prob, log_accept_ratio)
-        mean_accept_prob = _mean_acceptance_probability(accept_prob)
+        mean_accept_prob = _mean_batched_adaptation_probability(accept_prob, divergent_step)
         direction = mean_accept_prob > target_accept ? 1.0 : -1.0
         next_step_size = reasonable_step_size * (2.0 ^ direction)
         if next_step_size < min_step_size || next_step_size > max_step_size
@@ -1372,6 +1393,7 @@ function batched_hmc(
             batch_args,
             batch_constraints,
             hmc_step_size,
+            hmc_divergence_threshold,
             rng,
         )
     end
@@ -1439,7 +1461,10 @@ function batched_hmc(
 
         if iteration <= num_warmup
             if adapt_step_size
-                hmc_step_size = _update_step_size!(dual_state, _mean_acceptance_probability(accept_prob))
+                hmc_step_size = _update_step_size!(
+                    dual_state,
+                    _mean_batched_adaptation_probability(accept_prob, divergent_step),
+                )
             end
 
             if adapt_mass_matrix &&
@@ -1465,6 +1490,7 @@ function batched_hmc(
                             batch_args,
                             batch_constraints,
                             hmc_step_size,
+                            hmc_divergence_threshold,
                             rng,
                         )
                         dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)

@@ -112,7 +112,8 @@ Current backend-lowering subset:
   position when the backend-plan-aware gradient evaluator is available
 - batched HMC warmup now mirrors the single-chain structure more closely:
   dual-averaging step-size adaptation, optional reasonable-step-size search,
-  and windowed shared diagonal mass adaptation from pooled chain positions
+  divergence-aware acceptance aggregation, and windowed shared diagonal mass
+  adaptation from pooled chain positions
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
