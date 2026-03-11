@@ -60,6 +60,9 @@ The current CPU NUTS path is intentionally narrow:
 - direct initialization of reusable continuation-state objects from that first
   doubling step, so the frontier handoff no longer needs a separate staged
   frontier representation
+- the single-chain `nuts` reference path now uses the same first-step
+  continuation initialization logic before it enters the remaining
+  chain-local tree-expansion loop
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

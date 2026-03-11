@@ -1344,6 +1344,65 @@ function _initialize_nuts_continuation!(
     return continuation
 end
 
+function _initialize_nuts_first_step!(
+    continuation::NUTSContinuationState,
+    current_state::NUTSState,
+    proposed_state::NUTSState,
+    valid::Bool,
+    direction::Int,
+    initial_hamiltonian::Float64,
+    inverse_mass_matrix::Vector{Float64},
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _initialize_nuts_continuation!(
+        continuation,
+        current_state,
+        current_state,
+        current_state,
+        -initial_hamiltonian,
+        0.0,
+        0,
+        0,
+        1,
+        false,
+        false,
+    )
+
+    valid || return (false, true)
+
+    if direction < 0
+        _copyto_nuts_state!(continuation.left, proposed_state)
+    else
+        _copyto_nuts_state!(continuation.right, proposed_state)
+    end
+
+    proposed_hamiltonian = _hamiltonian(proposed_state.logjoint, proposed_state.momentum, inverse_mass_matrix)
+    delta_energy = proposed_hamiltonian - initial_hamiltonian
+    continuation.integration_steps = 1
+    if !isfinite(delta_energy) || delta_energy > max_delta_energy
+        continuation.divergent = true
+        return (false, true)
+    end
+
+    continuation.accept_stat_sum = min(1.0, exp(min(0.0, -delta_energy)))
+    continuation.accept_stat_count = 1
+    candidate_log_weight = -proposed_hamiltonian
+    combined_log_weight = _logaddexp(continuation.log_weight, candidate_log_weight)
+    moved = log(rand(rng)) < candidate_log_weight - combined_log_weight
+    if moved
+        _copyto_nuts_state!(continuation.proposal, proposed_state)
+    end
+    continuation.log_weight = combined_log_weight
+    continuation.turning = _is_turning(
+        continuation.left.position,
+        continuation.right.position,
+        continuation.left.momentum,
+        continuation.right.momentum,
+    )
+    return (moved, false)
+end
+
 function NUTSSubtreeWorkspace(num_params::Int)
     state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
     return NUTSSubtreeWorkspace(state(), state(), state(), state(), state())
@@ -1567,18 +1626,27 @@ function _nuts_proposal(
     initial_momentum = _sample_momentum(rng, inverse_mass_matrix)
     initial_state = NUTSState(copy(position), initial_momentum, current_logjoint, copy(current_gradient))
     initial_hamiltonian = _hamiltonian(initial_state.logjoint, initial_state.momentum, inverse_mass_matrix)
-    _initialize_nuts_continuation!(
+    direction = rand(rng, Bool) ? 1 : -1
+    first_step_valid = _leapfrog_step!(
+        tree_workspace.next,
+        model,
+        initial_state,
+        gradient_cache,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        direction * step_size,
+    )
+    _initialize_nuts_first_step!(
         continuation,
-        _copy_nuts_state(initial_state),
-        _copy_nuts_state(initial_state),
-        _copy_nuts_state(initial_state),
-        -initial_hamiltonian,
-        0.0,
-        0,
-        0,
-        0,
-        false,
-        false,
+        initial_state,
+        tree_workspace.next,
+        first_step_valid,
+        direction,
+        initial_hamiltonian,
+        inverse_mass_matrix,
+        max_delta_energy,
+        rng,
     )
     _continue_nuts_proposal!(
         continuation,
@@ -1727,77 +1795,39 @@ function _initialize_batched_nuts_continuations!(
             current_logjoint[chain_index],
             copy(view(current_gradient, :, chain_index)),
         )
-        _initialize_nuts_continuation!(
-            continuation,
-            current_state,
-            current_state,
-            current_state,
-            -workspace.current_energy[chain_index],
-            0.0,
-            0,
-            0,
-            1,
-            false,
-            false,
-        )
-
-        workspace.step_valid[chain_index] || begin
-            copyto!(view(workspace.proposal_position, :, chain_index), view(position, :, chain_index))
-            copyto!(view(workspace.proposal_momentum, :, chain_index), view(workspace.current_momentum, :, chain_index))
-            copyto!(view(workspace.proposal_gradient, :, chain_index), view(current_gradient, :, chain_index))
-            workspace.proposed_logjoint[chain_index] = current_logjoint[chain_index]
-            workspace.divergent_step[chain_index] = true
-            continuation.divergent = true
-            continue
-        end
-
         proposed_state = NUTSState(
             copy(view(workspace.proposal_position, :, chain_index)),
             copy(view(workspace.proposal_momentum, :, chain_index)),
             workspace.proposed_logjoint[chain_index],
             copy(view(workspace.proposal_gradient, :, chain_index)),
         )
-        if workspace.step_direction[chain_index] < 0
-            _copyto_nuts_state!(continuation.left, proposed_state)
-        else
-            _copyto_nuts_state!(continuation.right, proposed_state)
-        end
-
-        proposed_hamiltonian = workspace.proposed_energy[chain_index]
-        delta_energy = proposed_hamiltonian - workspace.current_energy[chain_index]
-        workspace.divergent_step[chain_index] = !isfinite(delta_energy) || delta_energy > max_delta_energy
-        workspace.integration_steps[chain_index] = 1
-        continuation.integration_steps = 1
-        if workspace.divergent_step[chain_index]
+        moved, divergent = _initialize_nuts_first_step!(
+            continuation,
+            current_state,
+            proposed_state,
+            workspace.step_valid[chain_index],
+            workspace.step_direction[chain_index],
+            workspace.current_energy[chain_index],
+            inverse_mass_matrix,
+            max_delta_energy,
+            rng,
+        )
+        workspace.divergent_step[chain_index] = divergent
+        workspace.integration_steps[chain_index] = continuation.integration_steps
+        if divergent
             copyto!(view(workspace.proposal_position, :, chain_index), view(position, :, chain_index))
             copyto!(view(workspace.proposal_momentum, :, chain_index), view(workspace.current_momentum, :, chain_index))
             copyto!(view(workspace.proposal_gradient, :, chain_index), view(current_gradient, :, chain_index))
             workspace.proposed_logjoint[chain_index] = current_logjoint[chain_index]
-            continuation.divergent = true
             continue
         end
-
-        continuation.accept_stat_sum = min(1.0, exp(min(0.0, -delta_energy)))
-        continuation.accept_stat_count = 1
-        candidate_log_weight = -proposed_hamiltonian
-        combined_log_weight = _logaddexp(continuation.log_weight, candidate_log_weight)
-        if log(rand(rng)) < candidate_log_weight - combined_log_weight
-            workspace.accepted_step[chain_index] = true
-            _copyto_nuts_state!(continuation.proposal, proposed_state)
-        end
-        continuation.log_weight = combined_log_weight
-        if !workspace.accepted_step[chain_index]
+        workspace.accepted_step[chain_index] = moved
+        if !moved
             copyto!(view(workspace.proposal_position, :, chain_index), view(position, :, chain_index))
             copyto!(view(workspace.proposal_momentum, :, chain_index), view(workspace.current_momentum, :, chain_index))
             copyto!(view(workspace.proposal_gradient, :, chain_index), view(current_gradient, :, chain_index))
             workspace.proposed_logjoint[chain_index] = current_logjoint[chain_index]
         end
-        continuation.turning = _is_turning(
-            continuation.left.position,
-            continuation.right.position,
-            continuation.left.momentum,
-            continuation.right.momentum,
-        )
     end
     return workspace
 end

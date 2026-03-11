@@ -1378,6 +1378,30 @@ using UncertainTea
         adapt_mass_matrix=false,
         rng=MersenneTwister(61),
     )
+    gaussian_nuts_one_step_chain = nuts(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=16,
+        num_warmup=0,
+        step_size=0.2,
+        max_tree_depth=1,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        rng=MersenneTwister(64),
+    )
+    gaussian_nuts_one_step_chain_replay = nuts(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=16,
+        num_warmup=0,
+        step_size=0.2,
+        max_tree_depth=1,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        rng=MersenneTwister(64),
+    )
     gaussian_multichain = hmc_chains(
         gaussian_mean,
         (),
@@ -1676,6 +1700,14 @@ using UncertainTea
     @test gaussian_nuts_baseline_chain.step_size == 0.2
     @test gaussian_nuts_baseline_chain.mass_matrix == [1.0]
     @test isempty(massadaptationwindows(gaussian_nuts_baseline_chain))
+    @test gaussian_nuts_one_step_chain.max_tree_depth == 1
+    @test gaussian_nuts_one_step_chain.step_size == 0.2
+    @test gaussian_nuts_one_step_chain.mass_matrix == [1.0]
+    @test isempty(massadaptationwindows(gaussian_nuts_one_step_chain))
+    @test all(depth == 1 for depth in treedepths(gaussian_nuts_one_step_chain))
+    @test all(0 <= steps <= 1 for steps in integrationsteps(gaussian_nuts_one_step_chain))
+    @test gaussian_nuts_one_step_chain.unconstrained_samples == gaussian_nuts_one_step_chain_replay.unconstrained_samples
+    @test gaussian_nuts_one_step_chain.accepted == gaussian_nuts_one_step_chain_replay.accepted
     @test nchains(gaussian_multichain) == 3
     @test numsamples(gaussian_multichain) == 60
     @test gaussian_multichain[1] isa HMCChain

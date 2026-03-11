@@ -124,7 +124,8 @@ Current backend-lowering subset:
 - batched NUTS now exists as a CPU reference state machine with `param x chain`
   storage and pooled warmup adaptation; the first trajectory doubling step now
   uses a batched leapfrog-and-selection step, and its result now initializes
-  each chain's reusable continuation state directly; the
+  each chain's reusable continuation state directly; single-chain `nuts`
+  initializes its continuation state through the same first-step helper; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

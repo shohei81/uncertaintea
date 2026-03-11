@@ -100,6 +100,9 @@ for dynamic trajectory building:
   and batched multinomial selection step over the whole chain matrix
 - that first doubling step now initializes each chain's reusable continuation
   state directly, instead of staging separate batched frontier arrays first
+- the single-chain `nuts` path now shares the same first-step continuation
+  initialization logic, so batched and non-batched trajectories start from the
+  same proposal-state transition before deeper tree growth diverges
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
