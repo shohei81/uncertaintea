@@ -1443,6 +1443,57 @@ function _batched_observed_choice_values!(
     return destination
 end
 
+function _batched_choice_numeric_values!(
+    destination::AbstractVector{Float64},
+    parameter_slot::Int,
+    params::AbstractMatrix,
+    constraints,
+    address_parts::Tuple,
+)
+    size(params, 2) == length(destination) ||
+        throw(DimensionMismatch("expected $(length(destination)) batched params columns, got $(size(params, 2))"))
+    copyto!(destination, view(params, parameter_slot, :))
+    return destination
+end
+
+function _batched_choice_numeric_values!(
+    destination::AbstractVector{Float64},
+    ::Nothing,
+    params::AbstractMatrix,
+    constraints::ChoiceMap,
+    address_parts::Tuple,
+)
+    size(params, 2) == length(destination) ||
+        throw(DimensionMismatch("expected $(length(destination)) batched params columns, got $(size(params, 2))"))
+    for batch_index in eachindex(destination)
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, constrained_value = _choice_tryget_normalized(constraints, address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        destination[batch_index] = _batched_backend_observed_value(constrained_value)
+    end
+    return destination
+end
+
+function _batched_choice_numeric_values!(
+    destination::AbstractVector{Float64},
+    ::Nothing,
+    params::AbstractMatrix,
+    constraints::AbstractVector,
+    address_parts::Tuple,
+)
+    size(params, 2) == length(destination) ||
+        throw(DimensionMismatch("expected $(length(destination)) batched params columns, got $(size(params, 2))"))
+    length(constraints) == length(destination) ||
+        throw(DimensionMismatch("expected $(length(destination)) batched constraints, got $(length(constraints))"))
+    for batch_index in eachindex(destination, constraints)
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        destination[batch_index] = _batched_backend_observed_value(constrained_value)
+    end
+    return destination
+end
+
 _score_backend_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
 _score_backend_steps!(totals::AbstractVector, ::Tuple{}, env::BatchedPlanEnvironment, params::AbstractMatrix, constraints) = totals
 
@@ -1597,15 +1648,15 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
+    choice_values = env.observed_values
     mu_values = _batched_numeric_scratch!(env, 1)
     sigma_values = _batched_numeric_scratch!(env, 2)
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
     for batch_index in 1:env.batch_size
-        address = _concrete_batched_address(address_parts, batch_index)
-        constraint_map = _batched_constraint(constraints, batch_index)
-        value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
+        value = choice_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
@@ -1633,15 +1684,15 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
+    choice_values = env.observed_values
     mu_values = _batched_numeric_scratch!(env, 1)
     sigma_values = _batched_numeric_scratch!(env, 2)
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
     for batch_index in 1:env.batch_size
-        address = _concrete_batched_address(address_parts, batch_index)
-        constraint_map = _batched_constraint(constraints, batch_index)
-        value = _backend_choice_value(step.parameter_slot, params, constraint_map, address, batch_index)
+        value = choice_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
         totals[batch_index] += _backend_lognormal_logpdf(mu, sigma, value)

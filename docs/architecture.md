@@ -114,6 +114,9 @@ Current backend-lowering subset:
 - observed-loop fast paths now batch constraint lookup per synchronized address
   and reuse a shared observed-value buffer instead of re-querying each
   `ChoiceMap` inside the innermost scoring loop
+- `normal` and `lognormal` backend choice steps now preload their batched
+  choice values into a shared numeric buffer, so score evaluation no longer
+  performs value lookup inside the per-column scoring loop
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 
