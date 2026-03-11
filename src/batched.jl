@@ -1211,6 +1211,77 @@ function batched_logjoint_gradient_unconstrained!(
     return cache.gradient_buffer
 end
 
+function _batched_logjoint_unconstrained_from_gradient_cache!(
+    destination::AbstractVector,
+    cache::BatchedLogjointGradientCache,
+    params::AbstractMatrix,
+)
+    length(destination) == cache.batch_size ||
+        throw(DimensionMismatch("expected $(cache.batch_size) batched values, got $(length(destination))"))
+
+    if !isnothing(cache.backend_cache)
+        return _batched_logjoint_unconstrained_with_workspace!(
+            destination,
+            cache.model,
+            cache.backend_cache.workspace,
+            params,
+            cache.backend_cache.args,
+            cache.backend_cache.constraints,
+        )
+    end
+
+    if !isnothing(cache.flat_cache)
+        objective = cache.flat_cache.objective
+        return _batched_logjoint_unconstrained_with_workspace!(
+            destination,
+            cache.model,
+            objective.workspace,
+            params,
+            objective.args,
+            objective.constraints,
+        )
+    end
+
+    for batch_index in 1:cache.batch_size
+        column_cache = cache.column_caches[batch_index]
+        objective = column_cache.objective
+        destination[batch_index] = _logjoint_unconstrained_with_workspace!(
+            cache.model,
+            objective.workspace,
+            view(params, :, batch_index),
+            objective.args,
+            objective.constraints,
+        )
+    end
+    return destination
+end
+
+function _batched_logjoint_and_gradient_unconstrained!(
+    destination::AbstractVector,
+    cache::BatchedLogjointGradientCache,
+    params::AbstractMatrix,
+)
+    size(params, 1) == cache.parameter_count ||
+        throw(DimensionMismatch("expected $(cache.parameter_count) parameters, got $(size(params, 1))"))
+    size(params, 2) == cache.batch_size ||
+        throw(DimensionMismatch("expected $(cache.batch_size) batch elements, got $(size(params, 2))"))
+
+    if !isnothing(cache.backend_cache)
+        _batched_backend_logjoint_and_gradient_unconstrained!(
+            destination,
+            cache.gradient_buffer,
+            cache.model,
+            cache.backend_cache,
+            params,
+        )
+        return destination, cache.gradient_buffer
+    end
+
+    batched_logjoint_gradient_unconstrained!(cache, params)
+    _batched_logjoint_unconstrained_from_gradient_cache!(destination, cache, params)
+    return destination, cache.gradient_buffer
+end
+
 function batched_logjoint_gradient_unconstrained(
     cache::BatchedLogjointGradientCache,
     params::AbstractMatrix,

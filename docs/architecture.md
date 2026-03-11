@@ -104,6 +104,9 @@ Current backend-lowering subset:
 - batched HMC now keeps a sampler workspace for momentum, proposals,
   diagnostics, and constrained-position scratch so repeated sampling no longer
   rebuilds those buffers every iteration
+- batched HMC now also carries the current gradient state across accepted
+  proposals and uses a combined value+gradient path at the final leapfrog
+  position when the backend-plan-aware gradient evaluator is available
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

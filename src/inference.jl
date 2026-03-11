@@ -67,6 +67,8 @@ end
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
+    current_gradient::Matrix{Float64}
+    proposal_gradient::Matrix{Float64}
     momentum::Matrix{Float64}
     proposal_position::Matrix{Float64}
     proposal_momentum::Matrix{Float64}
@@ -99,6 +101,8 @@ function BatchedHMCWorkspace(
     return BatchedHMCWorkspace(
         BatchedLogjointWorkspace(model),
         BatchedLogjointGradientCache(model, position, batch_args, batch_constraints),
+        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
@@ -635,6 +639,7 @@ function _batched_leapfrog!(
     workspace::BatchedHMCWorkspace,
     model::TeaModel,
     position::Matrix{Float64},
+    current_gradient::Matrix{Float64},
     inverse_mass_matrix::Vector{Float64},
     args,
     constraints,
@@ -643,17 +648,22 @@ function _batched_leapfrog!(
 )
     q = workspace.proposal_position
     p = workspace.proposal_momentum
+    proposed_gradient = workspace.proposal_gradient
     valid = workspace.valid
     num_chains = size(q, 2)
     size(q) == size(position) ||
         throw(DimensionMismatch("expected proposal position workspace of size $(size(position)), got $(size(q))"))
     size(p) == size(position) ||
         throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
+    size(current_gradient) == size(position) ||
+        throw(DimensionMismatch("expected current gradient workspace of size $(size(position)), got $(size(current_gradient))"))
+    size(proposed_gradient) == size(position) ||
+        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(proposed_gradient))"))
 
     copyto!(q, position)
     copyto!(p, workspace.momentum)
     fill!(valid, true)
-    gradient = batched_logjoint_gradient_unconstrained!(workspace.gradient_cache, q)
+    gradient = current_gradient
 
     for chain_index in 1:num_chains
         if !all(isfinite, view(gradient, :, chain_index))
@@ -669,38 +679,39 @@ function _batched_leapfrog!(
             q[:, chain_index] .+= step_size .* (inverse_mass_matrix .* p[:, chain_index])
         end
 
-        gradient = batched_logjoint_gradient_unconstrained!(workspace.gradient_cache, q)
-        for chain_index in 1:num_chains
-            valid[chain_index] || continue
-            if !all(isfinite, view(gradient, :, chain_index))
-                valid[chain_index] = false
-            elseif leapfrog_step < num_leapfrog_steps
-                p[:, chain_index] .+= step_size .* gradient[:, chain_index]
+        if leapfrog_step < num_leapfrog_steps
+            gradient = batched_logjoint_gradient_unconstrained!(workspace.gradient_cache, q)
+            for chain_index in 1:num_chains
+                valid[chain_index] || continue
+                if !all(isfinite, view(gradient, :, chain_index))
+                    valid[chain_index] = false
+                else
+                    p[:, chain_index] .+= step_size .* gradient[:, chain_index]
+                end
+            end
+        else
+            proposed_logjoint, gradient = _batched_logjoint_and_gradient_unconstrained!(
+                workspace.proposed_logjoint,
+                workspace.gradient_cache,
+                q,
+            )
+            copyto!(proposed_gradient, gradient)
+            for chain_index in 1:num_chains
+                valid[chain_index] || continue
+                if !all(isfinite, view(proposed_gradient, :, chain_index)) || !isfinite(proposed_logjoint[chain_index])
+                    valid[chain_index] = false
+                end
             end
         end
     end
 
     for chain_index in 1:num_chains
         valid[chain_index] || continue
-        p[:, chain_index] .+= (step_size / 2) .* gradient[:, chain_index]
+        p[:, chain_index] .+= (step_size / 2) .* proposed_gradient[:, chain_index]
         p[:, chain_index] .*= -1
     end
 
-    proposed_logjoint = _batched_logjoint_unconstrained_with_workspace!(
-        workspace.proposed_logjoint,
-        model,
-        workspace.logjoint_workspace,
-        q,
-        args,
-        constraints,
-    )
-    for chain_index in 1:num_chains
-        if valid[chain_index] && !isfinite(proposed_logjoint[chain_index])
-            valid[chain_index] = false
-        end
-    end
-
-    return q, p, proposed_logjoint, valid
+    return q, p, workspace.proposed_logjoint, proposed_gradient, valid
 end
 
 function _leapfrog(
@@ -1227,16 +1238,16 @@ function batched_hmc(
     inverse_mass_matrix = ones(num_params)
     workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
     current_logjoint = Vector{Float64}(undef, num_chains)
-    _batched_logjoint_unconstrained_with_workspace!(
+    current_gradient = workspace.current_gradient
+    _batched_logjoint_and_gradient_unconstrained!(
         current_logjoint,
-        model,
-        workspace.logjoint_workspace,
+        workspace.gradient_cache,
         position,
-        batch_args,
-        batch_constraints,
     )
     all(isfinite, current_logjoint) ||
         throw(ArgumentError("initial batched HMC parameters produced a non-finite unconstrained logjoint"))
+    all(isfinite, current_gradient) ||
+        throw(ArgumentError("initial batched HMC parameters produced a non-finite unconstrained gradient"))
 
     unconstrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
     constrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
@@ -1253,10 +1264,11 @@ function batched_hmc(
     sample_index = 0
     for iteration in 1:total_iterations
         _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
-        proposal_position, proposal_momentum, proposed_logjoint, valid = _batched_leapfrog!(
+        proposal_position, proposal_momentum, proposed_logjoint, proposal_gradient, valid = _batched_leapfrog!(
             workspace,
             model,
             position,
+            current_gradient,
             inverse_mass_matrix,
             batch_args,
             batch_constraints,
@@ -1301,6 +1313,7 @@ function batched_hmc(
         for chain_index in 1:num_chains
             if valid[chain_index] && log(rand(rng)) < min(0.0, log_accept_ratio[chain_index])
                 copyto!(view(position, :, chain_index), view(proposal_position, :, chain_index))
+                copyto!(view(current_gradient, :, chain_index), view(proposal_gradient, :, chain_index))
                 current_logjoint[chain_index] = proposed_logjoint[chain_index]
                 accepted_step[chain_index] = true
             end

@@ -117,6 +117,12 @@ The next lowering layer is now explicit:
   fully unsupported models still fall back to the older column-wise cache
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
+- batched HMC now also keeps the current unconstrained gradient for each chain
+  and updates it from accepted proposals, so the next leapfrog does not need to
+  recompute the initial gradient from scratch
+- batched HMC now consumes a combined value+gradient internal path, so the
+  backend-plan-aware gradient subset can produce the final leapfrog gradient and
+  proposed `logjoint` in one evaluator call
 - backend numeric expressions for supported models now evaluate batch-wide into
   reusable scratch buffers instead of recursing separately for each column
 - backend index expressions and dynamic address parts now use reusable integer

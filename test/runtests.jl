@@ -745,6 +745,15 @@ using UncertainTea
     @test !isnothing(positive_batch_gradient_cache.backend_cache)
     @test isnothing(positive_batch_gradient_cache.flat_cache)
     @test isempty(positive_batch_gradient_cache.column_caches)
+    gaussian_combined_values = fill(-1.0, 3)
+    gaussian_combined_gradient = UncertainTea._batched_logjoint_and_gradient_unconstrained!(
+        gaussian_combined_values,
+        gaussian_batch_gradient_cache,
+        gaussian_batch_params,
+    )[2]
+    @test gaussian_combined_values ≈ gaussian_batch_logjoint atol=1e-8
+    @test gaussian_combined_gradient === gaussian_batch_gradient_cache.gradient_buffer
+    @test gaussian_combined_gradient ≈ gaussian_batch_gradient atol=1e-8
     @test abs_scale_gradient ≈ hcat([
         logjoint_gradient_unconstrained(abs_scale_model, abs_scale_batch_params[:, index], (), abs_scale_batch_constraints[index]) for
         index in 1:3
@@ -752,6 +761,18 @@ using UncertainTea
     @test isnothing(abs_scale_gradient_cache.backend_cache)
     @test !isnothing(abs_scale_gradient_cache.flat_cache)
     @test isempty(abs_scale_gradient_cache.column_caches)
+    abs_scale_combined_values = fill(-1.0, 3)
+    abs_scale_combined_gradient = UncertainTea._batched_logjoint_and_gradient_unconstrained!(
+        abs_scale_combined_values,
+        abs_scale_gradient_cache,
+        abs_scale_batch_params,
+    )[2]
+    @test abs_scale_combined_values ≈ [
+        logjoint_unconstrained(abs_scale_model, abs_scale_batch_params[:, index], (), abs_scale_batch_constraints[index]) for
+        index in 1:3
+    ] atol=1e-8
+    @test abs_scale_combined_gradient === abs_scale_gradient_cache.gradient_buffer
+    @test abs_scale_combined_gradient ≈ abs_scale_gradient atol=1e-8
     positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step)
     positive_workspace_values = UncertainTea._logjoint_unconstrained_batched_backend!(
         observed_positive_step,
@@ -813,10 +834,17 @@ using UncertainTea
         MersenneTwister(91),
         gaussian_hmc_workspace.sqrt_inverse_mass_matrix,
     )
+    gaussian_hmc_current_logjoint = Vector{Float64}(undef, 3)
+    UncertainTea._batched_logjoint_and_gradient_unconstrained!(
+        gaussian_hmc_current_logjoint,
+        gaussian_hmc_workspace.gradient_cache,
+        gaussian_batch_params,
+    )
     gaussian_hmc_proposal = UncertainTea._batched_leapfrog!(
         gaussian_hmc_workspace,
         gaussian_mean,
         gaussian_batch_params,
+        gaussian_hmc_workspace.current_gradient,
         [1.0],
         (),
         gaussian_batch_constraints,
@@ -826,7 +854,8 @@ using UncertainTea
     @test gaussian_hmc_proposal[1] === gaussian_hmc_workspace.proposal_position
     @test gaussian_hmc_proposal[2] === gaussian_hmc_workspace.proposal_momentum
     @test gaussian_hmc_proposal[3] === gaussian_hmc_workspace.proposed_logjoint
-    @test gaussian_hmc_proposal[4] === gaussian_hmc_workspace.valid
+    @test gaussian_hmc_proposal[4] === gaussian_hmc_workspace.proposal_gradient
+    @test gaussian_hmc_proposal[5] === gaussian_hmc_workspace.valid
     UncertainTea._sample_batched_momentum!(
         gaussian_hmc_workspace.momentum,
         MersenneTwister(92),
@@ -836,6 +865,7 @@ using UncertainTea
         gaussian_hmc_workspace,
         gaussian_mean,
         gaussian_batch_params,
+        gaussian_hmc_workspace.current_gradient,
         [1.0],
         (),
         gaussian_batch_constraints,
@@ -846,6 +876,7 @@ using UncertainTea
     @test gaussian_hmc_proposal_replay[2] === gaussian_hmc_proposal[2]
     @test gaussian_hmc_proposal_replay[3] === gaussian_hmc_proposal[3]
     @test gaussian_hmc_proposal_replay[4] === gaussian_hmc_proposal[4]
+    @test gaussian_hmc_proposal_replay[5] === gaussian_hmc_proposal[5]
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)
