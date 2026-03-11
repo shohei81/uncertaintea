@@ -123,9 +123,8 @@ Current backend-lowering subset:
   interactive inspection
 - batched NUTS now exists as a CPU reference state machine with `param x chain`
   storage and pooled warmup adaptation; the first trajectory doubling step now
-  uses a batched leapfrog-and-selection step, and the associated frontier state
-  already lives in batched workspace storage, with chain-local continuation now
-  seeded from workspace views rather than copied frontier vectors; the
+  uses a batched leapfrog-and-selection step, and its result now initializes
+  each chain's reusable continuation state directly; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

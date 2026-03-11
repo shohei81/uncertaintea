@@ -57,10 +57,9 @@ The current CPU NUTS path is intentionally narrow:
 - a batched reference wrapper with `param x chain` state and pooled warmup
 - a batched first doubling step, so the first narrowing step away from a
   chain-local implementation is already in place even for deeper trees
-- batched frontier storage for the first doubling step, so left/right states
-  and accumulated proposal weights do not need per-chain objects at that point
-- view-backed seed states for the remaining chain-local continuation, so the
-  frontier handoff no longer copies those vectors up front
+- direct initialization of reusable continuation-state objects from that first
+  doubling step, so the frontier handoff no longer needs a separate staged
+  frontier representation
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

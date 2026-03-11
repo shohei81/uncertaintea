@@ -98,10 +98,8 @@ for dynamic trajectory building:
 - warmup uses the same pooled diagonal-mass adaptation as `batched_hmc`
 - the first trajectory doubling step now executes as a true batched leapfrog
   and batched multinomial selection step over the whole chain matrix
-- the left/right frontier, proposal state, and tree-weight accumulators for
-  that first doubling step now also live in batched workspace storage
-- chain-local continuation now seeds from views into that batched frontier
-  storage instead of copying those frontier vectors into new seed states
+- that first doubling step now initializes each chain's reusable continuation
+  state directly, instead of staging separate batched frontier arrays first
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
