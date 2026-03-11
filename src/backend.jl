@@ -14,6 +14,7 @@ const GPU_BACKEND_SUPPORTED_PRIMITIVES = Symbol[
     :abs,
     :min,
     :max,
+    :clamp,
 ]
 
 const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[:normal, :lognormal, :bernoulli]
@@ -804,6 +805,9 @@ function _backend_primitive(op::Symbol, args...)
         return min(args...)
     elseif op === :max
         return max(args...)
+    elseif op === :clamp
+        length(args) == 3 || throw(ArgumentError("`clamp` expects exactly 3 arguments"))
+        return clamp(args...)
     end
 
     throw(ArgumentError("unsupported backend primitive `$op`"))
@@ -969,6 +973,29 @@ function _apply_backend_numeric_binary!(
     return destination
 end
 
+function _apply_backend_numeric_ternary!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    op::Symbol,
+    middle::AbstractVector,
+    rhs::AbstractVector,
+)
+    length(destination) == length(middle) == length(rhs) ||
+        throw(
+            DimensionMismatch(
+                "expected backend numeric vectors of matching length, got $(length(destination)), $(length(middle)), and $(length(rhs))",
+            ),
+        )
+    for batch_index in eachindex(destination, middle, rhs)
+        destination[batch_index] = _require_numeric_value(
+            env,
+            _backend_primitive(op, destination[batch_index], middle[batch_index], rhs[batch_index]),
+            "batched backend numeric primitive",
+        )
+    end
+    return destination
+end
+
 function _eval_backend_numeric_expr!(
     destination::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -1012,6 +1039,14 @@ function _eval_backend_numeric_expr!(
     _eval_backend_numeric_expr!(destination, env, first(expr.arguments), depth + 1)
     if length(expr.arguments) == 1
         return _apply_backend_numeric_unary!(destination, env, expr.op)
+    elseif expr.op === :clamp
+        length(expr.arguments) == 3 ||
+            _backend_numeric_error(env, "batched backend numeric `clamp` expects exactly 3 arguments")
+        middle = _batched_numeric_scratch!(env, depth)
+        rhs = _batched_numeric_scratch!(env, depth + 1)
+        _eval_backend_numeric_expr!(middle, env, expr.arguments[2], depth + 2)
+        _eval_backend_numeric_expr!(rhs, env, expr.arguments[3], depth + 2)
+        return _apply_backend_numeric_ternary!(destination, env, expr.op, middle, rhs)
     end
 
     temp = _batched_numeric_scratch!(env, depth)

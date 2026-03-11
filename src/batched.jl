@@ -449,7 +449,8 @@ function _batched_logjoint_unconstrained_with_workspace!(
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, args, constraints)
 end
 
-const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES = Set([:+, :-, :*, :/, :^, :%, :exp, :log, :log1p, :sqrt, :abs, :min, :max])
+const BACKEND_GRADIENT_SUPPORTED_PRIMITIVES =
+    Set([:+, :-, :*, :/, :^, :%, :exp, :log, :log1p, :sqrt, :abs, :min, :max, :clamp])
 
 _backend_gradient_supported_expr(::BackendLiteralExpr) = true
 _backend_gradient_supported_expr(::BackendSlotExpr) = true
@@ -466,6 +467,8 @@ function _backend_gradient_supported_expr(expr::BackendPrimitiveExpr)
         length(expr.arguments) == 2 || return false
         return _backend_gradient_supported_expr(expr.arguments[1]) &&
                _backend_gradient_supported_constant_expr(expr.arguments[2])
+    elseif expr.op === :clamp
+        length(expr.arguments) == 3 || return false
     end
     expr.op in BACKEND_GRADIENT_SUPPORTED_PRIMITIVES || return false
     return all(_backend_gradient_supported_expr, expr.arguments)
@@ -723,6 +726,62 @@ function _apply_backend_numeric_gradient_binary!(
     return values, gradients
 end
 
+function _apply_backend_numeric_gradient_ternary!(
+    values::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    env::BatchedPlanEnvironment{Float64},
+    op::Symbol,
+    middle_values::AbstractVector{Float64},
+    middle_gradients::AbstractMatrix{Float64},
+    rhs_values::AbstractVector{Float64},
+    rhs_gradients::AbstractMatrix{Float64},
+)
+    if op === :clamp
+        for batch_index in eachindex(values, middle_values, rhs_values)
+            lhs_value = values[batch_index]
+            middle_value = middle_values[batch_index]
+            rhs_value = rhs_values[batch_index]
+            if lhs_value < middle_value
+                values[batch_index] = middle_value
+                for parameter_index in axes(gradients, 1)
+                    gradients[parameter_index, batch_index] = middle_gradients[parameter_index, batch_index]
+                end
+            elseif lhs_value > rhs_value
+                values[batch_index] = rhs_value
+                for parameter_index in axes(gradients, 1)
+                    gradients[parameter_index, batch_index] = rhs_gradients[parameter_index, batch_index]
+                end
+            elseif lhs_value == middle_value && lhs_value == rhs_value
+                values[batch_index] = lhs_value
+                for parameter_index in axes(gradients, 1)
+                    gradients[parameter_index, batch_index] = (
+                        gradients[parameter_index, batch_index] +
+                        middle_gradients[parameter_index, batch_index] +
+                        rhs_gradients[parameter_index, batch_index]
+                    ) / 3
+                end
+            elseif lhs_value == middle_value
+                values[batch_index] = lhs_value
+                for parameter_index in axes(gradients, 1)
+                    gradients[parameter_index, batch_index] =
+                        0.5 * (gradients[parameter_index, batch_index] + middle_gradients[parameter_index, batch_index])
+                end
+            elseif lhs_value == rhs_value
+                values[batch_index] = lhs_value
+                for parameter_index in axes(gradients, 1)
+                    gradients[parameter_index, batch_index] =
+                        0.5 * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
+                end
+            else
+                values[batch_index] = lhs_value
+            end
+        end
+    else
+        _backend_numeric_error(env, "batched backend gradient does not support ternary primitive `$(op)`")
+    end
+    return values, gradients
+end
+
 function _eval_backend_numeric_expr_and_gradient!(
     values::AbstractVector{Float64},
     gradients::AbstractMatrix{Float64},
@@ -774,6 +833,25 @@ function _eval_backend_numeric_expr_and_gradient!(
     _eval_backend_numeric_expr_and_gradient!(values, gradients, cache, env, first(expr.arguments), depth + 1)
     if length(expr.arguments) == 1
         return _apply_backend_numeric_gradient_unary!(values, gradients, env, expr.op)
+    elseif expr.op === :clamp
+        length(expr.arguments) == 3 ||
+            _backend_numeric_error(env, "batched backend gradient `clamp` expects exactly 3 arguments")
+        middle_values = _batched_numeric_scratch!(env, depth)
+        middle_gradients = _batched_backend_gradient_scratch!(cache, depth)
+        rhs_values = _batched_numeric_scratch!(env, depth + 1)
+        rhs_gradients = _batched_backend_gradient_scratch!(cache, depth + 1)
+        _eval_backend_numeric_expr_and_gradient!(middle_values, middle_gradients, cache, env, expr.arguments[2], depth + 2)
+        _eval_backend_numeric_expr_and_gradient!(rhs_values, rhs_gradients, cache, env, expr.arguments[3], depth + 2)
+        return _apply_backend_numeric_gradient_ternary!(
+            values,
+            gradients,
+            env,
+            expr.op,
+            middle_values,
+            middle_gradients,
+            rhs_values,
+            rhs_gradients,
+        )
     end
 
     temp_values = _batched_numeric_scratch!(env, depth)

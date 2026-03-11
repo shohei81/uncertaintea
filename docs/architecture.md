@@ -79,7 +79,7 @@ Current backend-lowering subset:
 
 - distribution families: `normal`, `lognormal`, `bernoulli`
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
-  `log1p`, `sqrt`, `abs`, `min`, `max`
+  `log1p`, `sqrt`, `abs`, `min`, `max`, `clamp`
 - batched backend execution assumes synchronized loop iterables across the batch
 - backend environments separate numeric slots, index slots, and generic slots
 - backend score evaluation uses direct family kernels for supported distributions
@@ -102,8 +102,8 @@ Current backend-lowering subset:
   `ForwardDiff` objective or the older column-wise cache when that subset does
   not apply
 - the differentiable backend primitive subset now includes `abs`, `min`,
-  `max`, `%` with a literal divisor, and `^` with a literal exponent in
-  addition to the earlier arithmetic and log/exp primitives
+  `max`, `clamp`, `%` with a literal divisor, and `^` with a literal exponent
+  in addition to the earlier arithmetic and log/exp primitives
 - batched HMC now keeps a sampler workspace for momentum, proposals,
   diagnostics, and constrained-position scratch so repeated sampling no longer
   rebuilds those buffers every iteration
