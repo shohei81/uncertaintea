@@ -73,6 +73,8 @@ single-chain HMC, but it now supports the same basic warmup structure:
 - divergence-aware pooled variance updates when adapting the shared mass matrix
 - winsorized online variance updates so transient outlier positions do not
   dominate the shared diagonal mass estimate
+- the winsorization threshold now starts loose within each warmup window and
+  tightens toward the target clip scale as more pooled samples arrive
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.

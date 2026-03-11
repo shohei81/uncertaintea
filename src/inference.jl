@@ -60,7 +60,9 @@ mutable struct RunningVarianceState
 end
 
 const _RUNNING_VARIANCE_CLIP_START = 4
-const _RUNNING_VARIANCE_CLIP_SCALE = 5.0
+const _RUNNING_VARIANCE_CLIP_SCALE_EARLY = 8.0
+const _RUNNING_VARIANCE_CLIP_SCALE_LATE = 5.0
+const _RUNNING_VARIANCE_CLIP_TAPER = 16
 const _RUNNING_VARIANCE_FLOOR = 1e-3
 
 struct WarmupSchedule
@@ -830,6 +832,13 @@ function _running_variance_state(num_params::Int)
     return RunningVarianceState(zeros(num_params), zeros(num_params), zeros(num_params), 0)
 end
 
+function _running_variance_clip_scale(count::Int)
+    count <= _RUNNING_VARIANCE_CLIP_START && return _RUNNING_VARIANCE_CLIP_SCALE_EARLY
+    progress = min(count - _RUNNING_VARIANCE_CLIP_START, _RUNNING_VARIANCE_CLIP_TAPER) / _RUNNING_VARIANCE_CLIP_TAPER
+    return _RUNNING_VARIANCE_CLIP_SCALE_EARLY +
+        (_RUNNING_VARIANCE_CLIP_SCALE_LATE - _RUNNING_VARIANCE_CLIP_SCALE_EARLY) * progress
+end
+
 function _running_variance_sample!(
     state::RunningVarianceState,
     sample::AbstractVector,
@@ -840,9 +849,10 @@ function _running_variance_sample!(
         return clipped_sample
     end
 
+    clip_scale = _running_variance_clip_scale(state.count)
     @inbounds for index in eachindex(clipped_sample, sample, state.mean, state.m2)
         variance = state.m2[index] / max(state.count - 1, 1)
-        bound = _RUNNING_VARIANCE_CLIP_SCALE * sqrt(max(variance, _RUNNING_VARIANCE_FLOOR))
+        bound = clip_scale * sqrt(max(variance, _RUNNING_VARIANCE_FLOOR))
         delta = sample[index] - state.mean[index]
         clipped_sample[index] = state.mean[index] + clamp(delta, -bound, bound)
     end

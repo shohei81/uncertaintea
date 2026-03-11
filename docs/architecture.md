@@ -114,7 +114,8 @@ Current backend-lowering subset:
   dual-averaging step-size adaptation, optional reasonable-step-size search,
   divergence-aware acceptance aggregation, and windowed shared diagonal mass
   adaptation from pooled non-divergent chain positions using winsorized online
-  variance updates
+  variance updates whose clip threshold anneals from a loose early-window value
+  to a tighter steady-state value
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
