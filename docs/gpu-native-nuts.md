@@ -64,6 +64,8 @@ The current CPU NUTS path is intentionally narrow:
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local
+- scratch-backed subtree frontier/proposal states, so subtree growth no longer
+  clones those state vectors at every intermediate integration step
 - iterative subtree doubling
 - multinomial proposal selection
 - dual-averaging step-size adaptation

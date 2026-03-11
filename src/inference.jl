@@ -135,6 +135,9 @@ end
 mutable struct NUTSSubtreeWorkspace
     current::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
     next::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+    left::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+    right::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+    proposal::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
 end
 
 mutable struct BatchedHMCWorkspace
@@ -1328,7 +1331,7 @@ end
 
 function NUTSSubtreeWorkspace(num_params::Int)
     state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
-    return NUTSSubtreeWorkspace(state(), state())
+    return NUTSSubtreeWorkspace(state(), state(), state(), state(), state())
 end
 
 function _logaddexp(x::Float64, y::Float64)
@@ -1393,12 +1396,15 @@ function _build_nuts_subtree(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    left = _copy_nuts_state(start_state)
-    right = _copy_nuts_state(start_state)
-    proposal = _copy_nuts_state(start_state)
     current = subtree_workspace.current
     next = subtree_workspace.next
+    left = subtree_workspace.left
+    right = subtree_workspace.right
+    proposal = subtree_workspace.proposal
     _copyto_nuts_state!(current, start_state)
+    _copyto_nuts_state!(left, start_state)
+    _copyto_nuts_state!(right, start_state)
+    _copyto_nuts_state!(proposal, start_state)
     log_weight = -Inf
     accept_stat_sum = 0.0
     accept_stat_count = 0
@@ -1423,9 +1429,9 @@ function _build_nuts_subtree(
         current, next = next, current
         integration_steps += 1
         if direction < 0
-            left = _copy_nuts_state(current)
+            _copyto_nuts_state!(left, current)
         else
-            right = _copy_nuts_state(current)
+            _copyto_nuts_state!(right, current)
         end
 
         proposed_hamiltonian = _hamiltonian(current.logjoint, current.momentum, inverse_mass_matrix)
@@ -1440,7 +1446,7 @@ function _build_nuts_subtree(
         candidate_log_weight = -proposed_hamiltonian
         combined_log_weight = _logaddexp(log_weight, candidate_log_weight)
         if !isfinite(log_weight) || log(rand(rng)) < candidate_log_weight - combined_log_weight
-            proposal = _copy_nuts_state(current)
+            _copyto_nuts_state!(proposal, current)
         end
         log_weight = combined_log_weight
 
@@ -1521,7 +1527,7 @@ function _continue_nuts_proposal(
         if isfinite(subtree.log_weight)
             combined_log_weight = _logaddexp(log_weight, subtree.log_weight)
             if log(rand(rng)) < subtree.log_weight - combined_log_weight
-                proposal = _copy_nuts_state(subtree.proposal)
+                _copyto_nuts_state!(proposal, subtree.proposal)
             end
             log_weight = combined_log_weight
         end

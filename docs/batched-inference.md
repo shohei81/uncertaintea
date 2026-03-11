@@ -105,6 +105,8 @@ for dynamic trajectory building:
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
+- the chain-local subtree frontier and proposal states now reuse that same
+  subtree workspace instead of allocating fresh copies on each integration step
 - deeper tree growth is still chain-local and iterative after that first
   batched doubling step
 - this is a staging layer toward a future backend-lowered NUTS state machine,
