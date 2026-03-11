@@ -151,6 +151,7 @@ mutable struct BatchedNUTSWorkspace
     gradient_cache::BatchedLogjointGradientCache
     current_gradient::Matrix{Float64}
     proposal_position::Matrix{Float64}
+    proposal_momentum::Matrix{Float64}
     proposal_gradient::Matrix{Float64}
     proposed_logjoint::Vector{Float64}
     proposed_energy::Vector{Float64}
@@ -158,6 +159,8 @@ mutable struct BatchedNUTSWorkspace
     accept_prob::Vector{Float64}
     accepted_step::BitVector
     divergent_step::BitVector
+    step_valid::BitVector
+    step_direction::Vector{Int}
     tree_depths::Vector{Int}
     integration_steps::Vector{Int}
     mass_adaptation_weights::Vector{Float64}
@@ -225,12 +228,15 @@ function BatchedNUTSWorkspace(
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, num_params, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         falses(num_chains),
         falses(num_chains),
+        falses(num_chains),
+        zeros(Int, num_chains),
         zeros(Int, num_chains),
         zeros(Int, num_chains),
         Vector{Float64}(undef, num_chains),
@@ -1492,6 +1498,70 @@ function _batched_nuts_proposals!(
     rng::AbstractRNG,
 )
     num_chains = size(position, 2)
+    if max_tree_depth == 1
+        _sample_batched_momentum!(workspace.proposal_momentum, rng, sqrt.(Float64.(inverse_mass_matrix)))
+        _batched_hamiltonian!(workspace.energy_error, current_logjoint, workspace.proposal_momentum, inverse_mass_matrix)
+        for chain_index in 1:num_chains
+            workspace.step_direction[chain_index] = rand(rng, Bool) ? 1 : -1
+            workspace.accepted_step[chain_index] = true
+        end
+        _batched_nuts_leapfrog_step!(
+            workspace,
+            model,
+            position,
+            workspace.proposal_momentum,
+            current_gradient,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            step_size,
+            workspace.step_direction,
+            workspace.accepted_step,
+        )
+        _batched_hamiltonian!(workspace.proposed_energy, workspace.proposed_logjoint, workspace.proposal_momentum, inverse_mass_matrix)
+        for chain_index in 1:num_chains
+            current_hamiltonian = workspace.energy_error[chain_index]
+            if !workspace.step_valid[chain_index]
+                copyto!(view(workspace.proposal_position, :, chain_index), view(position, :, chain_index))
+                copyto!(view(workspace.proposal_gradient, :, chain_index), view(current_gradient, :, chain_index))
+                workspace.proposed_logjoint[chain_index] = current_logjoint[chain_index]
+                workspace.proposed_energy[chain_index] = current_hamiltonian
+                workspace.energy_error[chain_index] = Inf
+                workspace.accept_prob[chain_index] = 0.0
+                workspace.accepted_step[chain_index] = false
+                workspace.divergent_step[chain_index] = true
+                workspace.tree_depths[chain_index] = 1
+                workspace.integration_steps[chain_index] = 0
+                continue
+            end
+
+            proposed_hamiltonian = workspace.proposed_energy[chain_index]
+            delta_energy = proposed_hamiltonian - current_hamiltonian
+            accept_stat = min(1.0, exp(min(0.0, current_hamiltonian - proposed_hamiltonian)))
+            divergent_step = !isfinite(delta_energy) || delta_energy > max_delta_energy
+            selected_proposal = false
+            if !divergent_step
+                combined_log_weight = _logaddexp(-current_hamiltonian, -proposed_hamiltonian)
+                selected_proposal = log(rand(rng)) < (-proposed_hamiltonian - combined_log_weight)
+            end
+            if !selected_proposal
+                copyto!(view(workspace.proposal_position, :, chain_index), view(position, :, chain_index))
+                copyto!(view(workspace.proposal_gradient, :, chain_index), view(current_gradient, :, chain_index))
+                workspace.proposed_logjoint[chain_index] = current_logjoint[chain_index]
+                workspace.proposed_energy[chain_index] = current_hamiltonian
+                workspace.energy_error[chain_index] = selected_proposal ? delta_energy : 0.0
+            else
+                workspace.energy_error[chain_index] = delta_energy
+            end
+            workspace.accept_prob[chain_index] = accept_stat
+            workspace.accepted_step[chain_index] = selected_proposal
+            workspace.divergent_step[chain_index] = divergent_step
+            workspace.tree_depths[chain_index] = 1
+            workspace.integration_steps[chain_index] = divergent_step ? 0 : 1
+        end
+        return workspace
+    end
+
     for chain_index in 1:num_chains
         proposal, accept_stat, tree_depth, integration_steps, proposed_energy, energy_error, divergent_step, moved_step =
             _nuts_proposal(
@@ -1520,6 +1590,67 @@ function _batched_nuts_proposals!(
         workspace.integration_steps[chain_index] = integration_steps
     end
     return workspace
+end
+
+function _batched_nuts_leapfrog_step!(
+    workspace::BatchedNUTSWorkspace,
+    model::TeaModel,
+    position::AbstractMatrix{Float64},
+    momentum::AbstractMatrix{Float64},
+    gradient::AbstractMatrix{Float64},
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    direction::AbstractVector{Int},
+    active::AbstractVector{Bool},
+)
+    q = workspace.proposal_position
+    p = workspace.proposal_momentum
+    proposed_gradient = workspace.proposal_gradient
+    valid = workspace.step_valid
+    num_chains = size(position, 2)
+    size(position) == size(momentum) == size(gradient) ||
+        throw(DimensionMismatch("batched NUTS leapfrog requires matching position, momentum, and gradient matrices"))
+    size(q) == size(position) ||
+        throw(DimensionMismatch("expected proposal position workspace of size $(size(position)), got $(size(q))"))
+    size(p) == size(position) ||
+        throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
+    size(proposed_gradient) == size(position) ||
+        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(proposed_gradient))"))
+    length(direction) == num_chains ||
+        throw(DimensionMismatch("expected $num_chains batched NUTS directions, got $(length(direction))"))
+    length(active) == num_chains ||
+        throw(DimensionMismatch("expected $num_chains batched NUTS activity flags, got $(length(active))"))
+
+    copyto!(q, position)
+    copyto!(p, momentum)
+    fill!(valid, false)
+    for chain_index in 1:num_chains
+        active[chain_index] || continue
+        valid[chain_index] = true
+        signed_step = direction[chain_index] * step_size
+        p[:, chain_index] .+= (signed_step / 2) .* gradient[:, chain_index]
+        q[:, chain_index] .+= signed_step .* (inverse_mass_matrix .* p[:, chain_index])
+    end
+
+    proposed_logjoint, new_gradient = _batched_logjoint_and_gradient_unconstrained!(
+        workspace.proposed_logjoint,
+        workspace.gradient_cache,
+        q,
+    )
+    copyto!(proposed_gradient, new_gradient)
+    for chain_index in 1:num_chains
+        valid[chain_index] || continue
+        if !isfinite(proposed_logjoint[chain_index]) || !all(isfinite, view(proposed_gradient, :, chain_index))
+            valid[chain_index] = false
+        else
+            signed_step = direction[chain_index] * step_size
+            p[:, chain_index] .+= (signed_step / 2) .* proposed_gradient[:, chain_index]
+        end
+    end
+
+    return q, p, workspace.proposed_logjoint, proposed_gradient, valid
 end
 
 function _dual_averaging_state(step_size::Float64, target_accept::Float64)

@@ -96,6 +96,8 @@ for dynamic trajectory building:
 
 - state is stored in `param x chain` matrices
 - warmup uses the same pooled diagonal-mass adaptation as `batched_hmc`
+- the `max_tree_depth == 1` path now executes as a true batched leapfrog and
+  batched multinomial selection step over the whole chain matrix
 - tree growth is still chain-local and iterative
 - this is a staging layer toward a future backend-lowered NUTS state machine,
   not the final GPU implementation

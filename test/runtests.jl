@@ -1479,6 +1479,34 @@ using UncertainTea
         initial_params=gaussian_batch_params,
         rng=MersenneTwister(63),
     )
+    gaussian_batched_nuts_one_step_chain = batched_nuts(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=16,
+        num_warmup=0,
+        step_size=0.15,
+        max_tree_depth=1,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        initial_params=gaussian_batch_params,
+        rng=MersenneTwister(64),
+    )
+    gaussian_batched_nuts_one_step_chain_replay = batched_nuts(
+        gaussian_mean,
+        (),
+        gaussian_batch_constraints;
+        num_chains=3,
+        num_samples=16,
+        num_warmup=0,
+        step_size=0.15,
+        max_tree_depth=1,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        initial_params=gaussian_batch_params,
+        rng=MersenneTwister(64),
+    )
     gaussian_batched_mass_chain = batched_hmc(
         gaussian_mean,
         (),
@@ -1752,6 +1780,22 @@ using UncertainTea
     @test gaussian_batched_nuts_chain[1].unconstrained_samples[:, 1] ==
         gaussian_batched_nuts_chain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_batched_nuts_chain[1].tree_depths == gaussian_batched_nuts_chain_replay[1].tree_depths
+    @test nchains(gaussian_batched_nuts_one_step_chain) == 3
+    @test numsamples(gaussian_batched_nuts_one_step_chain) == 16
+    @test all(chain.max_tree_depth == 1 for chain in gaussian_batched_nuts_one_step_chain)
+    @test all(chain.step_size == 0.15 for chain in gaussian_batched_nuts_one_step_chain)
+    @test all(chain.mass_matrix == [1.0] for chain in gaussian_batched_nuts_one_step_chain)
+    @test all(isempty(massadaptationwindows(chain)) for chain in gaussian_batched_nuts_one_step_chain)
+    @test all(all(depth == 1 for depth in treedepths(chain)) for chain in gaussian_batched_nuts_one_step_chain)
+    @test all(all(0 <= steps <= 1 for steps in integrationsteps(chain)) for chain in gaussian_batched_nuts_one_step_chain)
+    @test 0.0 <= acceptancerate(gaussian_batched_nuts_one_step_chain) <= 1.0
+    @test 0.0 <= divergencerate(gaussian_batched_nuts_one_step_chain) <= 1.0
+    @test gaussian_batched_nuts_one_step_chain[1].unconstrained_samples ==
+        gaussian_batched_nuts_one_step_chain_replay[1].unconstrained_samples
+    @test gaussian_batched_nuts_one_step_chain[1].accepted ==
+        gaussian_batched_nuts_one_step_chain_replay[1].accepted
+    @test gaussian_batched_nuts_one_step_chain[1].tree_depths ==
+        gaussian_batched_nuts_one_step_chain_replay[1].tree_depths
     @test nchains(iid_batched_chain) == 2
     @test numsamples(iid_batched_chain) == 24
     @test iid_batched_chain.args == iid_batch_args

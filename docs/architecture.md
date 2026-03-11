@@ -122,8 +122,10 @@ Current backend-lowering subset:
   the high-level `summarize` output, including a richer plain-text display for
   interactive inspection
 - batched NUTS now exists as a CPU reference state machine with `param x chain`
-  storage and pooled warmup adaptation, but tree growth is still performed
-  chain-by-chain rather than through a backend-lowered batched tree kernel
+  storage and pooled warmup adaptation; the depth-1 trajectory case already
+  uses a batched leapfrog-and-selection step, but deeper tree growth is still
+  performed chain-by-chain rather than through a backend-lowered batched tree
+  kernel
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
