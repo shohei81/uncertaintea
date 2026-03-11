@@ -112,6 +112,9 @@ for dynamic trajectory building:
   deeper chain-local continuation reuses batch-owned storage for
   `left/right/proposal` state and tree bookkeeping instead of per-chain owned
   vectors and scalars
+- the remaining per-chain subtree builder scratch is now also view-backed by
+  batched workspace matrices, so deeper tree expansion no longer owns separate
+  vector storage per chain even though the control flow is still chain-local
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

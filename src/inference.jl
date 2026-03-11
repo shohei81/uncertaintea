@@ -132,12 +132,12 @@ mutable struct NUTSState{P<:AbstractVector{Float64}, M<:AbstractVector{Float64},
     gradient::G
 end
 
-mutable struct NUTSSubtreeWorkspace
-    current::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
-    next::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
-    left::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
-    right::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
-    proposal::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+mutable struct NUTSSubtreeWorkspace{C<:NUTSState,N<:NUTSState,L<:NUTSState,R<:NUTSState,P<:NUTSState}
+    current::C
+    next::N
+    left::L
+    right::R
+    proposal::P
 end
 
 mutable struct NUTSContinuationState{L<:NUTSState,R<:NUTSState,P<:NUTSState}
@@ -178,13 +178,28 @@ end
 mutable struct BatchedNUTSWorkspace
     gradient_cache::BatchedLogjointGradientCache
     current_gradient::Matrix{Float64}
+    tree_current_position::Matrix{Float64}
+    tree_next_position::Matrix{Float64}
+    tree_left_position::Matrix{Float64}
+    tree_right_position::Matrix{Float64}
+    tree_proposal_position::Matrix{Float64}
     left_position::Matrix{Float64}
     proposal_position::Matrix{Float64}
     right_position::Matrix{Float64}
+    tree_current_momentum::Matrix{Float64}
+    tree_next_momentum::Matrix{Float64}
+    tree_left_momentum::Matrix{Float64}
+    tree_right_momentum::Matrix{Float64}
+    tree_proposal_momentum::Matrix{Float64}
     left_momentum::Matrix{Float64}
     current_momentum::Matrix{Float64}
     proposal_momentum::Matrix{Float64}
     right_momentum::Matrix{Float64}
+    tree_current_gradient::Matrix{Float64}
+    tree_next_gradient::Matrix{Float64}
+    tree_left_gradient::Matrix{Float64}
+    tree_right_gradient::Matrix{Float64}
+    tree_proposal_gradient::Matrix{Float64}
     left_gradient::Matrix{Float64}
     proposal_gradient::Matrix{Float64}
     right_gradient::Matrix{Float64}
@@ -265,7 +280,30 @@ function BatchedNUTSWorkspace(
             _batched_constraints(batch_constraints, chain_index),
         )
     end
-    column_tree_workspaces = [NUTSSubtreeWorkspace(num_params) for _ in 1:num_chains]
+    tree_current_position = Matrix{Float64}(undef, num_params, num_chains)
+    tree_next_position = Matrix{Float64}(undef, num_params, num_chains)
+    tree_left_position = Matrix{Float64}(undef, num_params, num_chains)
+    tree_right_position = Matrix{Float64}(undef, num_params, num_chains)
+    tree_proposal_position = Matrix{Float64}(undef, num_params, num_chains)
+    tree_current_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    tree_next_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    tree_left_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    tree_right_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    tree_proposal_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    tree_current_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    tree_next_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    tree_left_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    tree_right_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    tree_proposal_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    column_tree_workspaces = [
+        NUTSSubtreeWorkspace(
+            NUTSState(view(tree_current_position, :, chain_index), view(tree_current_momentum, :, chain_index), 0.0, view(tree_current_gradient, :, chain_index)),
+            NUTSState(view(tree_next_position, :, chain_index), view(tree_next_momentum, :, chain_index), 0.0, view(tree_next_gradient, :, chain_index)),
+            NUTSState(view(tree_left_position, :, chain_index), view(tree_left_momentum, :, chain_index), 0.0, view(tree_left_gradient, :, chain_index)),
+            NUTSState(view(tree_right_position, :, chain_index), view(tree_right_momentum, :, chain_index), 0.0, view(tree_right_gradient, :, chain_index)),
+            NUTSState(view(tree_proposal_position, :, chain_index), view(tree_proposal_momentum, :, chain_index), 0.0, view(tree_proposal_gradient, :, chain_index)),
+        ) for chain_index in 1:num_chains
+    ]
     left_position = Matrix{Float64}(undef, num_params, num_chains)
     right_position = Matrix{Float64}(undef, num_params, num_chains)
     left_momentum = Matrix{Float64}(undef, num_params, num_chains)
@@ -293,13 +331,28 @@ function BatchedNUTSWorkspace(
     return BatchedNUTSWorkspace(
         gradient_cache,
         Matrix{Float64}(undef, num_params, num_chains),
+        tree_current_position,
+        tree_next_position,
+        tree_left_position,
+        tree_right_position,
+        tree_proposal_position,
         left_position,
         proposal_position,
         right_position,
+        tree_current_momentum,
+        tree_next_momentum,
+        tree_left_momentum,
+        tree_right_momentum,
+        tree_proposal_momentum,
         left_momentum,
         Matrix{Float64}(undef, num_params, num_chains),
         proposal_momentum,
         right_momentum,
+        tree_current_gradient,
+        tree_next_gradient,
+        tree_left_gradient,
+        tree_right_gradient,
+        tree_proposal_gradient,
         left_gradient,
         proposal_gradient,
         right_gradient,

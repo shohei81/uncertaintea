@@ -1137,6 +1137,13 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].left.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) == 1
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.position) === gaussian_nuts_workspace.tree_current_position
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.momentum) === gaussian_nuts_workspace.tree_current_momentum
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.gradient) === gaussian_nuts_workspace.tree_current_gradient
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].next.position) === gaussian_nuts_workspace.tree_next_position
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].left.position) === gaussian_nuts_workspace.tree_left_position
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) === gaussian_nuts_workspace.tree_right_position
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) === gaussian_nuts_workspace.tree_proposal_position
     @test length(gaussian_nuts_workspace.column_continuation_states) == 3
     @test gaussian_nuts_workspace.column_continuation_states[1] isa UncertainTea.NUTSContinuationState
     @test length(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) == 1
