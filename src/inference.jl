@@ -1305,10 +1305,7 @@ function _hamiltonian(logjoint_value::Float64, momentum::AbstractVector, inverse
     return -logjoint_value + _kinetic_energy(momentum, inverse_mass_matrix)
 end
 
-struct NUTSSubtree
-    left::NUTSState
-    right::NUTSState
-    proposal::NUTSState
+struct NUTSSubtreeSummary
     log_weight::Float64
     accept_stat_sum::Float64
     accept_stat_count::Int
@@ -1454,10 +1451,7 @@ function _build_nuts_subtree(
         turning && break
     end
 
-    return NUTSSubtree(
-        left,
-        right,
-        proposal,
+    return NUTSSubtreeSummary(
         log_weight,
         accept_stat_sum,
         accept_stat_count,
@@ -1516,9 +1510,9 @@ function _continue_nuts_proposal(
         end
 
         if direction < 0
-            left = subtree.left
+            _copyto_nuts_state!(left, tree_workspace.left)
         else
-            right = subtree.right
+            _copyto_nuts_state!(right, tree_workspace.right)
         end
 
         integration_steps += subtree.integration_steps
@@ -1527,7 +1521,7 @@ function _continue_nuts_proposal(
         if isfinite(subtree.log_weight)
             combined_log_weight = _logaddexp(log_weight, subtree.log_weight)
             if log(rand(rng)) < subtree.log_weight - combined_log_weight
-                _copyto_nuts_state!(proposal, subtree.proposal)
+                _copyto_nuts_state!(proposal, tree_workspace.proposal)
             end
             log_weight = combined_log_weight
         end

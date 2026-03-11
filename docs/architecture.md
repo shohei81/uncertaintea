@@ -129,7 +129,8 @@ Current backend-lowering subset:
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
-  batched tree kernel
+  batched tree kernel, and subtree expansion now returns metadata while leaving
+  mutable frontier state in that scratch workspace
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

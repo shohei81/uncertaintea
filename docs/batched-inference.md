@@ -107,6 +107,9 @@ for dynamic trajectory building:
   the remaining CPU reference tree builder
 - the chain-local subtree frontier and proposal states now reuse that same
   subtree workspace instead of allocating fresh copies on each integration step
+- subtree growth now returns metadata only and leaves frontier/proposal state in
+  that scratch workspace, which is closer to the mutable state-machine shape a
+  batched backend will want
 - deeper tree growth is still chain-local and iterative after that first
   batched doubling step
 - this is a staging layer toward a future backend-lowered NUTS state machine,
