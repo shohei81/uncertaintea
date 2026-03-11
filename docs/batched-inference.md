@@ -80,6 +80,9 @@ single-chain HMC, but it now supports the same basic warmup structure:
 - both the clip threshold and the rejection-weight taper are now parameterized
   by each slow warmup window length instead of an implicit global sample-count
   heuristic
+- window-level mass-adaptation diagnostics are now exposed through
+  `massadaptationwindows(chain)` so warmup updates can be inspected after
+  sampling
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.

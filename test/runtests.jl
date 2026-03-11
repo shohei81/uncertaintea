@@ -1308,12 +1308,23 @@ using UncertainTea
     @test all(isfinite, gaussian_chain.energy_errors[.!gaussian_chain.divergent])
     @test 0.0 <= acceptancerate(gaussian_chain) <= 1.0
     @test 0.0 <= divergencerate(gaussian_chain) <= 1.0
+    @test length(massadaptationwindows(gaussian_chain)) == 3
+    @test massadaptationwindows(gaussian_chain)[1] isa HMCMassAdaptationWindowSummary
+    @test massadaptationwindows(gaussian_chain)[1].iteration_start == 16
+    @test massadaptationwindows(gaussian_chain)[1].iteration_end == 40
+    @test massadaptationwindows(gaussian_chain)[1].window_length == 25
+    @test massadaptationwindows(gaussian_chain)[1].clip_scale_start == 8.0
+    @test 5.0 <= massadaptationwindows(gaussian_chain)[1].clip_scale_end <= 8.0
+    @test massadaptationwindows(gaussian_chain)[1].effective_count >= 3
+    @test massadaptationwindows(gaussian_chain)[1].mass_min > 0
+    @test massadaptationwindows(gaussian_chain)[1].mass_max >= massadaptationwindows(gaussian_chain)[1].mass_min
     @test any(gaussian_chain.accepted)
     @test gaussian_chain.step_size > 0
     @test gaussian_chain.mass_matrix[1] > 0
     @test gaussian_chain.target_accept == 0.8
     @test gaussian_baseline_chain.step_size == 0.25
     @test gaussian_baseline_chain.mass_matrix == [1.0]
+    @test isempty(massadaptationwindows(gaussian_baseline_chain))
     @test 0 < gaussian_large_step_chain.step_size < 16.0
     @test gaussian_small_step_chain.step_size > 1e-6
     @test all(isfinite, gaussian_large_step_chain.logjoint_values)
@@ -1323,6 +1334,8 @@ using UncertainTea
     @test nchains(gaussian_multichain) == 3
     @test numsamples(gaussian_multichain) == 60
     @test gaussian_multichain[1] isa HMCChain
+    @test length(massadaptationwindows(gaussian_multichain)) == 3
+    @test all(length(windows) == 1 for windows in massadaptationwindows(gaussian_multichain))
     @test 0.0 <= acceptancerate(gaussian_multichain) <= 1.0
     @test 0.0 <= divergencerate(gaussian_multichain) <= 1.0
     @test length(gaussian_rhat) == 1
@@ -1355,8 +1368,15 @@ using UncertainTea
     @test gaussian_batched_chain[2].constraints[:y] == gaussian_batch_constraints[2][:y]
     @test all(chain.step_size > 0 for chain in gaussian_batched_chain)
     @test all(chain.mass_matrix[1] > 0 for chain in gaussian_batched_chain)
+    @test all(length(massadaptationwindows(chain)) == 1 for chain in gaussian_batched_chain)
+    @test length(massadaptationwindows(gaussian_batched_chain)) == 3
+    @test all(windows[1].window_length == 10 for windows in massadaptationwindows(gaussian_batched_chain))
+    @test all(windows[1].iteration_start == 6 for windows in massadaptationwindows(gaussian_batched_chain))
+    @test all(windows[1].iteration_end == 15 for windows in massadaptationwindows(gaussian_batched_chain))
+    @test all(windows[1].updated for windows in massadaptationwindows(gaussian_batched_chain))
     @test all(chain.step_size == 0.18 for chain in gaussian_batched_baseline_chain)
     @test all(chain.mass_matrix == [1.0] for chain in gaussian_batched_baseline_chain)
+    @test all(isempty(massadaptationwindows(chain)) for chain in gaussian_batched_baseline_chain)
     @test all(chain.step_size == 0.18 for chain in gaussian_batched_mass_chain)
     @test all(chain.mass_matrix[1] != 1.0 for chain in gaussian_batched_mass_chain)
     @test all(0 < chain.step_size < 16.0 for chain in gaussian_batched_large_step_chain)

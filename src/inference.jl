@@ -1,3 +1,20 @@
+struct HMCMassAdaptationWindowSummary
+    window_index::Int
+    iteration_start::Int
+    iteration_end::Int
+    window_length::Int
+    pooled_samples::Int
+    weight_sum::Float64
+    effective_count::Float64
+    mean_weight::Float64
+    clip_scale_start::Float64
+    clip_scale_end::Float64
+    updated::Bool
+    mass_mean::Float64
+    mass_min::Float64
+    mass_max::Float64
+end
+
 struct HMCChain
     model::TeaModel
     args::Tuple
@@ -13,6 +30,7 @@ struct HMCChain
     mass_matrix::Vector{Float64}
     num_leapfrog_steps::Int
     target_accept::Float64
+    mass_adaptation_windows::Vector{HMCMassAdaptationWindowSummary}
 end
 
 struct HMCChains{A,C}
@@ -144,6 +162,23 @@ Base.lastindex(summary::HMCSummary) = lastindex(summary.parameters)
 Base.iterate(chains::HMCChains, state...) = iterate(chains.chains, state...)
 Base.iterate(summary::HMCSummary, state...) = iterate(summary.parameters, state...)
 
+function Base.show(io::IO, summary::HMCMassAdaptationWindowSummary)
+    print(
+        io,
+        "HMCMassAdaptationWindowSummary(window=",
+        summary.window_index,
+        ", iterations=",
+        summary.iteration_start,
+        ":",
+        summary.iteration_end,
+        ", effective_count=",
+        round(summary.effective_count; digits=2),
+        ", updated=",
+        summary.updated,
+        ")",
+    )
+end
+
 function Base.show(io::IO, chain::HMCChain)
     print(
         io,
@@ -157,6 +192,8 @@ function Base.show(io::IO, chain::HMCChain)
         count(identity, chain.divergent),
         ", step_size=",
         round(chain.step_size; digits=4),
+        ", mass_windows=",
+        length(chain.mass_adaptation_windows),
         ")",
     )
 end
@@ -213,6 +250,14 @@ function divergencerate(chains::HMCChains)
     total_samples = sum(length(chain.divergent) for chain in chains.chains)
     total_samples == 0 && return 0.0
     return sum(count(identity, chain.divergent) for chain in chains.chains) / total_samples
+end
+
+function massadaptationwindows(chain::HMCChain)
+    return chain.mass_adaptation_windows
+end
+
+function massadaptationwindows(chains::HMCChains)
+    return [chain.mass_adaptation_windows for chain in chains.chains]
 end
 
 function _diagnostic_space_samples(chain::HMCChain, space::Symbol)
@@ -853,6 +898,12 @@ function _warmup_window_length(schedule::WarmupSchedule, window_index::Int)
     return schedule.slow_window_ends[window_index] - window_start + 1
 end
 
+function _warmup_window_start(schedule::WarmupSchedule, window_index::Int)
+    1 <= window_index <= length(schedule.slow_window_ends) ||
+        throw(BoundsError(schedule.slow_window_ends, window_index))
+    return window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index - 1] + 1
+end
+
 function _running_variance_window_progress(state::RunningVarianceState)
     if state.window_length <= _RUNNING_VARIANCE_CLIP_START
         return 1.0
@@ -929,6 +980,33 @@ end
 function _running_variance_effective_count(state::RunningVarianceState)
     state.weight_square_sum <= 0 && return 0.0
     return state.weight_sum^2 / state.weight_square_sum
+end
+
+function _mass_adaptation_window_summary(
+    schedule::WarmupSchedule,
+    window_index::Int,
+    state::RunningVarianceState,
+    inverse_mass_matrix::AbstractVector,
+    updated::Bool,
+)
+    mass_matrix = 1 ./ inverse_mass_matrix
+    pooled_samples = state.count
+    return HMCMassAdaptationWindowSummary(
+        window_index,
+        _warmup_window_start(schedule, window_index),
+        schedule.slow_window_ends[window_index],
+        state.window_length,
+        pooled_samples,
+        state.weight_sum,
+        _running_variance_effective_count(state),
+        pooled_samples == 0 ? 0.0 : state.weight_sum / pooled_samples,
+        _RUNNING_VARIANCE_CLIP_SCALE_EARLY,
+        _running_variance_clip_scale(state),
+        updated,
+        sum(mass_matrix) / length(mass_matrix),
+        minimum(mass_matrix),
+        maximum(mass_matrix),
+    )
 end
 
 function _update_running_variance!(
@@ -1294,6 +1372,7 @@ function hmc(
         isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
             _warmup_window_length(warmup_schedule, mass_window_index),
     )
+    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
 
     sample_index = 0
     for iteration in 1:total_iterations
@@ -1349,9 +1428,21 @@ function hmc(
                     _mass_adaptation_weight(variance_state, accepted_step, accept_prob, divergent_step),
                 )
                 if iteration == warmup_schedule.slow_window_ends[mass_window_index]
+                    mass_updated = false
                     if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                        mass_updated = true
                     end
+                    push!(
+                        mass_adaptation_windows,
+                        _mass_adaptation_window_summary(
+                            warmup_schedule,
+                            mass_window_index,
+                            variance_state,
+                            inverse_mass_matrix,
+                            mass_updated,
+                        ),
+                    )
                     mass_window_index += 1
                     if mass_window_index <= length(warmup_schedule.slow_window_ends)
                         variance_state = _running_variance_state(
@@ -1413,6 +1504,7 @@ function hmc(
         1 ./ inverse_mass_matrix,
         num_leapfrog_steps,
         hmc_target_accept,
+        mass_adaptation_windows,
     )
 end
 
@@ -1561,6 +1653,7 @@ function batched_hmc(
         isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
             _warmup_window_length(warmup_schedule, mass_window_index),
     )
+    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
 
     sample_index = 0
     for iteration in 1:total_iterations
@@ -1645,9 +1738,21 @@ function batched_hmc(
                     workspace.mass_adaptation_weights,
                 )
                 if iteration == warmup_schedule.slow_window_ends[mass_window_index]
+                    mass_updated = false
                     if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
                         inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
+                        mass_updated = true
                     end
+                    push!(
+                        mass_adaptation_windows,
+                        _mass_adaptation_window_summary(
+                            warmup_schedule,
+                            mass_window_index,
+                            variance_state,
+                            inverse_mass_matrix,
+                            mass_updated,
+                        ),
+                    )
                     mass_window_index += 1
                     if mass_window_index <= length(warmup_schedule.slow_window_ends)
                         variance_state = _running_variance_state(
@@ -1727,6 +1832,7 @@ function batched_hmc(
             copy(mass_matrix),
             num_leapfrog_steps,
             hmc_target_accept,
+            copy(mass_adaptation_windows),
         )
     end
 

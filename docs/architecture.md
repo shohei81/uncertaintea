@@ -117,7 +117,8 @@ Current backend-lowering subset:
   variance updates whose clip threshold anneals from a loose early-window value
   to a tighter steady-state value, with acceptance-aware weights so rejected
   states do not count like fully refreshed samples; both schedules are now
-  explicitly tied to the current slow-window length
+  explicitly tied to the current slow-window length, and each slow-window
+  update is surfaced as a diagnostic summary after sampling
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path
