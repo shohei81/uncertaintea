@@ -107,6 +107,10 @@ for dynamic trajectory building:
   reusable subtree scratch workspace, so the remaining continuation logic can
   start from the same mutable state buffers rather than per-step `NUTSState`
   allocation
+- on the batched path, reusable continuation frontiers and proposal vectors now
+  live in batched workspace matrices, so deeper chain-local continuation reuses
+  batch-owned storage for `left/right/proposal` state instead of per-chain
+  owned vectors
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

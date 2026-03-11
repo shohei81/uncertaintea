@@ -140,10 +140,10 @@ mutable struct NUTSSubtreeWorkspace
     proposal::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
 end
 
-mutable struct NUTSContinuationState
-    left::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
-    right::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
-    proposal::NUTSState{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+mutable struct NUTSContinuationState{L<:NUTSState,R<:NUTSState,P<:NUTSState}
+    left::L
+    right::R
+    proposal::P
     log_weight::Float64
     accept_stat_sum::Float64
     accept_stat_count::Int
@@ -178,10 +178,16 @@ end
 mutable struct BatchedNUTSWorkspace
     gradient_cache::BatchedLogjointGradientCache
     current_gradient::Matrix{Float64}
+    left_position::Matrix{Float64}
     proposal_position::Matrix{Float64}
+    right_position::Matrix{Float64}
+    left_momentum::Matrix{Float64}
     current_momentum::Matrix{Float64}
     proposal_momentum::Matrix{Float64}
+    right_momentum::Matrix{Float64}
+    left_gradient::Matrix{Float64}
     proposal_gradient::Matrix{Float64}
+    right_gradient::Matrix{Float64}
     proposed_logjoint::Vector{Float64}
     current_energy::Vector{Float64}
     proposed_energy::Vector{Float64}
@@ -256,15 +262,44 @@ function BatchedNUTSWorkspace(
         )
     end
     column_tree_workspaces = [NUTSSubtreeWorkspace(num_params) for _ in 1:num_chains]
-    column_continuation_states = [NUTSContinuationState(num_params) for _ in 1:num_chains]
+    left_position = Matrix{Float64}(undef, num_params, num_chains)
+    right_position = Matrix{Float64}(undef, num_params, num_chains)
+    left_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    right_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    left_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    right_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    proposal_position = Matrix{Float64}(undef, num_params, num_chains)
+    proposal_momentum = Matrix{Float64}(undef, num_params, num_chains)
+    proposal_gradient = Matrix{Float64}(undef, num_params, num_chains)
+    proposed_logjoint = Vector{Float64}(undef, num_chains)
+    column_continuation_states = [
+        NUTSContinuationState(
+            NUTSState(view(left_position, :, chain_index), view(left_momentum, :, chain_index), 0.0, view(left_gradient, :, chain_index)),
+            NUTSState(view(right_position, :, chain_index), view(right_momentum, :, chain_index), 0.0, view(right_gradient, :, chain_index)),
+            _batched_nuts_state(proposal_position, proposal_momentum, proposed_logjoint, proposal_gradient, chain_index),
+            -Inf,
+            0.0,
+            0,
+            0,
+            0,
+            false,
+            false,
+        ) for chain_index in 1:num_chains
+    ]
     return BatchedNUTSWorkspace(
         gradient_cache,
         Matrix{Float64}(undef, num_params, num_chains),
+        left_position,
+        proposal_position,
+        right_position,
+        left_momentum,
         Matrix{Float64}(undef, num_params, num_chains),
-        Matrix{Float64}(undef, num_params, num_chains),
-        Matrix{Float64}(undef, num_params, num_chains),
-        Matrix{Float64}(undef, num_params, num_chains),
-        Vector{Float64}(undef, num_chains),
+        proposal_momentum,
+        right_momentum,
+        left_gradient,
+        proposal_gradient,
+        right_gradient,
+        proposed_logjoint,
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
@@ -1759,8 +1794,6 @@ function _batched_nuts_proposals!(
         proposed_energy = _hamiltonian(continuation.proposal.logjoint, continuation.proposal.momentum, inverse_mass_matrix)
         energy_error = proposed_energy - workspace.current_energy[chain_index]
         moved_step = any(continuation.proposal.position .!= view(position, :, chain_index))
-        copyto!(view(workspace.proposal_position, :, chain_index), continuation.proposal.position)
-        copyto!(view(workspace.proposal_gradient, :, chain_index), continuation.proposal.gradient)
         workspace.proposed_logjoint[chain_index] = continuation.proposal.logjoint
         workspace.proposed_energy[chain_index] = proposed_energy
         workspace.energy_error[chain_index] = energy_error

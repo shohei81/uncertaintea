@@ -1140,6 +1140,15 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.column_continuation_states) == 3
     @test gaussian_nuts_workspace.column_continuation_states[1] isa UncertainTea.NUTSContinuationState
     @test length(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) == 1
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].left.position) === gaussian_nuts_workspace.left_position
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].left.momentum) === gaussian_nuts_workspace.left_momentum
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].left.gradient) === gaussian_nuts_workspace.left_gradient
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].right.position) === gaussian_nuts_workspace.right_position
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].right.momentum) === gaussian_nuts_workspace.right_momentum
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].right.gradient) === gaussian_nuts_workspace.right_gradient
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) === gaussian_nuts_workspace.proposal_position
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.momentum) === gaussian_nuts_workspace.proposal_momentum
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.gradient) === gaussian_nuts_workspace.proposal_gradient
     gaussian_nuts_tree_current = gaussian_nuts_workspace.column_tree_workspaces[1].current
     gaussian_nuts_tree_next = gaussian_nuts_workspace.column_tree_workspaces[1].next
     UncertainTea._initialize_batched_nuts_continuations!(
@@ -1162,6 +1171,9 @@ using UncertainTea
     @test gaussian_nuts_tree_current.momentum ≈ view(gaussian_nuts_workspace.current_momentum, :, 1) atol=1e-8
     @test gaussian_nuts_tree_next.logjoint ≈
         logjoint_unconstrained(gaussian_mean, gaussian_nuts_tree_next.position, (), gaussian_batch_constraints[1]) atol=1e-8
+    @test gaussian_nuts_workspace.column_continuation_states[1].left.position ≈ view(gaussian_nuts_workspace.left_position, :, 1) atol=1e-8
+    @test gaussian_nuts_workspace.column_continuation_states[1].right.position ≈ view(gaussian_nuts_workspace.right_position, :, 1) atol=1e-8
+    @test gaussian_nuts_workspace.column_continuation_states[1].proposal.position ≈ view(gaussian_nuts_workspace.proposal_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].tree_depth == 1
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
