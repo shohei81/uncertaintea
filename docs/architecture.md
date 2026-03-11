@@ -118,7 +118,8 @@ Current backend-lowering subset:
   to a tighter steady-state value, with acceptance-aware weights so rejected
   states do not count like fully refreshed samples; both schedules are now
   explicitly tied to the current slow-window length, and each slow-window
-  update is surfaced as a diagnostic summary after sampling
+  update is surfaced as a diagnostic summary after sampling and carried into
+  the high-level `summarize` output
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

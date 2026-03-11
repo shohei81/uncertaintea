@@ -83,6 +83,9 @@ single-chain HMC, but it now supports the same basic warmup structure:
 - window-level mass-adaptation diagnostics are now exposed through
   `massadaptationwindows(chain)` so warmup updates can be inspected after
   sampling
+- `summarize(chains)` now includes aggregated diagnostics, so acceptance,
+  divergence, step-size, and warmup mass-adaptation windows can be inspected
+  from one summary object
 - CPU reference path built on the compiled batched evaluator
 
 Phase 1 intentionally uses the existing single-item evaluator internally.

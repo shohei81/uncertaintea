@@ -1348,6 +1348,20 @@ using UncertainTea
     @test length(gaussian_summary) == 1
     @test gaussian_summary.space == :constrained
     @test gaussian_summary.quantile_probs == [0.05, 0.5, 0.95]
+    @test gaussian_summary.diagnostics isa HMCDiagnosticsSummary
+    @test acceptancerate(gaussian_summary) == acceptancerate(gaussian_multichain)
+    @test divergencerate(gaussian_summary) == divergencerate(gaussian_multichain)
+    @test gaussian_summary.diagnostics.mean_step_size ≈
+        sum(chain.step_size for chain in gaussian_multichain) / nchains(gaussian_multichain) atol=1e-8
+    @test length(gaussian_summary.diagnostics.step_sizes) == nchains(gaussian_multichain)
+    @test length(massadaptationwindows(gaussian_summary)) == 1
+    @test massadaptationwindows(gaussian_summary)[1] isa HMCMassAdaptationSummary
+    @test massadaptationwindows(gaussian_summary)[1].chains == 3
+    @test massadaptationwindows(gaussian_summary)[1].num_updated == 3
+    @test massadaptationwindows(gaussian_summary)[1].iteration_start == 6
+    @test massadaptationwindows(gaussian_summary)[1].iteration_end == 25
+    @test massadaptationwindows(gaussian_summary)[1].mean_effective_count >= 3
+    @test massadaptationwindows(gaussian_summary)[1].min_mass > 0
     @test gaussian_summary[1].binding == :mu
     @test gaussian_summary[1].address == :mu
     @test gaussian_summary[1].mean ≈ gaussian_pooled_mean atol=1e-8
@@ -1356,6 +1370,7 @@ using UncertainTea
     @test gaussian_summary[1].rhat == gaussian_rhat[1]
     @test gaussian_summary[1].ess == gaussian_ess[1]
     @test gaussian_summary[1].mean ≈ gaussian_summary_unconstrained[1].mean atol=1e-8
+    @test length(massadaptationwindows(gaussian_summary_unconstrained)) == 1
     @test gaussian_multichain[1].unconstrained_samples[:, 1] ==
         gaussian_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
@@ -1382,6 +1397,13 @@ using UncertainTea
     @test all(0 < chain.step_size < 16.0 for chain in gaussian_batched_large_step_chain)
     @test all(all(isfinite, chain.logjoint_values) for chain in gaussian_batched_large_step_chain)
     @test all(chain.step_size < 2.0 for chain in gaussian_batched_divergence_adapt_chain)
+    gaussian_batched_summary = summarize(gaussian_batched_chain)
+    @test acceptancerate(gaussian_batched_summary) == acceptancerate(gaussian_batched_chain)
+    @test divergencerate(gaussian_batched_summary) == divergencerate(gaussian_batched_chain)
+    @test length(massadaptationwindows(gaussian_batched_summary)) == 1
+    @test massadaptationwindows(gaussian_batched_summary)[1].chains == 3
+    @test massadaptationwindows(gaussian_batched_summary)[1].window_length == 10
+    @test massadaptationwindows(gaussian_batched_summary)[1].num_updated == 3
     @test !(isapprox(gaussian_batched_chain[1].step_size, gaussian_batched_baseline_chain[1].step_size; atol=1e-8) &&
         isapprox(gaussian_batched_chain[1].mass_matrix[1], gaussian_batched_baseline_chain[1].mass_matrix[1]; atol=1e-8))
     @test 0.0 <= acceptancerate(gaussian_batched_chain) <= 1.0

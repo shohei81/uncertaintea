@@ -15,6 +15,33 @@ struct HMCMassAdaptationWindowSummary
     mass_max::Float64
 end
 
+struct HMCMassAdaptationSummary
+    window_index::Int
+    iteration_start::Int
+    iteration_end::Int
+    window_length::Int
+    chains::Int
+    num_updated::Int
+    mean_pooled_samples::Float64
+    mean_weight_sum::Float64
+    mean_effective_count::Float64
+    min_effective_count::Float64
+    max_effective_count::Float64
+    mean_weight::Float64
+    mean_clip_scale_end::Float64
+    mean_mass::Float64
+    min_mass::Float64
+    max_mass::Float64
+end
+
+struct HMCDiagnosticsSummary
+    acceptance_rate::Float64
+    divergence_rate::Float64
+    step_sizes::Vector{Float64}
+    mean_step_size::Float64
+    mass_adaptation_windows::Vector{HMCMassAdaptationSummary}
+end
+
 struct HMCChain
     model::TeaModel
     args::Tuple
@@ -55,6 +82,7 @@ struct HMCSummary
     model::TeaModel
     space::Symbol
     quantile_probs::Vector{Float64}
+    diagnostics::HMCDiagnosticsSummary
     parameters::Vector{HMCParameterSummary}
 end
 
@@ -179,6 +207,36 @@ function Base.show(io::IO, summary::HMCMassAdaptationWindowSummary)
     )
 end
 
+function Base.show(io::IO, summary::HMCMassAdaptationSummary)
+    print(
+        io,
+        "HMCMassAdaptationSummary(window=",
+        summary.window_index,
+        ", chains=",
+        summary.chains,
+        ", effective_count=",
+        round(summary.mean_effective_count; digits=2),
+        ", updated=",
+        summary.num_updated,
+        "/",
+        summary.chains,
+        ")",
+    )
+end
+
+function Base.show(io::IO, diagnostics::HMCDiagnosticsSummary)
+    print(
+        io,
+        "HMCDiagnosticsSummary(acceptance_rate=",
+        round(diagnostics.acceptance_rate; digits=3),
+        ", divergence_rate=",
+        round(diagnostics.divergence_rate; digits=3),
+        ", mass_windows=",
+        length(diagnostics.mass_adaptation_windows),
+        ")",
+    )
+end
+
 function Base.show(io::IO, chain::HMCChain)
     print(
         io,
@@ -224,6 +282,12 @@ function Base.show(io::IO, summary::HMCSummary)
         summary.space,
         ", parameters=",
         length(summary),
+        ", acceptance_rate=",
+        round(summary.diagnostics.acceptance_rate; digits=3),
+        ", divergence_rate=",
+        round(summary.diagnostics.divergence_rate; digits=3),
+        ", mass_windows=",
+        length(summary.diagnostics.mass_adaptation_windows),
         ", quantiles=",
         summary.quantile_probs,
         ")",
@@ -252,12 +316,24 @@ function divergencerate(chains::HMCChains)
     return sum(count(identity, chain.divergent) for chain in chains.chains) / total_samples
 end
 
+function acceptancerate(summary::HMCSummary)
+    return summary.diagnostics.acceptance_rate
+end
+
+function divergencerate(summary::HMCSummary)
+    return summary.diagnostics.divergence_rate
+end
+
 function massadaptationwindows(chain::HMCChain)
     return chain.mass_adaptation_windows
 end
 
 function massadaptationwindows(chains::HMCChains)
     return [chain.mass_adaptation_windows for chain in chains.chains]
+end
+
+function massadaptationwindows(summary::HMCSummary)
+    return summary.diagnostics.mass_adaptation_windows
 end
 
 function _diagnostic_space_samples(chain::HMCChain, space::Symbol)
@@ -309,6 +385,54 @@ function _validate_summary_quantiles(quantile_probs)
         0.0 <= prob <= 1.0 || throw(ArgumentError("summary quantiles must lie in [0, 1]"))
     end
     return probabilities
+end
+
+function _mass_adaptation_diagnostics(chains::HMCChains)
+    groups = Dict{NTuple{4, Int}, Vector{HMCMassAdaptationWindowSummary}}()
+    for chain in chains.chains
+        for window in chain.mass_adaptation_windows
+            key = (window.window_index, window.iteration_start, window.iteration_end, window.window_length)
+            push!(get!(groups, key, HMCMassAdaptationWindowSummary[]), window)
+        end
+    end
+
+    summaries = HMCMassAdaptationSummary[]
+    for key in sort!(collect(keys(groups)); by=identity)
+        windows = groups[key]
+        push!(
+            summaries,
+            HMCMassAdaptationSummary(
+                key[1],
+                key[2],
+                key[3],
+                key[4],
+                length(windows),
+                count(window -> window.updated, windows),
+                _sample_mean([window.pooled_samples for window in windows]),
+                _sample_mean([window.weight_sum for window in windows]),
+                _sample_mean([window.effective_count for window in windows]),
+                minimum(window.effective_count for window in windows),
+                maximum(window.effective_count for window in windows),
+                _sample_mean([window.mean_weight for window in windows]),
+                _sample_mean([window.clip_scale_end for window in windows]),
+                _sample_mean([window.mass_mean for window in windows]),
+                minimum(window.mass_min for window in windows),
+                maximum(window.mass_max for window in windows),
+            ),
+        )
+    end
+    return summaries
+end
+
+function _diagnostics_summary(chains::HMCChains)
+    step_sizes = Float64[chain.step_size for chain in chains.chains]
+    return HMCDiagnosticsSummary(
+        acceptancerate(chains),
+        divergencerate(chains),
+        step_sizes,
+        isempty(step_sizes) ? 0.0 : _sample_mean(step_sizes),
+        _mass_adaptation_diagnostics(chains),
+    )
 end
 
 function _sample_mean(values::AbstractVector)
@@ -463,6 +587,7 @@ function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.0
     quantile_probs = _validate_summary_quantiles(quantiles)
     rhats = rhat(chains; space=space)
     ess_values = ess(chains; space=space)
+    diagnostics = _diagnostics_summary(chains)
     layout = parameterlayout(chains.model)
     parametercount(layout) == num_params ||
         throw(DimensionMismatch("summary expected $num_params parameters in layout, got $(parametercount(layout))"))
@@ -483,7 +608,7 @@ function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.0
         )
     end
 
-    return HMCSummary(chains.model, space, quantile_probs, parameters)
+    return HMCSummary(chains.model, space, quantile_probs, diagnostics, parameters)
 end
 
 function _validate_hmc_arguments(
