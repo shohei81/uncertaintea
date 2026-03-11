@@ -1137,6 +1137,9 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].left.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) == 1
+    @test length(gaussian_nuts_workspace.column_continuation_states) == 3
+    @test gaussian_nuts_workspace.column_continuation_states[1] isa UncertainTea.NUTSContinuationState
+    @test length(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) == 1
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

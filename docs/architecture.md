@@ -130,7 +130,8 @@ Current backend-lowering subset:
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
   batched tree kernel, and subtree expansion now returns metadata while leaving
-  mutable frontier state in that scratch workspace
+  mutable frontier state in that scratch workspace; the continuation loop
+  itself now mutates an explicit reusable continuation-state object
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

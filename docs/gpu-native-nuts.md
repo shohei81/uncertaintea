@@ -68,6 +68,8 @@ The current CPU NUTS path is intentionally narrow:
   clones those state vectors at every intermediate integration step
 - metadata-only subtree returns, so the remaining CPU reference control flow is
   a little closer to an explicit mutable state machine
+- reusable continuation-state objects for the chain-local loop, so the control
+  flow no longer threads a large frontier tuple through every continuation step
 - iterative subtree doubling
 - multinomial proposal selection
 - dual-averaging step-size adaptation

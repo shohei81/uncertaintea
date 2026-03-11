@@ -110,6 +110,9 @@ for dynamic trajectory building:
 - subtree growth now returns metadata only and leaves frontier/proposal state in
   that scratch workspace, which is closer to the mutable state-machine shape a
   batched backend will want
+- chain-local continuation itself now runs from a reusable continuation state
+  object, instead of passing frontier/proposal/log-weight scalars around as a
+  long argument list
 - deeper tree growth is still chain-local and iterative after that first
   batched doubling step
 - this is a staging layer toward a future backend-lowered NUTS state machine,
