@@ -1331,6 +1331,28 @@ using UncertainTea
         mass_matrix_min_samples=3,
         rng=MersenneTwister(36),
     )
+    gaussian_nuts_chain = nuts(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=160,
+        num_warmup=100,
+        step_size=0.2,
+        max_tree_depth=6,
+        rng=MersenneTwister(60),
+    )
+    gaussian_nuts_baseline_chain = nuts(
+        gaussian_mean,
+        (),
+        constraints;
+        num_samples=20,
+        num_warmup=0,
+        step_size=0.2,
+        max_tree_depth=5,
+        adapt_step_size=false,
+        adapt_mass_matrix=false,
+        rng=MersenneTwister(61),
+    )
     gaussian_multichain = hmc_chains(
         gaussian_mean,
         (),
@@ -1372,6 +1394,28 @@ using UncertainTea
             3,
         ),
         rng=MersenneTwister(41),
+    )
+    gaussian_nuts_multichain = nuts_chains(
+        gaussian_mean,
+        (),
+        constraints;
+        num_chains=3,
+        num_samples=50,
+        num_warmup=30,
+        step_size=0.18,
+        max_tree_depth=6,
+        rng=MersenneTwister(62),
+    )
+    gaussian_nuts_multichain_replay = nuts_chains(
+        gaussian_mean,
+        (),
+        constraints;
+        num_chains=3,
+        num_samples=50,
+        num_warmup=30,
+        step_size=0.18,
+        max_tree_depth=6,
+        rng=MersenneTwister(62),
     )
     gaussian_batched_chain = batched_hmc(
         gaussian_mean,
@@ -1490,6 +1534,9 @@ using UncertainTea
     gaussian_batched_rhat = rhat(gaussian_batched_chain)
     gaussian_summary = summarize(gaussian_multichain)
     gaussian_summary_unconstrained = summarize(gaussian_multichain; space=:unconstrained)
+    gaussian_nuts_rhat = rhat(gaussian_nuts_multichain)
+    gaussian_nuts_ess = ess(gaussian_nuts_multichain)
+    gaussian_nuts_summary = summarize(gaussian_nuts_multichain)
     positive_summary = summarize(positive_multichain; quantiles=(0.25, 0.5, 0.75))
     gaussian_pooled_draws = vcat([vec(chain.constrained_samples[1, :]) for chain in gaussian_multichain]...)
     gaussian_pooled_mean = sum(gaussian_pooled_draws) / length(gaussian_pooled_draws)
@@ -1531,6 +1578,26 @@ using UncertainTea
     @test all(isfinite, gaussian_small_step_chain.logjoint_values)
     @test gaussian_windowed_mass_chain.step_size == 0.2
     @test gaussian_windowed_mass_chain.mass_matrix[1] != 1.0
+    @test gaussian_nuts_chain.sampler == :nuts
+    @test length(gaussian_nuts_chain) == 160
+    @test size(gaussian_nuts_chain.unconstrained_samples) == (1, 160)
+    @test size(gaussian_nuts_chain.constrained_samples) == (1, 160)
+    @test all(isfinite, gaussian_nuts_chain.logjoint_values)
+    @test all(isfinite, gaussian_nuts_chain.acceptance_stats)
+    @test all(0.0 <= stat <= 1.0 for stat in gaussian_nuts_chain.acceptance_stats)
+    @test all(1 <= depth <= gaussian_nuts_chain.max_tree_depth for depth in treedepths(gaussian_nuts_chain))
+    @test all(1 <= steps <= (2 ^ gaussian_nuts_chain.max_tree_depth - 1) for steps in integrationsteps(gaussian_nuts_chain))
+    @test gaussian_nuts_chain.num_leapfrog_steps == 0
+    @test gaussian_nuts_chain.max_tree_depth == 6
+    @test 0.0 <= acceptancerate(gaussian_nuts_chain) <= 1.0
+    @test 0.0 <= divergencerate(gaussian_nuts_chain) <= 1.0
+    @test gaussian_nuts_chain.step_size > 0
+    @test gaussian_nuts_chain.mass_matrix[1] > 0
+    @test any(gaussian_nuts_chain.accepted)
+    @test abs(sum(gaussian_nuts_chain.constrained_samples[1, :]) / size(gaussian_nuts_chain.constrained_samples, 2) - 0.15) < 0.25
+    @test gaussian_nuts_baseline_chain.step_size == 0.2
+    @test gaussian_nuts_baseline_chain.mass_matrix == [1.0]
+    @test isempty(massadaptationwindows(gaussian_nuts_baseline_chain))
     @test nchains(gaussian_multichain) == 3
     @test numsamples(gaussian_multichain) == 60
     @test gaussian_multichain[1] isa HMCChain
@@ -1588,6 +1655,22 @@ using UncertainTea
         gaussian_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
     @test gaussian_multichain[1].unconstrained_samples[:, 1] != gaussian_multichain[2].unconstrained_samples[:, 1]
+    @test nchains(gaussian_nuts_multichain) == 3
+    @test numsamples(gaussian_nuts_multichain) == 50
+    @test all(chain.sampler == :nuts for chain in gaussian_nuts_multichain)
+    @test all(length(treedepths(chain)) == 50 for chain in gaussian_nuts_multichain)
+    @test all(all(1 <= depth <= chain.max_tree_depth for depth in treedepths(chain)) for chain in gaussian_nuts_multichain)
+    @test all(all(1 <= steps <= (2 ^ chain.max_tree_depth - 1) for steps in integrationsteps(chain)) for chain in gaussian_nuts_multichain)
+    @test length(gaussian_nuts_rhat) == 1
+    @test length(gaussian_nuts_ess) == 1
+    @test isfinite(gaussian_nuts_rhat[1])
+    @test 1.0 <= gaussian_nuts_rhat[1] < 1.1
+    @test 1.0 <= gaussian_nuts_ess[1] <= nchains(gaussian_nuts_multichain) * numsamples(gaussian_nuts_multichain)
+    @test acceptancerate(gaussian_nuts_summary) == acceptancerate(gaussian_nuts_multichain)
+    @test divergencerate(gaussian_nuts_summary) == divergencerate(gaussian_nuts_multichain)
+    @test gaussian_nuts_multichain[1].unconstrained_samples[:, 1] ==
+        gaussian_nuts_multichain_replay[1].unconstrained_samples[:, 1]
+    @test gaussian_nuts_multichain[1].tree_depths == gaussian_nuts_multichain_replay[1].tree_depths
     @test nchains(gaussian_batched_chain) == 3
     @test numsamples(gaussian_batched_chain) == 40
     @test gaussian_batched_chain.args == ()
@@ -1695,8 +1778,11 @@ using UncertainTea
     @test_throws DimensionMismatch parameterchoicemap(gaussian_mean, Float64[])
     @test_throws DimensionMismatch logjoint(iid_model, params2, (), repeated)
     @test_throws ArgumentError hmc(observed_only, (), choicemap((:y, true)); num_samples=10)
+    @test_throws ArgumentError nuts(observed_only, (), choicemap((:y, true)); num_samples=10)
     @test_throws ArgumentError hmc(gaussian_mean, (), constraints; num_samples=10, divergence_threshold=0.0)
+    @test_throws ArgumentError nuts(gaussian_mean, (), constraints; num_samples=10, max_tree_depth=0)
     @test_throws ArgumentError hmc_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
+    @test_throws ArgumentError nuts_chains(gaussian_mean, (), constraints; num_chains=0, num_samples=10)
     @test_throws ArgumentError batched_hmc(gaussian_mean, (), gaussian_batch_constraints; num_chains=0, num_samples=10)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, zeros(2, 3), (), gaussian_batch_constraints)
     @test_throws DimensionMismatch batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints[1:2])

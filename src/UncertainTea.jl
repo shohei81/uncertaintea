@@ -1,6 +1,7 @@
 module UncertainTea
 
 using ForwardDiff
+using LinearAlgebra
 using Random
 
 export @tea
@@ -24,7 +25,8 @@ export BatchedLogjointGradientCache, batched_logjoint_gradient_unconstrained!
 export initialparameters, parameter_vector, parameterchoicemap
 export transform_to_constrained, transform_to_unconstrained, transform_to_constrained_with_logabsdet
 export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSummary, HMCDiagnosticsSummary, HMCParameterSummary, HMCSummary
-export hmc, hmc_chains, batched_hmc, acceptancerate, divergencerate, massadaptationwindows, nchains, numsamples, rhat, ess, summarize
+export hmc, hmc_chains, nuts, nuts_chains, batched_hmc
+export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, rhat, ess, summarize
 export normal, lognormal, bernoulli
 
 include("ir.jl")

@@ -147,13 +147,16 @@ Recommended order:
 2. importance sampling
 3. `SIR/SMC`
 4. batched `HMC`
-5. `NUTS` only after the static path is mature
+5. CPU reference iterative `NUTS`
+6. batched / GPU-oriented `NUTS` only after the static path is mature
 
 Why:
 
 - the first three are naturally batch-oriented
 - batched `HMC` has regular state updates
-- `NUTS` brings dynamic tree-building and adaptation complexity
+- `NUTS` brings dynamic tree-building and adaptation complexity, so the first
+  version should be an iterative CPU reference path instead of a direct GPU
+  target
 
 ## Recommended Execution Modes
 

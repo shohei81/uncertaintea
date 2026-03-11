@@ -8,6 +8,7 @@ This folder tracks the current design direction of UncertainTea.
 - [architecture.md](architecture.md): the current recommended architecture and layering strategy
 - [dsl.md](dsl.md): a minimal DSL proposal that is intentionally closer to official Gen syntax
 - [batched-inference.md](batched-inference.md): the phased design for batched evaluators and GPU-oriented execution
+- [gpu-native-nuts.md](gpu-native-nuts.md): the design constraints and staged plan for iterative, GPU-oriented NUTS
 
 ## Documentation Rules
 
