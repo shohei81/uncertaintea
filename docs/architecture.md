@@ -122,7 +122,7 @@ Current backend-lowering subset:
   the high-level `summarize` output, including a richer plain-text display for
   interactive inspection
 - batched NUTS now exists as a CPU reference state machine with `param x chain`
-  storage and pooled warmup adaptation; the depth-1 trajectory case already
+  storage and pooled warmup adaptation; the first trajectory doubling step now
   uses a batched leapfrog-and-selection step, but deeper tree growth is still
   performed chain-by-chain rather than through a backend-lowered batched tree
   kernel

@@ -55,8 +55,8 @@ The current CPU NUTS path is intentionally narrow:
 
 - single-chain and multi-chain wrappers
 - a batched reference wrapper with `param x chain` state and pooled warmup
-- a batched depth-1 trajectory step, so the first narrowing step away from a
-  chain-local implementation is already in place
+- a batched first doubling step, so the first narrowing step away from a
+  chain-local implementation is already in place even for deeper trees
 - iterative subtree doubling
 - multinomial proposal selection
 - dual-averaging step-size adaptation
