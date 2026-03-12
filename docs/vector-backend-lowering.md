@@ -17,6 +17,7 @@ Those families already work with:
 - CPU reference `logjoint`
 - batched fallback evaluation
 - HMC and NUTS in the CPU path
+- `batched_advi`, importance sampling, and SIR in the CPU reference path
 
 At this point:
 

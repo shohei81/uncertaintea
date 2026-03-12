@@ -284,6 +284,9 @@ Why:
 - `NUTS` brings dynamic tree-building and adaptation complexity, so the first
   version should be an iterative CPU reference path instead of a direct GPU
   target
+- the current runtime now has CPU reference `batched_advi`,
+  `batched_importance_sampling`, and `batched_sir`, so the remaining work is
+  to widen the backend-native subset and lower those same batch APIs to GPU
 
 ## Recommended Execution Modes
 
@@ -327,6 +330,8 @@ Preferred:
 - a single unconstrained vector or dense `param x chain` tensor
 - normalized address metadata compiled once per execution plan
 - dense observed-data layouts for batch-heavy likelihoods
+- the same dense `param x particle` layout now also underpins the current
+  `batched_advi`, importance-sampling, and SIR reference paths
 
 Avoid:
 

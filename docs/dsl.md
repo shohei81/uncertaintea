@@ -219,10 +219,15 @@ Requirements:
 ### VI / SVI
 
 This syntax lowers cleanly to a fixed latent representation and batch-heavy likelihoods.
+The current CPU reference runtime now exposes `batched_advi` on top of the
+same static unconstrained parameter layout, and the current backend-native
+vector subset (`mvnormal` diagonal, `dirichlet`) flows through that path.
 
 ### SMC
 
 Particle axes map naturally onto the same compiled model structure.
+The current reference implementation exposes `batched_importance_sampling` and
+`batched_sir`, with `batched_smc` as the current single-stage SIR alias.
 
 ### HMC
 

@@ -46,6 +46,9 @@ The initial API should be:
 - `batched_logjoint(model, params, args, constraints)`
 - `batched_logjoint_unconstrained(model, params, args, constraints)`
 - `batched_logjoint_gradient_unconstrained(model, params, args, constraints)`
+- `batched_advi(model, args, constraints; ...)`
+- `batched_importance_sampling(model, args, constraints; ...)`
+- `batched_sir(model, args, constraints; ...)`
 - `batched_hmc(model, args, constraints; ...)`
 - `batched_nuts(model, args, constraints; ...)`
 
@@ -61,6 +64,15 @@ Accepted batching modes:
 - `Vector{<:Tuple}` for per-batch arguments
 - shared `ChoiceMap` for every batch element
 - `Vector{ChoiceMap}` for per-batch constraints
+
+The current reference inference layer now includes:
+
+- `batched_advi`, which uses a mean-field Gaussian in unconstrained space and
+  reuses `BatchedLogjointGradientCache`
+- `batched_importance_sampling`, which evaluates particle weights through the
+  same batched unconstrained target density
+- `batched_sir`, which is the current one-stage SMC reference path and the
+  implementation behind `batched_smc`
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:
@@ -118,6 +130,14 @@ for dynamic trajectory building:
 - per-chain gradient caches on that path now write into workspace-backed
   `tree_next_gradient` columns, so the remaining chain-local cache objects are
   mostly `ForwardDiff` config/objective wrappers rather than owners of gradient
+
+The current vector backend subset also flows through those batch APIs:
+
+- restricted diagonal `mvnormal` now uses backend-native batched logjoint and
+  manual backend gradients in `batched_advi`, batched HMC/NUTS, and particle
+  weighting
+- `dirichlet` now does the same through the simplex transform, so batched VI
+  and SIR can already exercise one nontrivial constrained vector family
   output storage
 - when batched chains share the same `args` and `constraints`, those remaining
   wrappers now also share a single `ForwardDiff` objective/config and differ
