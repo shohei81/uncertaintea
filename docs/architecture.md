@@ -287,9 +287,9 @@ Why:
 - the current runtime now has CPU reference `batched_advi`,
   `batched_importance_sampling`, `batched_sir`, and adaptive tempered
   `batched_smc`, including optional batched rejuvenation moves between
-  resampling stages, with both random-walk and fixed-step tempered HMC move
-  kernels, so the remaining work is to widen the backend-native subset and
-  lower those same batch APIs to GPU
+  resampling stages, with random-walk, fixed-step tempered HMC, and
+  CPU-reference tempered NUTS move kernels, so the remaining work is to widen
+  the backend-native subset and lower those same batch APIs to GPU
 
 ## Recommended Execution Modes
 

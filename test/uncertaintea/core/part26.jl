@@ -105,4 +105,36 @@
         @test all(>(0.0), dirichlet_hmc_smc.importance.constrained_particles[:, particle_index])
         @test sum(dirichlet_hmc_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
     end
+
+    dirichlet_nuts_smc = batched_smc(
+        dirichlet_smc_model,
+        (),
+        choicemap();
+        num_particles=16,
+        proposal_loc=Float64[-1.0, 0.6],
+        proposal_log_scale=fill(0.15, 2),
+        target_ess_ratio=0.95,
+        move_kernel=:nuts,
+        move_steps=1,
+        move_step_size=0.02,
+        move_max_tree_depth=2,
+        move_max_delta_energy=1000.0,
+        move_inverse_mass_matrix=fill(1.0, 2),
+        rng=MersenneTwister(213),
+    )
+
+    @test dirichlet_nuts_smc isa SMCResult
+    @test numstages(dirichlet_nuts_smc) >= 2
+    @test last(dirichlet_nuts_smc.stages).beta_end ≈ 1.0 atol=1e-6
+    @test length(dirichlet_nuts_smc.ancestor_history) == count(stage -> stage.resampled, dirichlet_nuts_smc.stages)
+    for stage in dirichlet_nuts_smc.stages[1:end-1]
+        @test stage.move_kernel == :nuts
+        @test stage.move_steps == 1
+        @test 0.0 <= stage.move_acceptance_rate <= 1.0
+    end
+    @test any(stage.move_acceptance_rate > 0.0 for stage in dirichlet_nuts_smc.stages if stage.move_steps > 0)
+    for particle_index in 1:size(dirichlet_nuts_smc.importance.constrained_particles, 2)
+        @test all(>(0.0), dirichlet_nuts_smc.importance.constrained_particles[:, particle_index])
+        @test sum(dirichlet_nuts_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
+    end
 end

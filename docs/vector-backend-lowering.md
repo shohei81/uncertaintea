@@ -19,7 +19,8 @@ Those families already work with:
 - HMC and NUTS in the CPU path
 - `batched_advi`, importance sampling, and SIR in the CPU reference path
 - adaptive tempered `batched_smc`, including rejuvenation moves, in the CPU
-  reference path, with both random-walk and tempered HMC kernels available
+  reference path, with random-walk, tempered HMC, and tempered NUTS kernels
+  available
 
 At this point:
 

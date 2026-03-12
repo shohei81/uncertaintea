@@ -230,7 +230,8 @@ The current reference implementation exposes `batched_importance_sampling` and
 `batched_sir`, and `batched_smc` now denotes an adaptive tempered multi-stage
 SMC bridge from a Gaussian proposal to the target density, with optional
 batched rejuvenation moves after resampling stages. The current move kernels
-are `:random_walk` and fixed-step tempered `:hmc`.
+are `:random_walk`, fixed-step tempered `:hmc`, and CPU-reference tempered
+`:nuts`.
 
 ### HMC
 
