@@ -144,6 +144,9 @@ for dynamic trajectory building:
 - subtree and continuation frontier/proposal logjoint values now also live in
   workspace-owned vectors, with explicit sync helpers keeping the reference
   `NUTSState` scalars aligned for the remaining chain-local fallback paths
+- the initial batched NUTS first step now also loads `current/next` tree
+  states through a batched helper and restores rejected/divergent proposal
+  columns with masked batch copies rather than per-chain buffer resets
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

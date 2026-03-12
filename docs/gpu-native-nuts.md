@@ -80,7 +80,9 @@ The current CPU NUTS path is intentionally narrow:
   buffer copies plus subtree start-state initialization now flow through
   masked matrix-copy helpers; the same path now also keeps subtree and
   continuation logjoint values in workspace-owned vectors with explicit sync
-  points for the reference scalar state objects
+  points for the reference scalar state objects, and the first batched NUTS
+  step now uses the same batch-owned load/restore helpers before the remaining
+  chain-local selection logic runs
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

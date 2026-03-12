@@ -143,6 +143,10 @@ Current backend-lowering subset:
   initialization now uses that same masked-copy path instead of per-chain state
   cloning; logjoint values for those batched subtree/continuation states now
   also have workspace-owned vector storage with explicit sync helpers; the
+  first-step batched NUTS initialization now likewise loads `current/next`
+  tree states through batched helpers and restores rejected/divergent proposal
+  columns through masked batch copies before the remaining chain-local
+  selection logic continues; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
