@@ -164,7 +164,8 @@ Current backend-lowering subset:
   depth-cohort scheduler now also runs through explicit reset / select /
   activate / initialize / advance / merge helpers, with continuation gating
   masks and selected cohort depth/count now stored directly on the batched
-  workspace; the
+  workspace, and the scheduler itself now advances through explicit
+  `idle/expand/merge/done` phases with a remaining-step counter; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

@@ -179,6 +179,13 @@ mutable struct NUTSContinuationState{L<:NUTSState,R<:NUTSState,P<:NUTSState}
     divergent::Bool
 end
 
+@enum BatchedNUTSSchedulerPhase::UInt8 begin
+    NUTSSchedulerIdle = 0
+    NUTSSchedulerExpand = 1
+    NUTSSchedulerMerge = 2
+    NUTSSchedulerDone = 3
+end
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -279,6 +286,8 @@ mutable struct BatchedNUTSWorkspace
     subtree_started::BitVector
     scheduler_active_depth::Int
     scheduler_active_depth_count::Int
+    scheduler_phase::BatchedNUTSSchedulerPhase
+    scheduler_remaining_steps::Int
     mass_adaptation_weights::Vector{Float64}
     constrained_position::Matrix{Float64}
     column_gradient_caches::Vector{LogjointGradientCache}
@@ -467,6 +476,8 @@ function BatchedNUTSWorkspace(
         falses(num_chains),
         falses(num_chains),
         0,
+        0,
+        NUTSSchedulerIdle,
         0,
         Vector{Float64}(undef, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
@@ -1912,6 +1923,8 @@ function _reset_batched_nuts_subtree_scratch!(
     fill!(workspace.subtree_select_proposal, false)
     workspace.scheduler_active_depth = 0
     workspace.scheduler_active_depth_count = 0
+    workspace.scheduler_phase = NUTSSchedulerIdle
+    workspace.scheduler_remaining_steps = 0
     return workspace
 end
 
@@ -2007,6 +2020,26 @@ function _prepare_batched_nuts_subtree_cohort!(
     _sample_batched_nuts_directions!(workspace.step_direction, rng, workspace.subtree_active)
     _initialize_batched_nuts_subtree_states!(workspace, workspace.subtree_active)
     return workspace.scheduler_active_depth
+end
+
+function _begin_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    max_tree_depth::Int,
+    rng::AbstractRNG,
+)
+    active_depth = _prepare_batched_nuts_subtree_cohort!(
+        workspace,
+        max_tree_depth,
+        rng,
+    )
+    if active_depth > 0
+        workspace.scheduler_remaining_steps = 1 << active_depth
+        workspace.scheduler_phase = NUTSSchedulerExpand
+        return true
+    end
+    workspace.scheduler_phase = NUTSSchedulerDone
+    workspace.scheduler_remaining_steps = 0
+    return false
 end
 
 function _advance_batched_nuts_subtree_cohort!(
@@ -2207,6 +2240,67 @@ function _merge_batched_nuts_subtree_cohort!(
         workspace.subtree_active .| workspace.continuation_select_proposal,
     )
     return workspace
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    if workspace.scheduler_phase == NUTSSchedulerExpand
+        _batched_nuts_leapfrog_step_to!(
+            workspace,
+            model,
+            workspace.tree_next_position,
+            workspace.tree_next_momentum,
+            workspace.tree_next_gradient,
+            workspace.proposed_logjoint,
+            workspace.tree_current_position,
+            workspace.tree_current_momentum,
+            workspace.tree_current_gradient,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            step_size,
+            workspace.step_direction,
+            workspace.subtree_active,
+        )
+        _batched_hamiltonian!(
+            workspace.subtree_proposed_energy,
+            workspace.proposed_logjoint,
+            workspace.tree_next_momentum,
+            inverse_mass_matrix,
+        )
+        any_active = _advance_batched_nuts_subtree_cohort!(
+            workspace,
+            inverse_mass_matrix,
+            max_delta_energy,
+            rng,
+        )
+        workspace.scheduler_remaining_steps -= 1
+        if !any_active || workspace.scheduler_remaining_steps == 0
+            workspace.scheduler_phase = NUTSSchedulerMerge
+        end
+        return true
+    elseif workspace.scheduler_phase == NUTSSchedulerMerge
+        _activate_batched_nuts_subtree_merge_cohort!(workspace)
+        if any(workspace.subtree_active)
+            _merge_batched_nuts_subtree_cohort!(
+                workspace,
+                inverse_mass_matrix,
+                rng,
+            )
+        end
+        workspace.scheduler_phase = NUTSSchedulerDone
+        workspace.scheduler_remaining_steps = 0
+        return true
+    end
+    return false
 end
 
 function _load_batched_nuts_first_states!(
@@ -3051,51 +3145,22 @@ function _continue_batched_nuts_batched_subtree!(
     rng::AbstractRNG,
 )
     max_tree_depth > 1 || return false
-    _prepare_batched_nuts_subtree_cohort!(
+    _begin_batched_nuts_subtree_scheduler!(
         workspace,
         max_tree_depth,
         rng,
-    ) > 0 || return false
-
-    for _ in 1:(1 << workspace.scheduler_active_depth)
-        _batched_nuts_leapfrog_step_to!(
-            workspace,
-            model,
-            workspace.tree_next_position,
-            workspace.tree_next_momentum,
-            workspace.tree_next_gradient,
-            workspace.proposed_logjoint,
-            workspace.tree_current_position,
-            workspace.tree_current_momentum,
-            workspace.tree_current_gradient,
-            inverse_mass_matrix,
-            args,
-            constraints,
-            step_size,
-            workspace.step_direction,
-            workspace.subtree_active,
-        )
-        _batched_hamiltonian!(
-            workspace.subtree_proposed_energy,
-            workspace.proposed_logjoint,
-            workspace.tree_next_momentum,
-            inverse_mass_matrix,
-        )
-        any_active = _advance_batched_nuts_subtree_cohort!(
-            workspace,
-            inverse_mass_matrix,
-            max_delta_energy,
-            rng,
-        )
-        any_active || break
-    end
-
-    _activate_batched_nuts_subtree_merge_cohort!(workspace) || return true
-    _merge_batched_nuts_subtree_cohort!(
+    ) || return false
+    while _step_batched_nuts_subtree_scheduler!(
         workspace,
+        model,
         inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
         rng,
     )
+    end
 
     return true
 end

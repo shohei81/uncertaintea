@@ -182,6 +182,9 @@ for dynamic trajectory building:
 - continuation gating and selected cohort metadata now also live in workspace
   masks and scalar scheduler state (`continuation_active`, `subtree_started`,
   selected depth/count) rather than transient local variables
+- the subtree scheduler itself now carries an explicit phase and remaining-step
+  counter (`idle -> expand -> merge -> done`), so batched continuation is
+  driven by a small state machine rather than a monolithic helper body
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

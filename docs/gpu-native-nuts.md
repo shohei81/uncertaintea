@@ -99,7 +99,8 @@ The current CPU NUTS path is intentionally narrow:
   and the batched depth-cohort scheduler now also stages reset/depth-select/
   cohort-activate/initialize/advance/merge through explicit helpers, with
   continuation-active and subtree-started masks plus selected depth/count kept
-  on the batched workspace itself
+  on the batched workspace itself, and with an explicit
+  `idle/expand/merge/done` scheduler phase plus remaining-step counter
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local
