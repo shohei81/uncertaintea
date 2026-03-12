@@ -1,4 +1,5 @@
 include("backend/lowering.jl")
+include("backend/lowering_extensions.jl")
 include("backend/emitter.jl")
 include("backend/expr_eval.jl")
 include("backend/scoring.jl")

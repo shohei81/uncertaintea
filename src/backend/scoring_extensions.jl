@@ -1,3 +1,31 @@
+function _backend_inversegamma_logpdf(shape, scale, x)
+    xx, shape_, scale_ = promote(x, shape, scale)
+    shape_ > zero(shape_) || throw(ArgumentError("inversegamma requires shape > 0"))
+    scale_ > zero(scale_) || throw(ArgumentError("inversegamma requires scale > 0"))
+    xx > zero(xx) || return oftype(xx, -Inf)
+    return shape_ * log(scale_) - loggamma(shape_) -
+           (shape_ + one(shape_)) * log(xx) -
+           scale_ / xx
+end
+
+function _backend_weibull_logpdf(shape, scale, x)
+    xx, shape_, scale_ = promote(x, shape, scale)
+    shape_ > zero(shape_) || throw(ArgumentError("weibull requires shape > 0"))
+    scale_ > zero(scale_) || throw(ArgumentError("weibull requires scale > 0"))
+    xx < zero(xx) && return oftype(xx, -Inf)
+    if xx == zero(xx)
+        if shape_ < one(shape_)
+            return oftype(xx, Inf)
+        elseif shape_ == one(shape_)
+            return -log(scale_)
+        end
+        return oftype(xx, -Inf)
+    end
+    log_ratio = log(xx) - log(scale_)
+    return log(shape_) + (shape_ - one(shape_)) * log(xx) -
+           shape_ * log(scale_) - exp(shape_ * log_ratio)
+end
+
 function _backend_beta_logpdf(alpha, beta_parameter, x)
     xx, alpha_, beta_ = promote(x, alpha, beta_parameter)
     alpha_ > zero(alpha_) || throw(ArgumentError("beta requires alpha > 0"))
@@ -6,6 +34,28 @@ function _backend_beta_logpdf(alpha, beta_parameter, x)
     return loggamma(alpha_ + beta_) - loggamma(alpha_) - loggamma(beta_) +
            (alpha_ - one(alpha_)) * log(xx) +
            (beta_ - one(beta_)) * log1p(-xx)
+end
+
+function _backend_binomial_logpdf(trials, probability, x)
+    probability_ = float(probability)
+    zero(probability_) <= probability_ <= one(probability_) ||
+        throw(ArgumentError("binomial requires 0 <= p <= 1"))
+    trial_count = _binomial_trials(trials)
+    isnothing(trial_count) && throw(ArgumentError("binomial requires integer trials >= 0"))
+    count = _poisson_count(x)
+    isnothing(count) && return oftype(probability_, -Inf)
+    count <= trial_count || return oftype(probability_, -Inf)
+    log_combination = _logbinomial_like(probability_, trial_count, count)
+    if count == 0 && count == trial_count
+        return log_combination
+    elseif count == 0
+        return log_combination + trial_count * log1p(-probability_)
+    elseif count == trial_count
+        return log_combination + count * log(probability_)
+    end
+    return log_combination +
+           count * log(probability_) +
+           (trial_count - count) * log1p(-probability_)
 end
 
 function _backend_categorical_logpdf(probabilities::Tuple, x)
@@ -25,6 +75,34 @@ function _backend_categorical_logpdf(probabilities::Tuple, x)
 end
 
 function _score_backend_step!(
+    step::BackendInverseGammaChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    shape = _eval_backend_numeric_expr(env, step.shape)
+    scale = _eval_backend_numeric_expr(env, step.scale)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_inversegamma_logpdf(shape, scale, value)
+end
+
+function _score_backend_step!(
+    step::BackendWeibullChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    shape = _eval_backend_numeric_expr(env, step.shape)
+    scale = _eval_backend_numeric_expr(env, step.scale)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_weibull_logpdf(shape, scale, value)
+end
+
+function _score_backend_step!(
     step::BackendBetaChoicePlanStep,
     env::PlanEnvironment,
     params::AbstractVector,
@@ -39,6 +117,21 @@ function _score_backend_step!(
 end
 
 function _score_backend_step!(
+    step::BackendBinomialChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    trials = _eval_backend_index_value_expr(env, step.trials)
+    probability = _eval_backend_numeric_expr(env, step.probability)
+    count = _binomial_trials(value)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, isnothing(count) ? value : count)
+    return _backend_binomial_logpdf(trials, probability, value)
+end
+
+function _score_backend_step!(
     step::BackendCategoricalChoicePlanStep,
     env::PlanEnvironment,
     params::AbstractVector,
@@ -50,6 +143,78 @@ function _score_backend_step!(
     index = _categorical_index(value, length(probabilities))
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, isnothing(index) ? value : index)
     return _backend_categorical_logpdf(probabilities, value)
+end
+
+function _score_backend_step!(
+    step::BackendInverseGammaChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    shape_values = _batched_numeric_scratch!(env, 1)
+    scale_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
+    _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        shape = shape_values[batch_index]
+        scale = scale_values[batch_index]
+        totals[batch_index] += _backend_inversegamma_logpdf(shape, scale, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendWeibullChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    shape_values = _batched_numeric_scratch!(env, 1)
+    scale_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
+    _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        shape = shape_values[batch_index]
+        scale = scale_values[batch_index]
+        totals[batch_index] += _backend_weibull_logpdf(shape, scale, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
 end
 
 function _score_backend_step!(
@@ -81,6 +246,43 @@ function _score_backend_step!(
                 env.index_values[step.binding_slot, batch_index] = Int(value)
             else
                 env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendBinomialChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    trials_values = _batched_index_scratch!(env, 1)
+    probability_values = _batched_numeric_scratch!(env, 1)
+    _eval_backend_index_value_expr!(trials_values, env, step.trials, 2)
+    _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        trials = trials_values[batch_index]
+        probability = probability_values[batch_index]
+        totals[batch_index] += _backend_binomial_logpdf(trials, probability, value)
+        if !isnothing(step.binding_slot)
+            count = _binomial_trials(value)
+            isnothing(count) && throw(
+                BatchedBackendFallback("index backend slot $(step.binding_slot) received non-binomial choice value"),
+            )
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), count)
+            elseif env.index_slots[step.binding_slot]
+                env.index_values[step.binding_slot, batch_index] = count
+            else
+                env.generic_values[step.binding_slot][batch_index] = count
             end
         end
     end
@@ -125,6 +327,52 @@ function _score_backend_step!(
 end
 
 function _score_backend_observed_loop_choice!(
+    step::BackendInverseGammaChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    shape_values = _batched_numeric_scratch!(env, 1)
+    scale_values = _batched_numeric_scratch!(env, 2)
+    observed_values = env.observed_values
+    _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
+    _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        shape = shape_values[batch_index]
+        scale = scale_values[batch_index]
+        totals[batch_index] += _backend_inversegamma_logpdf(shape, scale, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
+    step::BackendWeibullChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    shape_values = _batched_numeric_scratch!(env, 1)
+    scale_values = _batched_numeric_scratch!(env, 2)
+    observed_values = env.observed_values
+    _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
+    _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        shape = shape_values[batch_index]
+        scale = scale_values[batch_index]
+        totals[batch_index] += _backend_weibull_logpdf(shape, scale, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
     step::BackendBetaChoicePlanStep,
     totals::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -143,6 +391,29 @@ function _score_backend_observed_loop_choice!(
         alpha = alpha_values[batch_index]
         beta_parameter = beta_values[batch_index]
         totals[batch_index] += _backend_beta_logpdf(alpha, beta_parameter, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
+    step::BackendBinomialChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    trials_values = _batched_index_scratch!(env, 1)
+    probability_values = _batched_numeric_scratch!(env, 1)
+    observed_values = env.observed_values
+    _eval_backend_index_value_expr!(trials_values, env, step.trials, 2)
+    _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        trials = trials_values[batch_index]
+        probability = probability_values[batch_index]
+        totals[batch_index] += _backend_binomial_logpdf(trials, probability, value)
     end
     return totals
 end

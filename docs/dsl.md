@@ -183,8 +183,11 @@ The initial GPU-targeted distribution set should stay small:
 - `lognormal`
 - `exponential`
 - `gamma`
+- `inversegamma`
+- `weibull`
 - `beta`
 - `bernoulli`
+- `binomial`
 - `poisson`
 - `studentt`
 - `categorical`
@@ -196,6 +199,9 @@ Requirements:
 - backend-compatible `logpdf`
 - clear batch semantics
 - a well-defined constrained/unconstrained transform when needed
+- `binomial` is treated as a built-in distribution inside `@tea`, but direct
+  constructor calls outside the DSL should use `UncertainTea.binomial(...)`
+  because `Base` already defines a different `binomial`
 
 ## Inference-Oriented Consequences
 
@@ -222,8 +228,8 @@ The first real subset should include:
 5. `choicemap`
 6. `generate`
 7. a small distribution set starting with `normal`, `lognormal`,
-   `exponential`, `gamma`, `beta`, `bernoulli`, `poisson`, `studentt`,
-   and `categorical`
+   `exponential`, `gamma`, `inversegamma`, `weibull`, `beta`, `bernoulli`,
+   `binomial`, `poisson`, `studentt`, and `categorical`
 
 That is enough to build a CPU reference backend and a GPU-oriented static lowering path
 without committing to full Gen compatibility.

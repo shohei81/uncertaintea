@@ -22,8 +22,11 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :lognormal,
     :exponential,
     :gamma,
+    :inversegamma,
+    :weibull,
     :beta,
     :bernoulli,
+    :binomial,
     :poisson,
     :studentt,
     :categorical,
@@ -380,6 +383,24 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendGammaChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+    elseif step.rhs.family === :inversegamma
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "inversegamma expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendInverseGammaChoicePlanStep(
+            step.binding_slot,
+            address,
+            arguments[1],
+            arguments[2],
+            step.parameter_slot,
+        )
+    elseif step.rhs.family === :weibull
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "weibull expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendWeibullChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
     elseif step.rhs.family === :beta
         length(arguments) == 2 || begin
             _backend_issue!(issues, "beta expects exactly 2 backend arguments")
@@ -392,6 +413,12 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendBernoulliChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+    elseif step.rhs.family === :binomial
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "binomial expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
     elseif step.rhs.family === :categorical
         isempty(arguments) && begin
             _backend_issue!(issues, "categorical expects at least 1 backend argument")

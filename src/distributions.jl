@@ -30,6 +30,28 @@ struct GammaDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct InverseGammaDist{T<:Real} <: AbstractTeaDistribution
+    shape::T
+    scale::T
+
+    function InverseGammaDist(shape::T, scale::T) where {T<:Real}
+        shape > zero(T) || throw(ArgumentError("inversegamma requires shape > 0"))
+        scale > zero(T) || throw(ArgumentError("inversegamma requires scale > 0"))
+        new{T}(shape, scale)
+    end
+end
+
+struct WeibullDist{T<:Real} <: AbstractTeaDistribution
+    shape::T
+    scale::T
+
+    function WeibullDist(shape::T, scale::T) where {T<:Real}
+        shape > zero(T) || throw(ArgumentError("weibull requires shape > 0"))
+        scale > zero(T) || throw(ArgumentError("weibull requires scale > 0"))
+        new{T}(shape, scale)
+    end
+end
+
 struct BetaDist{T<:Real} <: AbstractTeaDistribution
     alpha::T
     beta::T
@@ -47,6 +69,17 @@ struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     function BernoulliDist(p::T) where {T<:Real}
         zero(T) <= p <= one(T) || throw(ArgumentError("bernoulli requires 0 <= p <= 1"))
         new{T}(p)
+    end
+end
+
+struct BinomialDist{T<:Real} <: AbstractTeaDistribution
+    trials::Int
+    p::T
+
+    function BinomialDist(trials::Int, p::T) where {T<:Real}
+        trials >= 0 || throw(ArgumentError("binomial requires trials >= 0"))
+        zero(T) <= p <= one(T) || throw(ArgumentError("binomial requires 0 <= p <= 1"))
+        new{T}(trials, p)
     end
 end
 
@@ -111,6 +144,16 @@ function gamma(shape, rate)
     return GammaDist(promoted_shape, promoted_rate)
 end
 
+function inversegamma(shape, scale)
+    promoted_shape, promoted_scale = promote(shape, scale)
+    return InverseGammaDist(promoted_shape, promoted_scale)
+end
+
+function weibull(shape, scale)
+    promoted_shape, promoted_scale = promote(shape, scale)
+    return WeibullDist(promoted_shape, promoted_scale)
+end
+
 function beta(alpha, beta_parameter)
     promoted_alpha, promoted_beta = promote(alpha, beta_parameter)
     return BetaDist(promoted_alpha, promoted_beta)
@@ -123,6 +166,12 @@ end
 
 function bernoulli(p)
     return BernoulliDist(p)
+end
+
+function binomial(trials, p)
+    count = _binomial_trials(trials)
+    isnothing(count) && throw(ArgumentError("binomial requires integer trials >= 0"))
+    return BinomialDist(count, p)
 end
 
 function categorical(probabilities::AbstractVector)
@@ -179,6 +228,18 @@ function Random.rand(rng::AbstractRNG, dist::GammaDist)
     return _rand_gamma_marsaglia(rng, shape, rate)
 end
 
+function Random.rand(rng::AbstractRNG, dist::InverseGammaDist)
+    shape = float(dist.shape)
+    scale = float(dist.scale)
+    return inv(_rand_gamma_marsaglia(rng, shape, scale))
+end
+
+function Random.rand(rng::AbstractRNG, dist::WeibullDist)
+    shape = float(dist.shape)
+    scale = float(dist.scale)
+    return scale * (randexp(rng, typeof(scale)) ^ inv(shape))
+end
+
 function Random.rand(rng::AbstractRNG, dist::BetaDist)
     alpha = float(dist.alpha)
     beta_parameter = float(dist.beta)
@@ -189,6 +250,14 @@ end
 
 function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
     return rand(rng) < dist.p
+end
+
+function Random.rand(rng::AbstractRNG, dist::BinomialDist)
+    successes = 0
+    for _ in 1:dist.trials
+        successes += rand(rng) < dist.p
+    end
+    return successes
 end
 
 function Random.rand(rng::AbstractRNG, dist::CategoricalDist)
@@ -244,6 +313,27 @@ function logpdf(dist::GammaDist, x)
     return shape * log(rate) - loggamma(shape) + (shape - one(shape)) * log(xx) - rate * xx
 end
 
+function logpdf(dist::InverseGammaDist, x)
+    xx, shape, scale = promote(x, dist.shape, dist.scale)
+    xx > zero(xx) || return oftype(xx, -Inf)
+    return shape * log(scale) - loggamma(shape) - (shape + one(shape)) * log(xx) - scale / xx
+end
+
+function logpdf(dist::WeibullDist, x)
+    xx, shape, scale = promote(x, dist.shape, dist.scale)
+    xx < zero(xx) && return oftype(xx, -Inf)
+    if xx == zero(xx)
+        if shape < one(shape)
+            return oftype(xx, Inf)
+        elseif shape == one(shape)
+            return -log(scale)
+        end
+        return oftype(xx, -Inf)
+    end
+    log_ratio = log(xx) - log(scale)
+    return log(shape) + (shape - one(shape)) * log(xx) - shape * log(scale) - exp(shape * log_ratio)
+end
+
 function logpdf(dist::BetaDist, x)
     xx, alpha, beta_parameter = promote(x, dist.alpha, dist.beta)
     zero(xx) < xx < one(xx) || return oftype(xx, -Inf)
@@ -266,6 +356,8 @@ function _poisson_count(x)
     end
     return nothing
 end
+
+_binomial_trials(x) = _poisson_count(x)
 
 function _categorical_index(x, categories::Int)
     if x isa Integer
@@ -290,6 +382,30 @@ function _logfactorial_like(value, n::Integer)
         total += log(unit * k)
     end
     return total
+end
+
+function _logbinomial_like(value, n::Integer, k::Integer)
+    return _logfactorial_like(value, n) -
+           _logfactorial_like(value, k) -
+           _logfactorial_like(value, n - k)
+end
+
+function logpdf(dist::BinomialDist, x)
+    count = _poisson_count(x)
+    isnothing(count) && return oftype(float(dist.p), -Inf)
+    count <= dist.trials || return oftype(float(dist.p), -Inf)
+    probability = dist.p
+    log_combination = _logbinomial_like(probability, dist.trials, count)
+    if count == 0 && count == dist.trials
+        return log_combination
+    elseif count == 0
+        return log_combination + dist.trials * log1p(-probability)
+    elseif count == dist.trials
+        return log_combination + count * log(probability)
+    end
+    return log_combination +
+           count * log(probability) +
+           (dist.trials - count) * log1p(-probability)
 end
 
 function logpdf(dist::PoissonDist, x)

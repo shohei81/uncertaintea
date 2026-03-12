@@ -357,7 +357,8 @@ end
 function _parameter_transform(rhs::DistributionSpec)
     if rhs.family === :normal || rhs.family === :studentt
         return IdentityTransform()
-    elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma
+    elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma ||
+           rhs.family === :inversegamma || rhs.family === :weibull
         return LogTransform()
     elseif rhs.family === :beta
         return LogitTransform()

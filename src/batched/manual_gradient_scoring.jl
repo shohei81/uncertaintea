@@ -163,6 +163,70 @@ function _accumulate_gamma_gradient!(
     return totals, gradients
 end
 
+function _accumulate_inversegamma_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    value_values::AbstractVector{Float64},
+    value_gradients::AbstractMatrix{Float64},
+    shape_values::AbstractVector{Float64},
+    shape_gradients::AbstractMatrix{Float64},
+    scale_values::AbstractVector{Float64},
+    scale_gradients::AbstractMatrix{Float64},
+)
+    for batch_index in eachindex(totals)
+        value = value_values[batch_index]
+        shape = shape_values[batch_index]
+        scale = scale_values[batch_index]
+        totals[batch_index] += _backend_inversegamma_logpdf(shape, scale, value)
+        if !(value > 0)
+            continue
+        end
+        dvalue = -(shape + 1) / value + scale / (value * value)
+        dshape = log(scale) - digamma(shape) - log(value)
+        dscale = shape / scale - 1 / value
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] +=
+                dvalue * value_gradients[parameter_index, batch_index] +
+                dshape * shape_gradients[parameter_index, batch_index] +
+                dscale * scale_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+function _accumulate_weibull_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    value_values::AbstractVector{Float64},
+    value_gradients::AbstractMatrix{Float64},
+    shape_values::AbstractVector{Float64},
+    shape_gradients::AbstractMatrix{Float64},
+    scale_values::AbstractVector{Float64},
+    scale_gradients::AbstractMatrix{Float64},
+)
+    for batch_index in eachindex(totals)
+        value = value_values[batch_index]
+        shape = shape_values[batch_index]
+        scale = scale_values[batch_index]
+        totals[batch_index] += _backend_weibull_logpdf(shape, scale, value)
+        if !(value > 0)
+            continue
+        end
+        log_ratio = log(value) - log(scale)
+        ratio_power = exp(shape * log_ratio)
+        dvalue = (shape - 1 - shape * ratio_power) / value
+        dshape = 1 / shape + log_ratio - ratio_power * log_ratio
+        dscale = shape * (ratio_power - 1) / scale
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] +=
+                dvalue * value_gradients[parameter_index, batch_index] +
+                dshape * shape_gradients[parameter_index, batch_index] +
+                dscale * scale_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
 function _accumulate_beta_gradient!(
     totals::AbstractVector{Float64},
     gradients::AbstractMatrix{Float64},
@@ -189,6 +253,36 @@ function _accumulate_beta_gradient!(
                 dvalue * value_gradients[parameter_index, batch_index] +
                 dalpha * alpha_gradients[parameter_index, batch_index] +
                 dbeta * beta_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+function _accumulate_binomial_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    trials_values::AbstractVector{Int},
+    probability_values::AbstractVector{Float64},
+    probability_gradients::AbstractMatrix{Float64},
+    value_values::AbstractVector{Float64},
+)
+    for batch_index in eachindex(totals)
+        trials = trials_values[batch_index]
+        probability = probability_values[batch_index]
+        value = value_values[batch_index]
+        totals[batch_index] += _backend_binomial_logpdf(trials, probability, value)
+        count = _poisson_count(value)
+        if isnothing(count) || count > trials
+            continue
+        elseif count == 0
+            derivative = -trials / (1 - probability)
+        elseif count == trials
+            derivative = count / probability
+        else
+            derivative = count / probability - (trials - count) / (1 - probability)
+        end
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] += derivative * probability_gradients[parameter_index, batch_index]
         end
     end
     return totals, gradients
@@ -429,6 +523,76 @@ function _score_backend_step_and_gradient!(
 end
 
 function _score_backend_step_and_gradient!(
+    step::BackendInverseGammaChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    value_values = env.observed_values
+    value_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    shape_values = _batched_numeric_scratch!(env, 1)
+    shape_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    scale_values = _batched_numeric_scratch!(env, 2)
+    scale_gradients = _batched_backend_gradient_scratch!(cache, 3)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _eval_backend_numeric_expr_and_gradient!(shape_values, shape_gradients, cache, env, step.shape, 4)
+    _eval_backend_numeric_expr_and_gradient!(scale_values, scale_gradients, cache, env, step.scale, 5)
+    _accumulate_inversegamma_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        shape_values,
+        shape_gradients,
+        scale_values,
+        scale_gradients,
+    )
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendWeibullChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    value_values = env.observed_values
+    value_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    shape_values = _batched_numeric_scratch!(env, 1)
+    shape_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    scale_values = _batched_numeric_scratch!(env, 2)
+    scale_gradients = _batched_backend_gradient_scratch!(cache, 3)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _eval_backend_numeric_expr_and_gradient!(shape_values, shape_gradients, cache, env, step.shape, 4)
+    _eval_backend_numeric_expr_and_gradient!(scale_values, scale_gradients, cache, env, step.scale, 5)
+    _accumulate_weibull_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        shape_values,
+        shape_gradients,
+        scale_values,
+        scale_gradients,
+    )
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
     step::BackendBetaChoicePlanStep,
     totals::AbstractVector{Float64},
     gradients::AbstractMatrix{Float64},
@@ -481,6 +645,39 @@ function _score_backend_step_and_gradient!(
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
     _eval_backend_numeric_expr_and_gradient!(probability_values, probability_gradients, cache, env, step.probability, 2)
     _accumulate_bernoulli_gradient!(totals, gradients, probability_values, probability_gradients, value_values)
+
+    if !isnothing(step.binding_slot)
+        _assign_backend_choice_value!(
+            env,
+            cache.slot_gradients,
+            step.binding_slot,
+            value_values,
+            _zero_gradient!(_batched_backend_gradient_scratch!(cache, 3)),
+        )
+    end
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendBinomialChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Binomial latent parameters"))
+    value_values = env.observed_values
+    trials_values = _batched_index_scratch!(env, 1)
+    probability_values = _batched_numeric_scratch!(env, 1)
+    probability_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _eval_backend_index_value_expr!(trials_values, env, step.trials, 2)
+    _eval_backend_numeric_expr_and_gradient!(probability_values, probability_gradients, cache, env, step.probability, 2)
+    _accumulate_binomial_gradient!(totals, gradients, trials_values, probability_values, probability_gradients, value_values)
 
     if !isnothing(step.binding_slot)
         _assign_backend_choice_value!(

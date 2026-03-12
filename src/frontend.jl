@@ -24,6 +24,13 @@ function _tea_mode(mode_expr)
     end
 end
 
+function _qualify_builtin_distribution(name)
+    if name in (:normal, :lognormal, :exponential, :gamma, :inversegamma, :weibull, :beta, :bernoulli, :binomial, :poisson, :studentt, :categorical)
+        return _qualify(name)
+    end
+    return name
+end
+
 function _rewrite_tea_expr(expr, ctxsym)
     if !(expr isa Expr)
         return expr
@@ -42,7 +49,10 @@ function _rewrite_tea_expr(expr, ctxsym)
         end
     end
 
-    rewritten_args = map(arg -> _rewrite_tea_expr(arg, ctxsym), expr.args)
+    rewritten_args = Any[_rewrite_tea_expr(arg, ctxsym) for arg in expr.args]
+    if expr.head == :call && !isempty(rewritten_args) && rewritten_args[1] isa Symbol
+        rewritten_args[1] = _qualify_builtin_distribution(rewritten_args[1])
+    end
     return Expr(expr.head, rewritten_args...)
 end
 
@@ -116,8 +126,11 @@ function _rhs_spec_expr(rhs)
             :lognormal,
             :exponential,
             :gamma,
+            :inversegamma,
+            :weibull,
             :beta,
             :bernoulli,
+            :binomial,
             :poisson,
             :studentt,
             :categorical,
@@ -173,7 +186,8 @@ end
 function _supported_distribution_family(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
     family = rhs.args[1]
-    family in (:normal, :lognormal, :exponential, :gamma, :beta, :studentt) || return nothing
+    family in (:normal, :lognormal, :exponential, :gamma, :inversegamma, :weibull, :beta, :studentt) ||
+        return nothing
     return family
 end
 
@@ -187,7 +201,8 @@ function _parameter_transform_expr(rhs)
 
     if family === :normal
         return :($(_qualify(:IdentityTransform))())
-    elseif family === :lognormal || family === :exponential || family === :gamma
+    elseif family === :lognormal || family === :exponential || family === :gamma ||
+           family === :inversegamma || family === :weibull
         return :($(_qualify(:LogTransform))())
     elseif family === :beta
         return :($(_qualify(:LogitTransform))())
