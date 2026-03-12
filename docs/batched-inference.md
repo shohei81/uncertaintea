@@ -221,7 +221,8 @@ for dynamic trajectory building:
   per-stage generated-argument descriptors, and then into an artifact-plan
   layer with backend artifact symbols and generated-kernel artifact layouts,
   and now into a source-plan layer with generated stub source entrypoints and
-  backend-specific argument declarations,
+  backend-specific argument declarations, and then into a module-plan layer
+  with materialized source blobs and backend-specific filenames,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,

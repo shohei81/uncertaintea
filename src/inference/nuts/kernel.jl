@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    source_plan = _batched_nuts_source_plan(program)
-    for source_stage in _batched_nuts_source_stages(source_plan)
-        _execute_batched_nuts_source_stage!(
+    module_plan = _batched_nuts_module_plan(program)
+    for module_stage in _batched_nuts_module_stages(module_plan)
+        _execute_batched_nuts_module_stage!(
             workspace,
-            source_plan,
-            source_stage,
+            module_plan,
+            module_stage,
             execution,
             model,
             inverse_mass_matrix,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_source_stage!(
+function _execute_batched_nuts_module_stage!(
     workspace::BatchedNUTSWorkspace,
-    source_plan::BatchedNUTSKernelSourcePlan,
-    source_stage::BatchedNUTSKernelSourceStage,
+    module_plan::BatchedNUTSKernelModulePlan,
+    module_stage::BatchedNUTSKernelModuleStage,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -480,7 +480,9 @@ function _execute_batched_nuts_source_stage!(
             _batched_nuts_executor_launch_stage(
                 _batched_nuts_codegen_executor_stage(
                     _batched_nuts_artifact_codegen_stage(
-                        _batched_nuts_source_artifact_stage(source_stage),
+                        _batched_nuts_source_artifact_stage(
+                            _batched_nuts_module_source_stage(module_stage),
+                        ),
                     ),
                 ),
             ),
@@ -495,7 +497,9 @@ function _execute_batched_nuts_source_stage!(
         rng,
     )
     for barrier in _batched_nuts_artifact_barriers_after(
-        _batched_nuts_source_artifact_stage(source_stage),
+        _batched_nuts_source_artifact_stage(
+            _batched_nuts_module_source_stage(module_stage),
+        ),
     )
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
