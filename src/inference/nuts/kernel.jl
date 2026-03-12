@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    artifact_plan = _batched_nuts_artifact_plan(program)
-    for artifact_stage in _batched_nuts_artifact_stages(artifact_plan)
-        _execute_batched_nuts_artifact_stage!(
+    source_plan = _batched_nuts_source_plan(program)
+    for source_stage in _batched_nuts_source_stages(source_plan)
+        _execute_batched_nuts_source_stage!(
             workspace,
-            artifact_plan,
-            artifact_stage,
+            source_plan,
+            source_stage,
             execution,
             model,
             inverse_mass_matrix,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_artifact_stage!(
+function _execute_batched_nuts_source_stage!(
     workspace::BatchedNUTSWorkspace,
-    artifact_plan::BatchedNUTSKernelArtifactPlan,
-    artifact_stage::BatchedNUTSKernelArtifactStage,
+    source_plan::BatchedNUTSKernelSourcePlan,
+    source_stage::BatchedNUTSKernelSourceStage,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -479,7 +479,9 @@ function _execute_batched_nuts_artifact_stage!(
         _batched_nuts_launch_stage_dataflow(
             _batched_nuts_executor_launch_stage(
                 _batched_nuts_codegen_executor_stage(
-                    _batched_nuts_artifact_codegen_stage(artifact_stage),
+                    _batched_nuts_artifact_codegen_stage(
+                        _batched_nuts_source_artifact_stage(source_stage),
+                    ),
                 ),
             ),
         ),
@@ -492,7 +494,9 @@ function _execute_batched_nuts_artifact_stage!(
         max_delta_energy,
         rng,
     )
-    for barrier in _batched_nuts_artifact_barriers_after(artifact_stage)
+    for barrier in _batched_nuts_artifact_barriers_after(
+        _batched_nuts_source_artifact_stage(source_stage),
+    )
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
     return nothing

@@ -194,7 +194,8 @@ Current backend-lowering subset:
   symbols, and then into a codegen-plan layer with backend module symbols,
   generated entry symbols, and per-stage generated-argument descriptors, and
   then into an artifact-plan layer with backend artifact symbols and generated
-  kernel layouts, and
+  kernel layouts, and then into a source-plan layer with generated stub source
+  entrypoints and backend-specific argument declarations, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
