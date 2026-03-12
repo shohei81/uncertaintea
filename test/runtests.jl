@@ -1666,6 +1666,8 @@ using UncertainTea
         UncertainTea.BatchedNUTSSchedulerState
     idle_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
     @test idle_ir isa UncertainTea.BatchedNUTSIdleIR
+    idle_block = UncertainTea._batched_nuts_control_block(gaussian_cohort_scheduler_workspace)
+    @test idle_block isa UncertainTea.BatchedNUTSIdleControlBlock
     @test UncertainTea._begin_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         4,
@@ -1684,6 +1686,10 @@ using UncertainTea
     @test expand_ir.active_depth_count == 3
     @test expand_ir.remaining_steps == 2
     @test expand_ir.active_chains == BitVector([true, true, true])
+    expand_block = UncertainTea._batched_nuts_control_block(gaussian_cohort_scheduler_workspace)
+    @test expand_block isa UncertainTea.BatchedNUTSExpandControlBlock
+    @test expand_block.active_chains == expand_ir.active_chains
+    @test expand_block.step_direction == expand_ir.step_direction
     while gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1703,6 +1709,10 @@ using UncertainTea
     @test merge_ir.active_depth_count == 3
     @test merge_ir.started_chains == BitVector([true, true, true])
     @test merge_ir.merge_active == BitVector([true, true, true])
+    merge_block = UncertainTea._batched_nuts_control_block(gaussian_cohort_scheduler_workspace)
+    @test merge_block isa UncertainTea.BatchedNUTSMergeControlBlock
+    @test merge_block.started_chains == merge_ir.started_chains
+    @test merge_block.merge_active == merge_ir.merge_active
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1722,6 +1732,8 @@ using UncertainTea
         BitVector([true, true, true])
     done_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
     @test done_ir isa UncertainTea.BatchedNUTSDoneIR
+    done_block = UncertainTea._batched_nuts_control_block(gaussian_cohort_scheduler_workspace)
+    @test done_block isa UncertainTea.BatchedNUTSDoneControlBlock
     @test gaussian_cohort_scheduler_workspace.control.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
         BitVector([true, true, true])
@@ -1754,12 +1766,14 @@ using UncertainTea
     )
     expand_direct_ir = UncertainTea._batched_nuts_control_ir(gaussian_expand_ir_workspace)
     @test expand_direct_ir isa UncertainTea.BatchedNUTSExpandIR
+    expand_direct_block = UncertainTea._batched_nuts_control_block(expand_direct_ir)
+    @test expand_direct_block isa UncertainTea.BatchedNUTSExpandControlBlock
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
     fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_expand_ir_workspace,
-        expand_direct_ir,
+        expand_direct_block,
         gaussian_mean,
         [1.0],
         (),
@@ -1812,12 +1826,14 @@ using UncertainTea
     end
     merge_direct_ir = UncertainTea._batched_nuts_control_ir(gaussian_merge_ir_workspace)
     @test merge_direct_ir isa UncertainTea.BatchedNUTSMergeIR
+    merge_direct_block = UncertainTea._batched_nuts_control_block(merge_direct_ir)
+    @test merge_direct_block isa UncertainTea.BatchedNUTSMergeControlBlock
     merge_tree_depths = copy(gaussian_merge_ir_workspace.control.tree_depths)
     fill!(gaussian_merge_ir_workspace.control.scheduler.subtree_started, false)
     fill!(gaussian_merge_ir_workspace.subtree_active, false)
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_merge_ir_workspace,
-        merge_direct_ir,
+        merge_direct_block,
         gaussian_mean,
         [1.0],
         (),

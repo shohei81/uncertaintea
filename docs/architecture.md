@@ -171,7 +171,8 @@ Current backend-lowering subset:
   workspace fields, and that control object now lowers to a small
   `IdleIR`/`ExpandIR`/`MergeIR`/`DoneIR` snapshot that the scheduler step can
   dispatch through directly, with `ExpandIR`/`MergeIR` reloading the active
-  control masks they need from the IR payload itself; the
+  control masks they need from the IR payload itself through an intermediate
+  executable control-block layer; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

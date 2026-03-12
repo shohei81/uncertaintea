@@ -194,7 +194,8 @@ for dynamic trajectory building:
   (`IdleIR`, `ExpandIR`, `MergeIR`, `DoneIR`), and the subtree scheduler step
   dispatches through that IR shape instead of branching directly on the raw
   phase enum; `ExpandIR` and `MergeIR` now also reload the scheduler's active
-  masks and sampled directions from the IR payload before executing
+  masks and sampled directions from the IR payload before executing, via an
+  explicit executable control-block layer built from each IR snapshot
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

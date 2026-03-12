@@ -227,6 +227,28 @@ end
 
 struct BatchedNUTSDoneIR <: AbstractBatchedNUTSControlIR end
 
+abstract type AbstractBatchedNUTSControlBlock end
+
+struct BatchedNUTSIdleControlBlock <: AbstractBatchedNUTSControlBlock
+    ir::BatchedNUTSIdleIR
+end
+
+struct BatchedNUTSExpandControlBlock <: AbstractBatchedNUTSControlBlock
+    ir::BatchedNUTSExpandIR
+    active_chains::BitVector
+    step_direction::Vector{Int}
+end
+
+struct BatchedNUTSMergeControlBlock <: AbstractBatchedNUTSControlBlock
+    ir::BatchedNUTSMergeIR
+    started_chains::BitVector
+    merge_active::BitVector
+end
+
+struct BatchedNUTSDoneControlBlock <: AbstractBatchedNUTSControlBlock
+    ir::BatchedNUTSDoneIR
+end
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -2113,6 +2135,44 @@ function _batched_nuts_control_ir(
     return BatchedNUTSDoneIR()
 end
 
+function _batched_nuts_control_block(
+    workspace::BatchedNUTSWorkspace,
+)
+    return _batched_nuts_control_block(_batched_nuts_control_ir(workspace))
+end
+
+function _batched_nuts_control_block(
+    ir::BatchedNUTSIdleIR,
+)
+    return BatchedNUTSIdleControlBlock(ir)
+end
+
+function _batched_nuts_control_block(
+    ir::BatchedNUTSExpandIR,
+)
+    return BatchedNUTSExpandControlBlock(
+        ir,
+        copy(ir.active_chains),
+        copy(ir.step_direction),
+    )
+end
+
+function _batched_nuts_control_block(
+    ir::BatchedNUTSMergeIR,
+)
+    return BatchedNUTSMergeControlBlock(
+        ir,
+        copy(ir.started_chains),
+        copy(ir.merge_active),
+    )
+end
+
+function _batched_nuts_control_block(
+    ir::BatchedNUTSDoneIR,
+)
+    return BatchedNUTSDoneControlBlock(ir)
+end
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ::BatchedNUTSIdleIR,
@@ -2120,6 +2180,13 @@ function _load_batched_nuts_control_ir!(
     workspace.control.scheduler.phase = NUTSSchedulerIdle
     workspace.control.scheduler.remaining_steps = 0
     return workspace
+end
+
+function _load_batched_nuts_control_block!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSIdleControlBlock,
+)
+    return _load_batched_nuts_control_ir!(workspace, block.ir)
 end
 
 function _load_batched_nuts_control_ir!(
@@ -2135,6 +2202,16 @@ function _load_batched_nuts_control_ir!(
     return workspace
 end
 
+function _load_batched_nuts_control_block!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSExpandControlBlock,
+)
+    _load_batched_nuts_control_ir!(workspace, block.ir)
+    copyto!(workspace.subtree_active, block.active_chains)
+    copyto!(workspace.control.step_direction, block.step_direction)
+    return workspace
+end
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ir::BatchedNUTSMergeIR,
@@ -2147,6 +2224,15 @@ function _load_batched_nuts_control_ir!(
     return workspace
 end
 
+function _load_batched_nuts_control_block!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSMergeControlBlock,
+)
+    _load_batched_nuts_control_ir!(workspace, block.ir)
+    copyto!(workspace.control.scheduler.subtree_started, block.started_chains)
+    return workspace
+end
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ::BatchedNUTSDoneIR,
@@ -2154,6 +2240,13 @@ function _load_batched_nuts_control_ir!(
     workspace.control.scheduler.phase = NUTSSchedulerDone
     workspace.control.scheduler.remaining_steps = 0
     return workspace
+end
+
+function _load_batched_nuts_control_block!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSDoneControlBlock,
+)
+    return _load_batched_nuts_control_ir!(workspace, block.ir)
 end
 
 function _advance_batched_nuts_subtree_cohort!(
@@ -2299,6 +2392,28 @@ function _activate_batched_nuts_subtree_merge_cohort!(
     return any_started
 end
 
+function _activate_batched_nuts_subtree_merge_cohort!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSMergeControlBlock,
+)
+    copyto!(workspace.control.scheduler.subtree_started, block.started_chains)
+    fill!(workspace.subtree_active, false)
+    any_started = false
+    for chain_index in eachindex(workspace.control.tree_depths)
+        block.started_chains[chain_index] || continue
+
+        workspace.control.tree_depths[chain_index] += 1
+        if !block.merge_active[chain_index]
+            workspace.control.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
+            continue
+        end
+
+        workspace.subtree_active[chain_index] = true
+        any_started = true
+    end
+    return any_started
+end
+
 function _merge_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
     inverse_mass_matrix::Vector{Float64},
@@ -2375,10 +2490,10 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    ir = _batched_nuts_control_ir(workspace)
+    block = _batched_nuts_control_block(workspace)
     return _step_batched_nuts_subtree_scheduler!(
         workspace,
-        ir,
+        block,
         model,
         inverse_mass_matrix,
         args,
@@ -2391,7 +2506,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    ::BatchedNUTSIdleIR,
+    ir::AbstractBatchedNUTSControlIR,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2400,13 +2515,37 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_ir!(workspace, BatchedNUTSIdleIR())
+    return _step_batched_nuts_subtree_scheduler!(
+        workspace,
+        _batched_nuts_control_block(ir),
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSIdleControlBlock,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _load_batched_nuts_control_block!(workspace, block)
     return false
 end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    ir::BatchedNUTSExpandIR,
+    block::BatchedNUTSExpandControlBlock,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2415,7 +2554,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_ir!(workspace, ir)
+    _load_batched_nuts_control_block!(workspace, block)
     _batched_nuts_leapfrog_step_to!(
         workspace,
         model,
@@ -2430,8 +2569,8 @@ function _step_batched_nuts_subtree_scheduler!(
         args,
         constraints,
         step_size,
-        workspace.control.step_direction,
-        workspace.subtree_active,
+        block.step_direction,
+        block.active_chains,
     )
     _batched_hamiltonian!(
         workspace.subtree_proposed_energy,
@@ -2454,7 +2593,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    ir::BatchedNUTSMergeIR,
+    block::BatchedNUTSMergeControlBlock,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2463,9 +2602,9 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_ir!(workspace, ir)
-    _activate_batched_nuts_subtree_merge_cohort!(workspace, ir)
-    if any(workspace.subtree_active)
+    _load_batched_nuts_control_block!(workspace, block)
+    any_active = _activate_batched_nuts_subtree_merge_cohort!(workspace, block)
+    if any_active
         _merge_batched_nuts_subtree_cohort!(
             workspace,
             inverse_mass_matrix,
@@ -2479,7 +2618,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    ::BatchedNUTSDoneIR,
+    block::BatchedNUTSDoneControlBlock,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2488,7 +2627,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_ir!(workspace, BatchedNUTSDoneIR())
+    _load_batched_nuts_control_block!(workspace, block)
     return false
 end
 
