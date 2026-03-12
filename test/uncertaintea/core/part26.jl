@@ -25,6 +25,8 @@
     @test mvnormal_smc.stages[1].beta_start == 0.0
     @test mvnormal_smc.stages[1].beta_end ≈ 1.0 atol=1e-8
     @test !mvnormal_smc.stages[1].resampled
+    @test mvnormal_smc.stages[1].move_steps == 0
+    @test mvnormal_smc.stages[1].move_acceptance_rate == 0.0
     @test mvnormal_smc.importance.log_evidence_estimate ≈ 0.0 atol=1e-8
     @test ess(mvnormal_smc) ≈ 20.0 atol=1e-8
     @test sum(mvnormal_smc.importance.normalized_weights) ≈ 1.0 atol=1e-8
@@ -38,6 +40,8 @@
         proposal_loc=Float64[-1.2, 0.8],
         proposal_log_scale=fill(0.2, 2),
         target_ess_ratio=0.95,
+        move_steps=2,
+        move_scale=0.05,
         rng=MersenneTwister(211),
     )
 
@@ -56,7 +60,10 @@
     for stage in dirichlet_smc.stages[1:end-1]
         @test stage.resampled
         @test stage.effective_sample_size >= 0.95 * 24 - 1e-4
+        @test stage.move_steps == 2
+        @test 0.0 <= stage.move_acceptance_rate <= 1.0
     end
+    @test any(stage.move_acceptance_rate > 0.0 for stage in dirichlet_smc.stages if stage.move_steps > 0)
     for ancestors in dirichlet_smc.ancestor_history
         @test length(ancestors) == 24
         @test all(1 .<= ancestors .<= 24)

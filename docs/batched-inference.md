@@ -77,6 +77,9 @@ The current reference inference layer now includes:
 - `batched_smc`, which now uses adaptive tempering between the Gaussian
   proposal and the target density, with stage-wise ESS control and systematic
   resampling between intermediate targets
+- those tempered stages can now optionally run batched random-walk
+  rejuvenation moves after resampling, so particle diversity does not depend
+  only on the initial proposal
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

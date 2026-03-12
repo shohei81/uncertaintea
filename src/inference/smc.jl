@@ -28,6 +28,8 @@ struct SMCStageSummary
     effective_sample_size::Float64
     log_normalizer_increment::Float64
     resampled::Bool
+    move_steps::Int
+    move_acceptance_rate::Float64
 end
 
 struct SMCResult
@@ -175,6 +177,125 @@ function _resampled_particle_matrix(
     return samples
 end
 
+function _resampled_particle_vector(
+    values::AbstractVector,
+    ancestors::AbstractVector{Int},
+)
+    samples = Vector{Float64}(undef, length(ancestors))
+    for (sample_index, ancestor_index) in enumerate(ancestors)
+        samples[sample_index] = Float64(values[ancestor_index])
+    end
+    return samples
+end
+
+function _gaussian_logdensity_from_particles!(
+    destination::AbstractVector,
+    particles::AbstractMatrix,
+    location::AbstractVector,
+    log_scale::AbstractVector,
+    scratch_noise::AbstractMatrix,
+)
+    size(particles) == size(scratch_noise) ||
+        throw(DimensionMismatch("expected particle and Gaussian scratch matrices to have matching shapes"))
+    size(particles, 1) == length(location) == length(log_scale) ||
+        throw(
+            DimensionMismatch(
+                "expected Gaussian particle matrices with $(length(location)) rows, got $(size(particles, 1))",
+            ),
+        )
+    size(particles, 2) == length(destination) ||
+        throw(DimensionMismatch("expected Gaussian log-density destination of length $(size(particles, 2)), got $(length(destination))"))
+
+    for parameter_index in eachindex(location, log_scale)
+        scale = exp(log_scale[parameter_index])
+        for particle_index in axes(particles, 2)
+            scratch_noise[parameter_index, particle_index] =
+                (particles[parameter_index, particle_index] - location[parameter_index]) / scale
+        end
+    end
+    return _gaussian_logdensity!(destination, scratch_noise, log_scale)
+end
+
+function _tempered_logdensity!(
+    destination::AbstractVector,
+    beta::Float64,
+    logjoint_values::AbstractVector,
+    logproposal_values::AbstractVector,
+)
+    length(destination) == length(logjoint_values) == length(logproposal_values) ||
+        throw(DimensionMismatch("expected tempered logdensity vectors of matching length"))
+    for index in eachindex(destination, logjoint_values, logproposal_values)
+        destination[index] =
+            beta * logjoint_values[index] + (1.0 - beta) * logproposal_values[index]
+    end
+    return destination
+end
+
+function _batched_random_walk_move!(
+    particles::AbstractMatrix,
+    logjoint_values::AbstractVector,
+    logproposal_values::AbstractVector,
+    log_ratio::AbstractVector,
+    model::TeaModel,
+    args::Tuple,
+    constraints::ChoiceMap,
+    proposal_location::AbstractVector,
+    proposal_log_scale::AbstractVector,
+    beta::Float64,
+    move_scale::AbstractVector,
+    num_steps::Int,
+    rng::AbstractRNG,
+)
+    num_steps > 0 || return 0.0
+    size(particles, 1) == length(proposal_location) == length(proposal_log_scale) == length(move_scale) ||
+        throw(DimensionMismatch("expected move-step vectors to match particle rows"))
+    size(particles, 2) == length(logjoint_values) == length(logproposal_values) == length(log_ratio) ||
+        throw(DimensionMismatch("expected move-step particle metadata to match particle count"))
+
+    proposal_particles = similar(particles)
+    proposal_noise = similar(particles)
+    current_tempered = Vector{Float64}(undef, size(particles, 2))
+    proposal_tempered = similar(current_tempered)
+    proposal_logjoint = similar(logjoint_values)
+    proposal_logproposal = similar(logproposal_values)
+    accepted = 0
+    total = size(particles, 2) * num_steps
+
+    for _ in 1:num_steps
+        for parameter_index in axes(particles, 1)
+            scale = move_scale[parameter_index]
+            for particle_index in axes(particles, 2)
+                proposal_particles[parameter_index, particle_index] =
+                    particles[parameter_index, particle_index] + scale * randn(rng)
+            end
+        end
+
+        copyto!(proposal_logjoint, batched_logjoint_unconstrained(model, proposal_particles, args, constraints))
+        _gaussian_logdensity_from_particles!(
+            proposal_logproposal,
+            proposal_particles,
+            proposal_location,
+            proposal_log_scale,
+            proposal_noise,
+        )
+        _tempered_logdensity!(current_tempered, beta, logjoint_values, logproposal_values)
+        _tempered_logdensity!(proposal_tempered, beta, proposal_logjoint, proposal_logproposal)
+
+        for particle_index in eachindex(current_tempered, proposal_tempered)
+            log_accept_ratio = proposal_tempered[particle_index] - current_tempered[particle_index]
+            if isfinite(proposal_logjoint[particle_index]) && log(rand(rng)) < min(0.0, log_accept_ratio)
+                copyto!(view(particles, :, particle_index), view(proposal_particles, :, particle_index))
+                logjoint_values[particle_index] = proposal_logjoint[particle_index]
+                logproposal_values[particle_index] = proposal_logproposal[particle_index]
+                log_ratio[particle_index] = proposal_logjoint[particle_index] - proposal_logproposal[particle_index]
+                accepted += 1
+            end
+        end
+    end
+
+    return accepted / total
+end
+
 function batched_importance_sampling(
     model::TeaModel,
     args::Tuple=(),
@@ -268,6 +389,8 @@ function batched_smc(
     target_ess_ratio::Real=0.8,
     max_stages::Int=32,
     resample_final::Bool=false,
+    move_steps::Int=0,
+    move_scale=0.1,
     rng::AbstractRNG=Random.default_rng(),
 )
     layout = parameterlayout(model)
@@ -276,9 +399,11 @@ function batched_smc(
     num_particles > 0 || throw(ArgumentError("batched_smc requires num_particles > 0"))
     0 < target_ess_ratio <= 1 || throw(ArgumentError("batched_smc requires 0 < target_ess_ratio <= 1"))
     max_stages > 0 || throw(ArgumentError("batched_smc requires max_stages > 0"))
+    move_steps >= 0 || throw(ArgumentError("batched_smc requires move_steps >= 0"))
 
     location = _resolve_unconstrained_point(model, args, constraints, proposal_loc, rng, "proposal_loc")
     log_scale = _resolve_scale_vector("proposal_log_scale", proposal_log_scale, parameter_total)
+    move_scale_vector = _resolve_scale_vector("move_scale", move_scale, parameter_total)
     particles = Matrix{Float64}(undef, parameter_total, num_particles)
     noise = similar(particles)
     logproposal_values = Vector{Float64}(undef, num_particles)
@@ -311,6 +436,38 @@ function batched_smc(
         log_increment = log_weight_total - log(num_particles)
         log_evidence_estimate += log_increment
         resampled = beta_next < 1.0 || resample_final
+        stage_move_steps = 0
+        move_acceptance_rate = 0.0
+
+        if resampled
+            ancestors = _systematic_resample_indices(normalized_weights, num_particles, rng)
+            push!(ancestor_history, ancestors)
+            particles = _resampled_particle_matrix(particles, ancestors)
+            logproposal_values = _resampled_particle_vector(logproposal_values, ancestors)
+            logjoint_values = _resampled_particle_vector(logjoint_values, ancestors)
+            log_ratio = _resampled_particle_vector(log_ratio, ancestors)
+            fill!(normalized_weights, 1.0 / num_particles)
+            fill!(logweights, 0.0)
+            effective_sample_size = Float64(num_particles)
+            if move_steps > 0
+                move_acceptance_rate = _batched_random_walk_move!(
+                    particles,
+                    logjoint_values,
+                    logproposal_values,
+                    log_ratio,
+                    model,
+                    args,
+                    constraints,
+                    location,
+                    log_scale,
+                    beta_next,
+                    move_scale_vector,
+                    move_steps,
+                    rng,
+                )
+                stage_move_steps = move_steps
+            end
+        end
 
         push!(
             stages,
@@ -321,20 +478,10 @@ function batched_smc(
                 effective_sample_size,
                 log_increment,
                 resampled,
+                stage_move_steps,
+                move_acceptance_rate,
             ),
         )
-
-        if resampled
-            ancestors = _systematic_resample_indices(normalized_weights, num_particles, rng)
-            push!(ancestor_history, ancestors)
-            particles = _resampled_particle_matrix(particles, ancestors)
-            logproposal_values = _resampled_particle_matrix(reshape(logproposal_values, 1, :), ancestors)[1, :]
-            logjoint_values = _resampled_particle_matrix(reshape(logjoint_values, 1, :), ancestors)[1, :]
-            log_ratio = _resampled_particle_matrix(reshape(log_ratio, 1, :), ancestors)[1, :]
-            fill!(normalized_weights, 1.0 / num_particles)
-            fill!(logweights, 0.0)
-            effective_sample_size = Float64(num_particles)
-        end
 
         beta = beta_next
         beta >= 1.0 - 1e-12 && break
