@@ -12,12 +12,26 @@ function _backend_lognormal_logpdf(mu, sigma, x)
     return _backend_normal_logpdf(mu_, sigma_, log(xx)) - log(xx)
 end
 
+function _backend_exponential_logpdf(rate, x)
+    xx, rate_ = promote(x, rate)
+    rate_ > zero(rate_) || throw(ArgumentError("exponential requires rate > 0"))
+    xx >= zero(xx) || return oftype(xx, -Inf)
+    return log(rate_) - rate_ * xx
+end
+
 function _backend_bernoulli_logpdf(p, x)
     probability = p
     zero(probability) <= probability <= one(probability) ||
         throw(ArgumentError("bernoulli requires 0 <= p <= 1"))
     value = x isa Bool ? x : x != 0
     return value ? log(probability) : log1p(-probability)
+end
+
+function _backend_poisson_logpdf(lambda, x)
+    lambda > zero(lambda) || throw(ArgumentError("poisson requires lambda > 0"))
+    count = _poisson_count(x)
+    isnothing(count) && return oftype(float(lambda), -Inf)
+    return count * log(lambda) - lambda - _logfactorial_like(lambda, count)
 end
 
 function _backend_choice_value(parameter_slot::Union{Nothing,Int}, params::AbstractVector, constraints::ChoiceMap, address)
@@ -184,6 +198,19 @@ function _score_backend_step!(
 end
 
 function _score_backend_step!(
+    step::BackendExponentialChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    rate = _eval_backend_numeric_expr(env, step.rate)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_exponential_logpdf(rate, value)
+end
+
+function _score_backend_step!(
     step::BackendBernoulliChoicePlanStep,
     env::PlanEnvironment,
     params::AbstractVector,
@@ -194,6 +221,19 @@ function _score_backend_step!(
     probability = _eval_backend_numeric_expr(env, step.probability)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return _backend_bernoulli_logpdf(probability, value)
+end
+
+function _score_backend_step!(
+    step::BackendPoissonChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    lambda = _eval_backend_numeric_expr(env, step.lambda)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_poisson_logpdf(lambda, value)
 end
 
 function _score_backend_step!(
@@ -356,6 +396,39 @@ function _score_backend_step!(
 end
 
 function _score_backend_step!(
+    step::BackendExponentialChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    rate_values = _batched_numeric_scratch!(env, 1)
+    _eval_backend_numeric_expr!(rate_values, env, step.rate, 2)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        rate = rate_values[batch_index]
+        totals[batch_index] += _backend_exponential_logpdf(rate, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
     step::BackendBernoulliChoicePlanStep,
     totals::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -381,6 +454,36 @@ function _score_backend_step!(
                 env.index_values[step.binding_slot, batch_index] = Int(value)
             else
                 env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendPoissonChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    lambda_values = _batched_numeric_scratch!(env, 1)
+    _eval_backend_numeric_expr!(lambda_values, env, step.lambda, 2)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        lambda = lambda_values[batch_index]
+        totals[batch_index] += _backend_poisson_logpdf(lambda, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                env.index_values[step.binding_slot, batch_index] = Int(round(value))
+            else
+                env.generic_values[step.binding_slot][batch_index] = Int(round(value))
             end
         end
     end
@@ -435,6 +538,26 @@ function _score_backend_observed_loop_choice!(
 end
 
 function _score_backend_observed_loop_choice!(
+    step::BackendExponentialChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    rate_values = _batched_numeric_scratch!(env, 1)
+    observed_values = env.observed_values
+    _eval_backend_numeric_expr!(rate_values, env, step.rate, 2)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        rate = rate_values[batch_index]
+        totals[batch_index] += _backend_exponential_logpdf(rate, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
     step::BackendBernoulliChoicePlanStep,
     totals::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -450,6 +573,26 @@ function _score_backend_observed_loop_choice!(
         value = observed_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
+    step::BackendPoissonChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    lambda_values = _batched_numeric_scratch!(env, 1)
+    observed_values = env.observed_values
+    _eval_backend_numeric_expr!(lambda_values, env, step.lambda, 2)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        lambda = lambda_values[batch_index]
+        totals[batch_index] += _backend_poisson_logpdf(lambda, value)
     end
     return totals
 end

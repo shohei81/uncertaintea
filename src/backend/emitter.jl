@@ -86,12 +86,34 @@ function _backend_step_stub(step::BackendLognormalChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendExponentialChoicePlanStep)
+    return string(
+        "choice exponential address=",
+        _backend_address_stub(step.address),
+        " rate=",
+        _backend_expr_stub(step.rate),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
 function _backend_step_stub(step::BackendBernoulliChoicePlanStep)
     return string(
         "choice bernoulli address=",
         _backend_address_stub(step.address),
         " probability=",
         _backend_expr_stub(step.probability),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
+function _backend_step_stub(step::BackendPoissonChoicePlanStep)
+    return string(
+        "choice poisson address=",
+        _backend_address_stub(step.address),
+        " lambda=",
+        _backend_expr_stub(step.lambda),
         " parameter_slot=",
         repr(step.parameter_slot),
     )

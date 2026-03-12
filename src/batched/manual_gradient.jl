@@ -35,8 +35,16 @@ function _backend_gradient_supported_step(step::BackendLognormalChoicePlanStep)
     return _backend_gradient_supported_expr(step.mu) && _backend_gradient_supported_expr(step.sigma)
 end
 
+function _backend_gradient_supported_step(step::BackendExponentialChoicePlanStep)
+    return _backend_gradient_supported_expr(step.rate)
+end
+
 function _backend_gradient_supported_step(step::BackendBernoulliChoicePlanStep)
     return isnothing(step.parameter_slot) && _backend_gradient_supported_expr(step.probability)
+end
+
+function _backend_gradient_supported_step(step::BackendPoissonChoicePlanStep)
+    return isnothing(step.parameter_slot) && _backend_gradient_supported_expr(step.lambda)
 end
 
 function _backend_gradient_supported_step(step::BackendDeterministicPlanStep, numeric_slots::BitVector)
@@ -49,7 +57,9 @@ end
 
 _backend_gradient_supported_step(step::BackendNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendLognormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendExponentialChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendBernoulliChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendPoissonChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 
 function _backend_gradient_supported(plan::BackendExecutionPlan)
     return all(step -> _backend_gradient_supported_step(step, plan.numeric_slots), plan.steps)
@@ -558,6 +568,53 @@ function _accumulate_bernoulli_gradient!(
     return totals, gradients
 end
 
+function _accumulate_exponential_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    value_values::AbstractVector{Float64},
+    value_gradients::AbstractMatrix{Float64},
+    rate_values::AbstractVector{Float64},
+    rate_gradients::AbstractMatrix{Float64},
+)
+    for batch_index in eachindex(totals)
+        value = value_values[batch_index]
+        rate = rate_values[batch_index]
+        totals[batch_index] += _backend_exponential_logpdf(rate, value)
+        if !(value >= 0)
+            continue
+        end
+        dvalue = -rate
+        drate = 1 / rate - value
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] +=
+                dvalue * value_gradients[parameter_index, batch_index] +
+                drate * rate_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+function _accumulate_poisson_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    lambda_values::AbstractVector{Float64},
+    lambda_gradients::AbstractMatrix{Float64},
+    value_values::AbstractVector{Float64},
+)
+    for batch_index in eachindex(totals)
+        lambda = lambda_values[batch_index]
+        value = value_values[batch_index]
+        totals[batch_index] += _backend_poisson_logpdf(lambda, value)
+        count = _poisson_count(value)
+        isnothing(count) && continue
+        derivative = count / lambda - 1
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] += derivative * lambda_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
 function _score_backend_step_and_gradient!(
     step::BackendNormalChoicePlanStep,
     totals::AbstractVector{Float64},
@@ -611,6 +668,29 @@ function _score_backend_step_and_gradient!(
 end
 
 function _score_backend_step_and_gradient!(
+    step::BackendExponentialChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    value_values = env.observed_values
+    value_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    rate_values = _batched_numeric_scratch!(env, 1)
+    rate_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _eval_backend_numeric_expr_and_gradient!(rate_values, rate_gradients, cache, env, step.rate, 3)
+    _accumulate_exponential_gradient!(totals, gradients, value_values, value_gradients, rate_values, rate_gradients)
+    isnothing(step.binding_slot) || _set_numeric_binding!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
     step::BackendBernoulliChoicePlanStep,
     totals::AbstractVector{Float64},
     gradients::AbstractMatrix{Float64},
@@ -640,6 +720,44 @@ function _score_backend_step_and_gradient!(
             values = env.generic_values[step.binding_slot]
             for batch_index in 1:env.batch_size
                 values[batch_index] = value_values[batch_index]
+            end
+        end
+        env.assigned[step.binding_slot] = true
+    end
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendPoissonChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Poisson latent parameters"))
+    value_values = env.observed_values
+    lambda_values = _batched_numeric_scratch!(env, 1)
+    lambda_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _eval_backend_numeric_expr_and_gradient!(lambda_values, lambda_gradients, cache, env, step.lambda, 2)
+    _accumulate_poisson_gradient!(totals, gradients, lambda_values, lambda_gradients, value_values)
+
+    if !isnothing(step.binding_slot)
+        if env.numeric_slots[step.binding_slot]
+            copyto!(view(env.numeric_values, step.binding_slot, :), value_values)
+            fill!(view(cache.slot_gradients, :, step.binding_slot, :), 0.0)
+        elseif env.index_slots[step.binding_slot]
+            for batch_index in 1:env.batch_size
+                env.index_values[step.binding_slot, batch_index] = Int(round(value_values[batch_index]))
+            end
+        else
+            values = env.generic_values[step.binding_slot]
+            for batch_index in 1:env.batch_size
+                values[batch_index] = Int(round(value_values[batch_index]))
             end
         end
         env.assigned[step.binding_slot] = true
@@ -748,4 +866,3 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
     end
     return totals, gradients
 end
-

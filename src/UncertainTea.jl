@@ -40,7 +40,7 @@ export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSum
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts
 export batched_nuts_package_layout, emit_batched_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, rhat, ess, summarize
-export normal, lognormal, bernoulli
+export normal, lognormal, exponential, bernoulli, poisson
 
 include("ir.jl")
 include("core.jl")

@@ -356,7 +356,7 @@ end
 function _parameter_transform(rhs::DistributionSpec)
     if rhs.family === :normal
         return IdentityTransform()
-    elseif rhs.family === :lognormal
+    elseif rhs.family === :lognormal || rhs.family === :exponential
         return LogTransform()
     end
     return nothing

@@ -17,7 +17,7 @@ const GPU_BACKEND_SUPPORTED_PRIMITIVES = Symbol[
     :clamp,
 ]
 
-const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[:normal, :lognormal, :bernoulli]
+const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[:normal, :lognormal, :exponential, :bernoulli, :poisson]
 
 abstract type AbstractBackendExpr end
 abstract type AbstractBackendAddressPart end
@@ -75,10 +75,24 @@ struct BackendLognormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendE
     parameter_slot::Union{Nothing,Int}
 end
 
+struct BackendExponentialChoicePlanStep{R<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    rate::R
+    parameter_slot::Union{Nothing,Int}
+end
+
 struct BackendBernoulliChoicePlanStep{P<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
     binding_slot::Union{Nothing,Int}
     address::AD
     probability::P
+    parameter_slot::Union{Nothing,Int}
+end
+
+struct BackendPoissonChoicePlanStep{L<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    lambda::L
     parameter_slot::Union{Nothing,Int}
 end
 
@@ -305,12 +319,24 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendLognormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+    elseif step.rhs.family === :exponential
+        length(arguments) == 1 || begin
+            _backend_issue!(issues, "exponential expects exactly 1 backend argument")
+            return nothing
+        end
+        return BackendExponentialChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
     elseif step.rhs.family === :bernoulli
         length(arguments) == 1 || begin
             _backend_issue!(issues, "bernoulli expects exactly 1 backend argument")
             return nothing
         end
         return BackendBernoulliChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+    elseif step.rhs.family === :poisson
+        length(arguments) == 1 || begin
+            _backend_issue!(issues, "poisson expects exactly 1 backend argument")
+            return nothing
+        end
+        return BackendPoissonChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
     end
 
     _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
@@ -612,6 +638,18 @@ function _collect_backend_slot_kinds!(
 end
 
 function _collect_backend_slot_kinds!(
+    step::BackendExponentialChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.rate, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
     step::BackendBernoulliChoicePlanStep,
     numeric_slots::BitVector,
     index_slots::BitVector,
@@ -620,6 +658,18 @@ function _collect_backend_slot_kinds!(
     _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
     _mark_backend_numeric_expr_slots!(step.probability, numeric_slots, index_slots, generic_slots)
     isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendPoissonChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.lambda, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
     return nothing
 end
 
@@ -745,4 +795,3 @@ function backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     )
     return result.plan
 end
-

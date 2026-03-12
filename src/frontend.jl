@@ -110,7 +110,8 @@ function _rhs_spec_expr(rhs)
         callee = rhs.args[1]
         arguments = Expr(:vect, map(QuoteNode, rhs.args[2:end])...)
 
-        if callee isa Symbol && callee in (:normal, :lognormal, :bernoulli, :categorical, :mvnormal)
+        if callee isa Symbol &&
+           callee in (:normal, :lognormal, :exponential, :bernoulli, :poisson, :categorical, :mvnormal)
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
         end
 
@@ -161,7 +162,7 @@ end
 function _supported_distribution_family(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
     family = rhs.args[1]
-    family in (:normal, :lognormal) || return nothing
+    family in (:normal, :lognormal, :exponential) || return nothing
     return family
 end
 
@@ -176,6 +177,8 @@ function _parameter_transform_expr(rhs)
     if family === :normal
         return :($(_qualify(:IdentityTransform))())
     elseif family === :lognormal
+        return :($(_qualify(:LogTransform))())
+    elseif family === :exponential
         return :($(_qualify(:LogTransform))())
     end
 

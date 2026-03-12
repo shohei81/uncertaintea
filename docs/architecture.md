@@ -77,7 +77,7 @@ GPU backend:
 
 Current backend-lowering subset:
 
-- distribution families: `normal`, `lognormal`, `bernoulli`
+- distribution families: `normal`, `lognormal`, `exponential`, `bernoulli`, `poisson`
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
   `log1p`, `sqrt`, `abs`, `min`, `max`, `clamp`
 - batched backend execution assumes synchronized loop iterables across the batch
@@ -101,6 +101,9 @@ Current backend-lowering subset:
   for the differentiable backend subset and only fall back to the flat
   `ForwardDiff` objective or the older column-wise cache when that subset does
   not apply
+- the differentiable backend path now covers `normal`, `lognormal`,
+  `exponential`, observed `bernoulli`, observed `poisson`, and numeric
+  deterministic assignments
 - the differentiable backend primitive subset now includes `abs`, `min`,
   `max`, `clamp`, `%` with a literal divisor, and `^` with a literal exponent
   in addition to the earlier arithmetic and log/exp primitives
