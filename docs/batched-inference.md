@@ -138,6 +138,9 @@ for dynamic trajectory building:
 - those remaining proposal/frontier copies now also go through masked
   matrix-copy helpers, so the batched subtree path no longer performs repeated
   per-chain vector copies for position/momentum/gradient buffers
+- subtree start-state initialization now also uses those masked matrix-copy
+  helpers to load `left/right` continuation frontiers into the tree scratch
+  buffers for the active cohort
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

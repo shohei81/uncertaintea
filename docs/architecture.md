@@ -139,7 +139,9 @@ Current backend-lowering subset:
   the continuation merge path now keeps proposal-selection/log-weight scratch
   there as well; turning checks on that path now also run through batched
   helpers over the workspace matrices, with frontier/proposal column copies now
-  routed through masked matrix-copy helpers, and the
+  routed through masked matrix-copy helpers, and subtree start-state
+  initialization now uses that same masked-copy path instead of per-chain state
+  cloning; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

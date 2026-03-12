@@ -1865,6 +1865,106 @@ function _merge_batched_nuts_continuation_frontiers!(
     return workspace
 end
 
+function _initialize_batched_nuts_subtree_states!(
+    workspace::BatchedNUTSWorkspace,
+    active::AbstractVector{Bool},
+)
+    length(active) == size(workspace.left_position, 2) ||
+        throw(DimensionMismatch("expected subtree-state active mask of length $(size(workspace.left_position, 2)), got $(length(active))"))
+    fill!(workspace.subtree_copy_left, false)
+    fill!(workspace.subtree_copy_right, false)
+    fill!(workspace.subtree_select_proposal, false)
+    for chain_index in eachindex(active)
+        active[chain_index] || continue
+        continuation = workspace.column_continuation_states[chain_index]
+        if workspace.step_direction[chain_index] < 0
+            workspace.subtree_copy_left[chain_index] = true
+            start_logjoint = continuation.left.logjoint
+        else
+            workspace.subtree_copy_right[chain_index] = true
+            start_logjoint = continuation.right.logjoint
+        end
+        tree_workspace = workspace.column_tree_workspaces[chain_index]
+        tree_workspace.current.logjoint = start_logjoint
+        tree_workspace.left.logjoint = start_logjoint
+        tree_workspace.right.logjoint = start_logjoint
+        tree_workspace.proposal.logjoint = start_logjoint
+    end
+    _copy_masked_nuts_buffers!(
+        workspace.tree_current_position,
+        workspace.tree_current_momentum,
+        workspace.tree_current_gradient,
+        workspace.left_position,
+        workspace.left_momentum,
+        workspace.left_gradient,
+        workspace.subtree_copy_left,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_current_position,
+        workspace.tree_current_momentum,
+        workspace.tree_current_gradient,
+        workspace.right_position,
+        workspace.right_momentum,
+        workspace.right_gradient,
+        workspace.subtree_copy_right,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_left_position,
+        workspace.tree_left_momentum,
+        workspace.tree_left_gradient,
+        workspace.left_position,
+        workspace.left_momentum,
+        workspace.left_gradient,
+        workspace.subtree_copy_left,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_left_position,
+        workspace.tree_left_momentum,
+        workspace.tree_left_gradient,
+        workspace.right_position,
+        workspace.right_momentum,
+        workspace.right_gradient,
+        workspace.subtree_copy_right,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_right_position,
+        workspace.tree_right_momentum,
+        workspace.tree_right_gradient,
+        workspace.left_position,
+        workspace.left_momentum,
+        workspace.left_gradient,
+        workspace.subtree_copy_left,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_right_position,
+        workspace.tree_right_momentum,
+        workspace.tree_right_gradient,
+        workspace.right_position,
+        workspace.right_momentum,
+        workspace.right_gradient,
+        workspace.subtree_copy_right,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_proposal_position,
+        workspace.tree_proposal_momentum,
+        workspace.tree_proposal_gradient,
+        workspace.left_position,
+        workspace.left_momentum,
+        workspace.left_gradient,
+        workspace.subtree_copy_left,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.tree_proposal_position,
+        workspace.tree_proposal_momentum,
+        workspace.tree_proposal_gradient,
+        workspace.right_position,
+        workspace.right_momentum,
+        workspace.right_gradient,
+        workspace.subtree_copy_right,
+    )
+    return workspace
+end
+
 function _build_nuts_subtree(
     subtree_workspace::NUTSSubtreeWorkspace,
     model::TeaModel,
@@ -2136,16 +2236,10 @@ function _continue_batched_nuts_batched_subtree!(
         workspace.continuation_turning[chain_index] && continue
         workspace.subtree_active[chain_index] = true
         workspace.step_direction[chain_index] = rand(rng, Bool) ? 1 : -1
-        continuation = workspace.column_continuation_states[chain_index]
-        tree_workspace = workspace.column_tree_workspaces[chain_index]
-        start_state = workspace.step_direction[chain_index] < 0 ? continuation.left : continuation.right
-        _copyto_nuts_state!(tree_workspace.current, start_state)
-        _copyto_nuts_state!(tree_workspace.left, start_state)
-        _copyto_nuts_state!(tree_workspace.right, start_state)
-        _copyto_nuts_state!(tree_workspace.proposal, start_state)
         any_active = true
     end
     any_active || return false
+    _initialize_batched_nuts_subtree_states!(workspace, workspace.subtree_active)
 
     for _ in 1:(1 << active_depth)
         _batched_nuts_leapfrog_step_to!(

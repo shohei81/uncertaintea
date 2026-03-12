@@ -77,7 +77,8 @@ The current CPU NUTS path is intentionally narrow:
   batch-owned scratch, the continuation merge step now keeps its
   proposal-selection/log-weight scratch there too, turning checks now run
   through batched helpers over the workspace matrices, and frontier/proposal
-  buffer copies now flow through masked matrix-copy helpers
+  buffer copies plus subtree start-state initialization now flow through
+  masked matrix-copy helpers
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local
