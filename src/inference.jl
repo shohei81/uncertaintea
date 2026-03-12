@@ -186,6 +186,15 @@ end
     NUTSSchedulerDone = 3
 end
 
+mutable struct BatchedNUTSSchedulerState
+    continuation_active::BitVector
+    subtree_started::BitVector
+    active_depth::Int
+    active_depth_count::Int
+    phase::BatchedNUTSSchedulerPhase
+    remaining_steps::Int
+end
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -282,17 +291,23 @@ mutable struct BatchedNUTSWorkspace
     step_direction::Vector{Int}
     tree_depths::Vector{Int}
     integration_steps::Vector{Int}
-    continuation_active::BitVector
-    subtree_started::BitVector
-    scheduler_active_depth::Int
-    scheduler_active_depth_count::Int
-    scheduler_phase::BatchedNUTSSchedulerPhase
-    scheduler_remaining_steps::Int
+    scheduler::BatchedNUTSSchedulerState
     mass_adaptation_weights::Vector{Float64}
     constrained_position::Matrix{Float64}
     column_gradient_caches::Vector{LogjointGradientCache}
     column_tree_workspaces::Vector{NUTSSubtreeWorkspace}
     column_continuation_states::Vector{NUTSContinuationState}
+end
+
+function BatchedNUTSSchedulerState(num_chains::Int)
+    return BatchedNUTSSchedulerState(
+        falses(num_chains),
+        falses(num_chains),
+        0,
+        0,
+        NUTSSchedulerIdle,
+        0,
+    )
 end
 
 function BatchedHMCWorkspace(
@@ -383,6 +398,7 @@ function BatchedNUTSWorkspace(
     proposal_momentum = Matrix{Float64}(undef, num_params, num_chains)
     proposal_gradient = Matrix{Float64}(undef, num_params, num_chains)
     proposed_logjoint = Vector{Float64}(undef, num_chains)
+    scheduler = BatchedNUTSSchedulerState(num_chains)
     column_continuation_states = [
         NUTSContinuationState(
             NUTSState(view(left_position, :, chain_index), view(left_momentum, :, chain_index), 0.0, view(left_gradient, :, chain_index)),
@@ -473,12 +489,7 @@ function BatchedNUTSWorkspace(
         zeros(Int, num_chains),
         zeros(Int, num_chains),
         zeros(Int, num_chains),
-        falses(num_chains),
-        falses(num_chains),
-        0,
-        0,
-        NUTSSchedulerIdle,
-        0,
+        scheduler,
         Vector{Float64}(undef, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         column_gradient_caches,
@@ -1917,14 +1928,14 @@ function _reset_batched_nuts_subtree_scratch!(
     fill!(workspace.subtree_merged_turning, false)
     fill!(workspace.subtree_divergent, false)
     fill!(workspace.subtree_active, false)
-    fill!(workspace.subtree_started, false)
+    fill!(workspace.scheduler.subtree_started, false)
     fill!(workspace.subtree_copy_left, false)
     fill!(workspace.subtree_copy_right, false)
     fill!(workspace.subtree_select_proposal, false)
-    workspace.scheduler_active_depth = 0
-    workspace.scheduler_active_depth_count = 0
-    workspace.scheduler_phase = NUTSSchedulerIdle
-    workspace.scheduler_remaining_steps = 0
+    workspace.scheduler.active_depth = 0
+    workspace.scheduler.active_depth_count = 0
+    workspace.scheduler.phase = NUTSSchedulerIdle
+    workspace.scheduler.remaining_steps = 0
     return workspace
 end
 
@@ -1934,13 +1945,13 @@ function _update_batched_nuts_continuation_active!(
 )
     any_active = false
     for chain_index in eachindex(workspace.tree_depths)
-        workspace.continuation_active[chain_index] = _nuts_continuation_active(
+        workspace.scheduler.continuation_active[chain_index] = _nuts_continuation_active(
             workspace.tree_depths[chain_index],
             max_tree_depth,
             workspace.divergent_step[chain_index],
             workspace.continuation_turning[chain_index],
         )
-        any_active |= workspace.continuation_active[chain_index]
+        any_active |= workspace.scheduler.continuation_active[chain_index]
     end
     return any_active
 end
@@ -1949,21 +1960,21 @@ function _select_batched_nuts_active_depth!(
     workspace::BatchedNUTSWorkspace,
     max_tree_depth::Int,
 )
-    workspace.scheduler_active_depth = 0
-    workspace.scheduler_active_depth_count = 0
+    workspace.scheduler.active_depth = 0
+    workspace.scheduler.active_depth_count = 0
     for depth in 1:(max_tree_depth - 1)
         depth_count = 0
         for chain_index in eachindex(workspace.tree_depths)
             workspace.tree_depths[chain_index] == depth || continue
-            workspace.continuation_active[chain_index] || continue
+            workspace.scheduler.continuation_active[chain_index] || continue
             depth_count += 1
         end
-        if depth_count > workspace.scheduler_active_depth_count
-            workspace.scheduler_active_depth = depth
-            workspace.scheduler_active_depth_count = depth_count
+        if depth_count > workspace.scheduler.active_depth_count
+            workspace.scheduler.active_depth = depth
+            workspace.scheduler.active_depth_count = depth_count
         end
     end
-    return workspace.scheduler_active_depth_count > 0
+    return workspace.scheduler.active_depth_count > 0
 end
 
 function _batched_nuts_active_depth(
@@ -1972,7 +1983,7 @@ function _batched_nuts_active_depth(
 )
     _update_batched_nuts_continuation_active!(workspace, max_tree_depth)
     _select_batched_nuts_active_depth!(workspace, max_tree_depth)
-    return workspace.scheduler_active_depth, workspace.scheduler_active_depth_count
+    return workspace.scheduler.active_depth, workspace.scheduler.active_depth_count
 end
 
 function _activate_batched_nuts_subtree_cohort!(
@@ -1981,8 +1992,8 @@ function _activate_batched_nuts_subtree_cohort!(
     fill!(workspace.subtree_active, false)
     any_active = false
     for chain_index in eachindex(workspace.tree_depths)
-        workspace.tree_depths[chain_index] == workspace.scheduler_active_depth || continue
-        workspace.continuation_active[chain_index] || continue
+        workspace.tree_depths[chain_index] == workspace.scheduler.active_depth || continue
+        workspace.scheduler.continuation_active[chain_index] || continue
         workspace.subtree_active[chain_index] = true
         any_active = true
     end
@@ -1993,13 +2004,13 @@ function _mark_batched_nuts_subtree_started!(
     workspace::BatchedNUTSWorkspace,
 )
     any_started = false
-    fill!(workspace.subtree_started, false)
+    fill!(workspace.scheduler.subtree_started, false)
     for chain_index in eachindex(workspace.tree_depths)
-        workspace.tree_depths[chain_index] == workspace.scheduler_active_depth || continue
+        workspace.tree_depths[chain_index] == workspace.scheduler.active_depth || continue
         started =
             workspace.subtree_integration_steps[chain_index] > 0 ||
             workspace.subtree_divergent[chain_index]
-        workspace.subtree_started[chain_index] = started
+        workspace.scheduler.subtree_started[chain_index] = started
         any_started |= started
     end
     return any_started
@@ -2019,7 +2030,7 @@ function _prepare_batched_nuts_subtree_cohort!(
     _activate_batched_nuts_subtree_cohort!(workspace) || return 0
     _sample_batched_nuts_directions!(workspace.step_direction, rng, workspace.subtree_active)
     _initialize_batched_nuts_subtree_states!(workspace, workspace.subtree_active)
-    return workspace.scheduler_active_depth
+    return workspace.scheduler.active_depth
 end
 
 function _begin_batched_nuts_subtree_scheduler!(
@@ -2033,12 +2044,12 @@ function _begin_batched_nuts_subtree_scheduler!(
         rng,
     )
     if active_depth > 0
-        workspace.scheduler_remaining_steps = 1 << active_depth
-        workspace.scheduler_phase = NUTSSchedulerExpand
+        workspace.scheduler.remaining_steps = 1 << active_depth
+        workspace.scheduler.phase = NUTSSchedulerExpand
         return true
     end
-    workspace.scheduler_phase = NUTSSchedulerDone
-    workspace.scheduler_remaining_steps = 0
+    workspace.scheduler.phase = NUTSSchedulerDone
+    workspace.scheduler.remaining_steps = 0
     return false
 end
 
@@ -2162,7 +2173,7 @@ function _activate_batched_nuts_subtree_merge_cohort!(
     fill!(workspace.subtree_active, false)
     any_started = false
     for chain_index in eachindex(workspace.tree_depths)
-        workspace.subtree_started[chain_index] || continue
+        workspace.scheduler.subtree_started[chain_index] || continue
 
         workspace.tree_depths[chain_index] += 1
         if workspace.subtree_integration_steps[chain_index] == 0
@@ -2252,7 +2263,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    if workspace.scheduler_phase == NUTSSchedulerExpand
+    if workspace.scheduler.phase == NUTSSchedulerExpand
         _batched_nuts_leapfrog_step_to!(
             workspace,
             model,
@@ -2282,12 +2293,12 @@ function _step_batched_nuts_subtree_scheduler!(
             max_delta_energy,
             rng,
         )
-        workspace.scheduler_remaining_steps -= 1
-        if !any_active || workspace.scheduler_remaining_steps == 0
-            workspace.scheduler_phase = NUTSSchedulerMerge
+        workspace.scheduler.remaining_steps -= 1
+        if !any_active || workspace.scheduler.remaining_steps == 0
+            workspace.scheduler.phase = NUTSSchedulerMerge
         end
         return true
-    elseif workspace.scheduler_phase == NUTSSchedulerMerge
+    elseif workspace.scheduler.phase == NUTSSchedulerMerge
         _activate_batched_nuts_subtree_merge_cohort!(workspace)
         if any(workspace.subtree_active)
             _merge_batched_nuts_subtree_cohort!(
@@ -2296,8 +2307,8 @@ function _step_batched_nuts_subtree_scheduler!(
                 rng,
             )
         end
-        workspace.scheduler_phase = NUTSSchedulerDone
-        workspace.scheduler_remaining_steps = 0
+        workspace.scheduler.phase = NUTSSchedulerDone
+        workspace.scheduler.remaining_steps = 0
         return true
     end
     return false

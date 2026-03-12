@@ -1578,10 +1578,10 @@ using UncertainTea
         gaussian_mixed_depth_nuts_workspace,
         4,
     ) == (2, 2)
-    @test gaussian_mixed_depth_nuts_workspace.continuation_active ==
+    @test gaussian_mixed_depth_nuts_workspace.scheduler.continuation_active ==
         BitVector([false, true, true])
-    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth == 2
-    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth_count == 2
+    @test gaussian_mixed_depth_nuts_workspace.scheduler.active_depth == 2
+    @test gaussian_mixed_depth_nuts_workspace.scheduler.active_depth_count == 2
     @test UncertainTea._activate_batched_nuts_subtree_cohort!(
         gaussian_mixed_depth_nuts_workspace,
     )
@@ -1593,10 +1593,10 @@ using UncertainTea
         MersenneTwister(1001),
     )
     @test prepared_depth == 2
-    @test gaussian_mixed_depth_nuts_workspace.continuation_active ==
+    @test gaussian_mixed_depth_nuts_workspace.scheduler.continuation_active ==
         BitVector([false, true, true])
-    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth == 2
-    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth_count == 2
+    @test gaussian_mixed_depth_nuts_workspace.scheduler.active_depth == 2
+    @test gaussian_mixed_depth_nuts_workspace.scheduler.active_depth_count == 2
     @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
         BitVector([false, true, true])
     @test all(
@@ -1666,14 +1666,14 @@ using UncertainTea
         4,
         cohort_rng,
     )
-    @test gaussian_cohort_scheduler_workspace.scheduler_phase ==
+    @test gaussian_cohort_scheduler_workspace.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
-    @test gaussian_cohort_scheduler_workspace.scheduler_active_depth == 1
-    @test gaussian_cohort_scheduler_workspace.scheduler_active_depth_count == 3
-    @test gaussian_cohort_scheduler_workspace.scheduler_remaining_steps == 2
-    @test gaussian_cohort_scheduler_workspace.continuation_active ==
+    @test gaussian_cohort_scheduler_workspace.scheduler.active_depth == 1
+    @test gaussian_cohort_scheduler_workspace.scheduler.active_depth_count == 3
+    @test gaussian_cohort_scheduler_workspace.scheduler.remaining_steps == 2
+    @test gaussian_cohort_scheduler_workspace.scheduler.continuation_active ==
         BitVector([true, true, true])
-    while gaussian_cohort_scheduler_workspace.scheduler_phase ==
+    while gaussian_cohort_scheduler_workspace.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
             gaussian_cohort_scheduler_workspace,
@@ -1686,7 +1686,7 @@ using UncertainTea
             cohort_rng,
         )
     end
-    @test gaussian_cohort_scheduler_workspace.scheduler_phase ==
+    @test gaussian_cohort_scheduler_workspace.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
@@ -1698,10 +1698,10 @@ using UncertainTea
         1000.0,
         cohort_rng,
     )
-    @test gaussian_cohort_scheduler_workspace.scheduler_phase ==
+    @test gaussian_cohort_scheduler_workspace.scheduler.phase ==
         UncertainTea.NUTSSchedulerDone
-    @test gaussian_cohort_scheduler_workspace.scheduler_remaining_steps == 0
-    @test gaussian_cohort_scheduler_workspace.subtree_started ==
+    @test gaussian_cohort_scheduler_workspace.scheduler.remaining_steps == 0
+    @test gaussian_cohort_scheduler_workspace.scheduler.subtree_started ==
         BitVector([true, true, true])
     @test gaussian_cohort_scheduler_workspace.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
