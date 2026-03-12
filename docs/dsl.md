@@ -206,9 +206,9 @@ Requirements:
 - `binomial` is treated as a built-in distribution inside `@tea`, but direct
   constructor calls outside the DSL should use `UncertainTea.binomial(...)`
   because `Base` already defines a different `binomial`
-- `dirichlet` currently supports static simplex sizes in the CPU reference
-  path and unconstrained HMC/NUTS through a simplex transform, but it does not
-  yet lower to the GPU-native backend subset
+- `dirichlet` now supports static simplex sizes in both the CPU reference path
+  and the current backend-native static subset, with unconstrained HMC/NUTS
+  flowing through a simplex transform
 - `mvnormal` currently supports static diagonal vector sizes in the CPU
   reference path and unconstrained HMC/NUTS through a vector-valued identity
   transform, and restricted diagonal forms now lower to the backend-native

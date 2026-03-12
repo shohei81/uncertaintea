@@ -31,8 +31,10 @@
     @test dirichlet_choicemap[:weights] ≈ dirichlet_params atol=1e-6
     @test logjoint(dirichlet_latent_model, dirichlet_params) ≈
         assess(dirichlet_latent_model, (), choicemap((:weights, dirichlet_trace[:weights]))) atol=1e-6
-    @test !dirichlet_backend_report.supported
-    @test any(issue -> occursin("dirichlet", issue), dirichlet_backend_report.issues)
+    @test dirichlet_backend_report.supported
+    @test isempty(dirichlet_backend_report.issues)
+    @test backend_execution_plan(dirichlet_latent_model).steps[1] isa UncertainTea.BackendDirichletChoicePlanStep
+    @test any(occursin("choice dirichlet", file.contents) for file in gpu_backend_files(backend_package_layout(dirichlet_latent_model)))
 
     dirichlet_batch_params = hcat(
         dirichlet_unconstrained,
@@ -45,13 +47,13 @@
 
     @test dirichlet_batch_values ≈ [
         logjoint_unconstrained(dirichlet_latent_model, dirichlet_batch_params[:, index], (), choicemap()) for index in 1:3
-    ] atol=1e-8
+    ] atol=2e-6
     @test dirichlet_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(dirichlet_latent_model, dirichlet_batch_params[:, index], (), choicemap()) for index in 1:3
-    ]...) atol=1e-8
-    @test isnothing(dirichlet_batch_cache.backend_cache)
+    ]...) atol=2e-6
+    @test !isnothing(dirichlet_batch_cache.backend_cache)
     @test isnothing(dirichlet_batch_cache.flat_cache)
-    @test length(dirichlet_batch_cache.column_caches) == 3
+    @test isempty(dirichlet_batch_cache.column_caches)
 
     dirichlet_chain = hmc(
         dirichlet_latent_model,

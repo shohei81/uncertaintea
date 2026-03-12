@@ -569,6 +569,7 @@ function BatchedHMCWorkspace(
     inverse_mass_matrix::AbstractVector=ones(size(position, 1)),
 )
     num_params, num_chains = size(position)
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     batch_args = _validate_batched_args(args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     length(inverse_mass_matrix) == num_params ||
@@ -592,7 +593,7 @@ function BatchedHMCWorkspace(
         falses(num_chains),
         falses(num_chains),
         Vector{Float64}(undef, num_chains),
-        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, constrained_num_params, num_chains),
         sqrt.(Float64.(inverse_mass_matrix)),
     )
 end
@@ -604,6 +605,7 @@ function BatchedNUTSWorkspace(
     constraints=choicemap(),
 )
     num_params, num_chains = size(position)
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     batch_args = _validate_batched_args(args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
@@ -735,7 +737,7 @@ function BatchedNUTSWorkspace(
         falses(num_chains),
         control,
         Vector{Float64}(undef, num_chains),
-        Matrix{Float64}(undef, num_params, num_chains),
+        Matrix{Float64}(undef, constrained_num_params, num_chains),
         column_gradient_caches,
         column_tree_workspaces,
         column_continuation_states,

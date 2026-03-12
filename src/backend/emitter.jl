@@ -264,6 +264,23 @@ function _backend_step_stub(step::BackendMvNormalChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendDirichletChoicePlanStep)
+    return string(
+        "choice dirichlet address=",
+        _backend_address_stub(step.address),
+        " alpha=",
+        _backend_expr_stub(BackendTupleExpr(step.alpha)),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+        " parameter_index=",
+        repr(step.parameter_index),
+        " value_index=",
+        repr(step.value_index),
+        " value_length=",
+        step.value_length,
+    )
+end
+
 function _backend_step_stub(step::BackendDeterministicPlanStep)
     return string(
         "deterministic slot=",

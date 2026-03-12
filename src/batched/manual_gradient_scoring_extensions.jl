@@ -111,6 +111,71 @@ function _accumulate_mvnormal_gradient!(
     return totals, gradients
 end
 
+function _accumulate_dirichlet_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    parameter_index::Union{Nothing,Int},
+    value_values::AbstractVector{<:AbstractVector},
+    alpha_values::AbstractVector{<:AbstractVector},
+    alpha_gradients::AbstractVector{<:AbstractMatrix},
+)
+    value_length = length(value_values)
+    choice_gradients = Vector{Float64}(undef, value_length)
+    alpha_derivatives = Vector{Float64}(undef, value_length)
+    for batch_index in eachindex(totals)
+        total_alpha = 0.0
+        accumulator = 0.0
+        for component_index in 1:value_length
+            alpha = alpha_values[component_index][batch_index]
+            alpha > 0 || throw(ArgumentError("dirichlet requires alpha > 0 in every dimension"))
+            total_alpha += alpha
+            accumulator -= loggamma(alpha)
+        end
+        accumulator += loggamma(total_alpha)
+
+        total = 0.0
+        valid = true
+        weighted_choice_gradient = 0.0
+        for component_index in 1:value_length
+            value = value_values[component_index][batch_index]
+            value > 0 || begin
+                valid = false
+                break
+            end
+            total += value
+            alpha = alpha_values[component_index][batch_index]
+            accumulator += (alpha - 1) * log(value)
+            choice_gradient = (alpha - 1) / value
+            choice_gradients[component_index] = choice_gradient
+            weighted_choice_gradient += choice_gradient * value
+            alpha_derivatives[component_index] = digamma(total_alpha) - digamma(alpha) + log(value)
+        end
+
+        if !valid || abs(total - 1) > sqrt(eps(total)) * value_length * 16
+            totals[batch_index] += -Inf
+            continue
+        end
+
+        totals[batch_index] += accumulator
+        for component_index in 1:value_length
+            alpha_derivative = alpha_derivatives[component_index]
+            component_alpha_gradients = alpha_gradients[component_index]
+            for parameter_row in axes(gradients, 1)
+                gradients[parameter_row, batch_index] +=
+                    alpha_derivative * component_alpha_gradients[parameter_row, batch_index]
+            end
+        end
+        isnothing(parameter_index) && continue
+        for component_index in 1:(value_length - 1)
+            unconstrained_row = parameter_index + component_index - 1
+            constrained_value = value_values[component_index][batch_index]
+            gradients[unconstrained_row, batch_index] +=
+                constrained_value * (choice_gradients[component_index] - weighted_choice_gradient)
+        end
+    end
+    return totals, gradients
+end
+
 function _assign_backend_choice_vector_value!(
     env::BatchedPlanEnvironment{Float64},
     slot_gradients::Array{Float64,3},
@@ -204,6 +269,48 @@ function _score_backend_step_and_gradient!(
 
     isnothing(step.binding_slot) ||
         _assign_backend_choice_vector_value!(env, cache.slot_gradients, step.binding_slot, choice_values, choice_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendDirichletChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
+    alpha_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
+    alpha_gradients = [
+        _batched_backend_gradient_scratch!(cache, step.value_length + index) for index in 1:step.value_length
+    ]
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
+    for component_index in 1:step.value_length
+        _eval_backend_numeric_expr_and_gradient!(
+            alpha_values[component_index],
+            alpha_gradients[component_index],
+            cache,
+            env,
+            step.alpha[component_index],
+            2 * step.value_length + 1,
+        )
+    end
+
+    _accumulate_dirichlet_gradient!(
+        totals,
+        gradients,
+        step.parameter_index,
+        choice_values,
+        alpha_values,
+        alpha_gradients,
+    )
+
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_vector_value!(env, cache.slot_gradients, step.binding_slot, choice_values, alpha_gradients)
     return totals, gradients
 end
 

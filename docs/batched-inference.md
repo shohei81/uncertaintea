@@ -320,9 +320,12 @@ The next lowering layer is now explicit:
   path, so models with built-in `dirichlet` and restricted diagonal
   `mvnormal` latents can use batched `logjoint`, unconstrained gradients, HMC,
   and NUTS regardless of whether they take the backend-native path
-- restricted diagonal `mvnormal` now also lowers to the backend-native batched
-  scoring path, and its batched gradients now use the manual backend
-  gradient evaluator instead of the flat backend `ForwardDiff` fallback
+- restricted diagonal `mvnormal` and simplex-valued `dirichlet` now lower to
+  the backend-native batched scoring path, and their batched gradients use the
+  manual backend gradient evaluator instead of the flat backend `ForwardDiff`
+  fallback
+- batched HMC and batched NUTS workspace initialization now preserve that
+  backend-aware gradient path for both vector families
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
 - batched HMC now also keeps the current unconstrained gradient for each chain

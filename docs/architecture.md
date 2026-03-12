@@ -82,8 +82,8 @@ Current backend-lowering subset:
   `geometric`, `negativebinomial`, `poisson`, `studentt`, `categorical`
 - built-in CPU/reference distributions also include `dirichlet` and a
   restricted diagonal `mvnormal`; both use vector-valued latent slots with
-  flattened constrained/unconstrained parameter spans, and diagonal `mvnormal`
-  now lowers to the backend-native subset while `dirichlet` remains outside it
+  flattened constrained/unconstrained parameter spans, and both now lower to
+  the backend-native subset for their restricted static forms
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
   `log1p`, `sqrt`, `abs`, `min`, `max`, `clamp`
 - batched backend execution assumes synchronized loop iterables across the batch
@@ -118,8 +118,9 @@ Current backend-lowering subset:
   diagonal `mvnormal` latents with equal-dimensional constrained and
   unconstrained storage
 - backend-native vector support has now started with restricted diagonal
-  `mvnormal`; both the scoring path and the batched manual backend gradient
-  path are native for the current diagonal family
+  `mvnormal` and simplex-valued `dirichlet`; both the scoring path and the
+  batched manual backend gradient path are native for the current vector
+  subset
 - the differentiable backend primitive subset now includes `abs`, `min`,
   `max`, `clamp`, `%` with a literal divisor, and `^` with a literal exponent
   in addition to the earlier arithmetic and log/exp primitives

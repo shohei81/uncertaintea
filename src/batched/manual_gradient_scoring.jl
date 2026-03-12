@@ -890,6 +890,15 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
                 constrained[slot_index, batch_index] = constrained_value
                 logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
             end
+        elseif slot.transform isa SimplexTransform
+            source_indices = parameterindices(slot)
+            destination_indices = parametervalueindices(slot)
+            for batch_index in 1:size(params, 2)
+                constrained_view = view(constrained, destination_indices, batch_index)
+                unconstrained_view = view(params, source_indices, batch_index)
+                _to_constrained_simplex!(constrained_view, slot.transform, unconstrained_view)
+                logabsdet[batch_index] += _simplex_logabsdet(constrained_view)
+            end
         else
             throw(BatchedBackendFallback("batched backend gradient does not support transform $(typeof(slot.transform))"))
         end
@@ -915,6 +924,16 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
                 gradients[slot_index, batch_index] =
                     gradients[slot_index, batch_index] * constrained_value * (1 - constrained_value) +
                     (1 - 2 * constrained_value)
+            end
+        elseif slot.transform isa SimplexTransform
+            source_indices = parameterindices(slot)
+            destination_indices = parametervalueindices(slot)
+            for batch_index in 1:size(params, 2)
+                constrained_view = view(constrained, destination_indices, batch_index)
+                for (local_index, parameter_index) in enumerate(source_indices)
+                    gradients[parameter_index, batch_index] +=
+                        1 - slot.value_length * constrained_view[local_index]
+                end
             end
         end
     end

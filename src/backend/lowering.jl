@@ -26,6 +26,7 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :inversegamma,
     :weibull,
     :beta,
+    :dirichlet,
     :bernoulli,
     :binomial,
     :geometric,
@@ -360,6 +361,7 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         return nothing
     end
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
+    step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, step, issues)
 
     address = _backend_lower_address(model, layout, step.address, issues)
     arguments = map(arg -> _backend_lower_expr(model, layout, arg, issues, "distribution argument"), step.rhs.arguments)

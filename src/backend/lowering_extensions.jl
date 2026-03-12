@@ -60,6 +60,16 @@ struct BackendMvNormalChoicePlanStep{M<:Tuple,S<:Tuple,AD<:BackendAddressSpec} <
     value_length::Int
 end
 
+struct BackendDirichletChoicePlanStep{A<:Tuple,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    alpha::A
+    parameter_slot::Union{Nothing,Int}
+    parameter_index::Union{Nothing,Int}
+    value_index::Union{Nothing,Int}
+    value_length::Int
+end
+
 function _backend_lower_tuple_argument(model::TeaModel, layout::EnvironmentLayout, expr, issues::Vector{String}, context::String)
     if expr isa Expr && expr.head in (:vect, :tuple)
         lowered = map(arg -> _backend_lower_expr(model, layout, arg, issues, context), expr.args)
@@ -123,6 +133,46 @@ function _backend_lower_mvnormal_choice_step(model::TeaModel, layout::Environmen
         step.parameter_slot,
         value_index,
         length(mu),
+    )
+end
+
+function _backend_lower_dirichlet_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+    length(step.rhs.arguments) == 1 || begin
+        _backend_issue!(issues, "dirichlet expects exactly 1 backend argument")
+        return nothing
+    end
+    address = _backend_lower_address(model, layout, step.address, issues)
+    isnothing(address) && return nothing
+    alpha = _backend_lower_tuple_argument(model, layout, step.rhs.arguments[1], issues, "dirichlet concentration")
+    isnothing(alpha) && return nothing
+    length(alpha) >= 2 || begin
+        _backend_issue!(issues, "dirichlet requires at least two backend dimensions")
+        return nothing
+    end
+
+    parameter_index = nothing
+    value_index = nothing
+    if !isnothing(step.parameter_slot)
+        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot.transform isa SimplexTransform || begin
+            _backend_issue!(issues, "dirichlet backend lowering expects a simplex transform")
+            return nothing
+        end
+        slot.value_length == length(alpha) || begin
+            _backend_issue!(issues, "dirichlet backend lowering requires a parameter slot with matching simplex length")
+            return nothing
+        end
+        parameter_index = slot.index
+        value_index = slot.value_index
+    end
+    return BackendDirichletChoicePlanStep(
+        step.binding_slot,
+        address,
+        alpha,
+        step.parameter_slot,
+        parameter_index,
+        value_index,
+        length(alpha),
     )
 end
 
@@ -214,6 +264,20 @@ function _collect_backend_slot_kinds!(
         _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
     end
     for expr in step.sigma
+        _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
+    end
+    isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendDirichletChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    for expr in step.alpha
         _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
     end
     isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)

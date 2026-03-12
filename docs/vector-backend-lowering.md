@@ -21,9 +21,11 @@ Those families already work with:
 At this point:
 
 - restricted diagonal `mvnormal` does lower into the backend-native subset
-- `dirichlet` still remains outside that subset
+- simplex-valued `dirichlet` now also lowers into that subset for static
+  concentration vectors
 
-This note records the intended staged design for closing that gap.
+This note records the staged design that produced the first native vector
+families and the remaining limits beyond them.
 
 ## Current State
 
@@ -37,15 +39,19 @@ That is enough for vector-valued latents in the CPU path because the evaluator
 can materialize whole values from a `ParameterSlotSpec` before calling
 distribution `logpdf`.
 
-The backend-native path is not there yet because its choice nodes are still
-fundamentally scalar-oriented:
+The backend-native path now covers two vector families:
 
-- backend score nodes assume scalar distribution arguments and scalar choice
-  values
-- backend workspaces distinguish numeric/index/generic slots, but not
-  value-span-aware vector slots
-- backend manual gradients assume scalar latent choices plus observed discrete
-  likelihoods
+- restricted diagonal `mvnormal`
+- static `dirichlet`
+
+That support is still intentionally family-specific:
+
+- vector score nodes are explicit family kernels, not generic multivariate
+  distribution objects
+- backend workspaces still separate numeric/index/generic slots, but vector
+  choices bind through explicit value spans
+- manual backend gradients remain specialized rather than deriving from a
+  generic tensor AD layer
 
 ## Why `dirichlet` and `mvnormal` Differ
 
@@ -63,8 +69,8 @@ restricted to a diagonal covariance parameterization:
 - the transform itself is vector-valued and contributes a nontrivial Jacobian
 - backend gradients need transform-aware vector chain rules
 
-For that reason, the first backend-native vector family should be diagonal
-`mvnormal`, not `dirichlet`.
+For that reason, the first backend-native vector family was diagonal
+`mvnormal`, followed by `dirichlet` once simplex-aware chain rules were added.
 
 ## Required Backend Changes
 
@@ -120,9 +126,10 @@ identity map and its score is a sum of scalar normal terms.
 
 ### Phase 1: Keep the Boundary Explicit
 
-Continue reporting vector latent families as outside the backend-native subset.
+This phase is complete for the currently supported families:
 
-This is the current behavior and should remain explicit in `backend_report`.
+- restricted diagonal `mvnormal`
+- static `dirichlet`
 
 ### Phase 2: Backend-Native Observed Vector Likelihoods
 
@@ -140,24 +147,23 @@ without immediately coupling to latent transforms.
 
 Add a backend-native latent vector slot for restricted diagonal `mvnormal`.
 
-This is now the first implemented end-to-end vector target because:
+This is now implemented because:
 
 - the parameter transform is a vector-valued identity
 - constrained and unconstrained spans match
 - score and gradient logic are comparatively simple
 
-Current limitation inside Phase 3:
+Current limitation after Phase 3:
 
-- backend-native batched scoring supports diagonal `mvnormal`
-- batched gradients for that family now use the manual backend gradient path
-- richer vector families such as `dirichlet` still remain CPU/fallback only
+- only the restricted diagonal `mvnormal` family is backend-native
+- richer transformed vector families still remain CPU/fallback only
 
 ### Phase 4: Latent `dirichlet`
 
 After vector-valued identity slots work in the backend-native path, add
 simplex-valued vector slots for `dirichlet`.
 
-That phase needs:
+This phase is now implemented for static concentration vectors through:
 
 - backend-native simplex transforms
 - Jacobian accumulation
