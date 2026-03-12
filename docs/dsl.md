@@ -227,7 +227,8 @@ vector subset (`mvnormal` diagonal, `dirichlet`) flows through that path.
 
 Particle axes map naturally onto the same compiled model structure.
 The current reference implementation exposes `batched_importance_sampling` and
-`batched_sir`, with `batched_smc` as the current single-stage SIR alias.
+`batched_sir`, and `batched_smc` now denotes an adaptive tempered multi-stage
+SMC bridge from a Gaussian proposal to the target density.
 
 ### HMC
 

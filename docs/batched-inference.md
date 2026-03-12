@@ -49,6 +49,7 @@ The initial API should be:
 - `batched_advi(model, args, constraints; ...)`
 - `batched_importance_sampling(model, args, constraints; ...)`
 - `batched_sir(model, args, constraints; ...)`
+- `batched_smc(model, args, constraints; ...)`
 - `batched_hmc(model, args, constraints; ...)`
 - `batched_nuts(model, args, constraints; ...)`
 
@@ -71,8 +72,11 @@ The current reference inference layer now includes:
   reuses `BatchedLogjointGradientCache`
 - `batched_importance_sampling`, which evaluates particle weights through the
   same batched unconstrained target density
-- `batched_sir`, which is the current one-stage SMC reference path and the
-  implementation behind `batched_smc`
+- `batched_sir`, which is the current one-stage sampling-importance-resampling
+  reference path
+- `batched_smc`, which now uses adaptive tempering between the Gaussian
+  proposal and the target density, with stage-wise ESS control and systematic
+  resampling between intermediate targets
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

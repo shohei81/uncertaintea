@@ -102,32 +102,33 @@
         (),
         choicemap();
         num_particles=18,
-        num_samples=7,
         proposal_loc=Float64[0.2, 0.3, 0.5],
         proposal_log_scale=fill(-0.4, 2),
         rng=MersenneTwister(206),
     )
 
     @test dirichlet_sir isa SIRResult
-    @test dirichlet_smc isa SIRResult
+    @test dirichlet_smc isa SMCResult
     @test dirichlet_sir.importance.evaluation_backend == :backend_native
     @test dirichlet_smc.importance.evaluation_backend == :backend_native
     @test numsamples(dirichlet_sir) == 10
-    @test numsamples(dirichlet_smc) == 7
+    @test numsamples(dirichlet_smc) == 18
+    @test numstages(dirichlet_smc) >= 1
     @test size(dirichlet_sir.unconstrained_samples) == (2, 10)
     @test size(dirichlet_sir.constrained_samples) == (3, 10)
-    @test size(dirichlet_smc.unconstrained_samples) == (2, 7)
-    @test size(dirichlet_smc.constrained_samples) == (3, 7)
+    @test size(dirichlet_smc.importance.unconstrained_particles) == (2, 18)
+    @test size(dirichlet_smc.importance.constrained_particles) == (3, 18)
     @test all(1 .<= dirichlet_sir.ancestors .<= 24)
-    @test all(1 .<= dirichlet_smc.ancestors .<= 18)
+    @test all(stage.beta_start <= stage.beta_end && stage.beta_end <= 1.0 for stage in dirichlet_smc.stages)
+    @test last(dirichlet_smc.stages).beta_end ≈ 1.0 atol=1e-6
     @test 0.0 < ess(dirichlet_sir.importance) <= 24.0
-    @test 0.0 < ess(dirichlet_smc.importance) <= 18.0
+    @test 0.0 < ess(dirichlet_smc) <= 18.0
     for sample_index in 1:size(dirichlet_sir.constrained_samples, 2)
         @test all(>(0.0), dirichlet_sir.constrained_samples[:, sample_index])
         @test sum(dirichlet_sir.constrained_samples[:, sample_index]) ≈ 1.0 atol=1e-6
     end
-    for sample_index in 1:size(dirichlet_smc.constrained_samples, 2)
-        @test all(>(0.0), dirichlet_smc.constrained_samples[:, sample_index])
-        @test sum(dirichlet_smc.constrained_samples[:, sample_index]) ≈ 1.0 atol=1e-6
+    for sample_index in 1:size(dirichlet_smc.importance.constrained_particles, 2)
+        @test all(>(0.0), dirichlet_smc.importance.constrained_particles[:, sample_index])
+        @test sum(dirichlet_smc.importance.constrained_particles[:, sample_index]) ≈ 1.0 atol=1e-6
     end
 end

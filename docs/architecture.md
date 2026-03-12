@@ -285,8 +285,9 @@ Why:
   version should be an iterative CPU reference path instead of a direct GPU
   target
 - the current runtime now has CPU reference `batched_advi`,
-  `batched_importance_sampling`, and `batched_sir`, so the remaining work is
-  to widen the backend-native subset and lower those same batch APIs to GPU
+  `batched_importance_sampling`, `batched_sir`, and adaptive tempered
+  `batched_smc`, so the remaining work is to widen the backend-native subset
+  and lower those same batch APIs to GPU
 
 ## Recommended Execution Modes
 

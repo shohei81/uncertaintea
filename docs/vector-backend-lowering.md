@@ -18,6 +18,7 @@ Those families already work with:
 - batched fallback evaluation
 - HMC and NUTS in the CPU path
 - `batched_advi`, importance sampling, and SIR in the CPU reference path
+- adaptive tempered `batched_smc` in the CPU reference path
 
 At this point:
 
