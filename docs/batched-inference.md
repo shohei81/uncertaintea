@@ -141,6 +141,9 @@ for dynamic trajectory building:
 - subtree start-state initialization now also uses those masked matrix-copy
   helpers to load `left/right` continuation frontiers into the tree scratch
   buffers for the active cohort
+- subtree and continuation frontier/proposal logjoint values now also live in
+  workspace-owned vectors, with explicit sync helpers keeping the reference
+  `NUTSState` scalars aligned for the remaining chain-local fallback paths
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

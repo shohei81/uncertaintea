@@ -1180,6 +1180,13 @@ using UncertainTea
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) === gaussian_nuts_workspace.proposal_position
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.momentum) === gaussian_nuts_workspace.proposal_momentum
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.gradient) === gaussian_nuts_workspace.proposal_gradient
+    @test length(gaussian_nuts_workspace.tree_current_logjoint) == 3
+    @test length(gaussian_nuts_workspace.tree_left_logjoint) == 3
+    @test length(gaussian_nuts_workspace.tree_right_logjoint) == 3
+    @test length(gaussian_nuts_workspace.tree_proposal_logjoint) == 3
+    @test length(gaussian_nuts_workspace.left_logjoint) == 3
+    @test length(gaussian_nuts_workspace.right_logjoint) == 3
+    @test length(gaussian_nuts_workspace.continuation_proposal_logjoint) == 3
     @test length(gaussian_nuts_workspace.continuation_proposed_energy) == 3
     @test length(gaussian_nuts_workspace.continuation_delta_energy) == 3
     @test length(gaussian_nuts_workspace.continuation_accept_prob) == 3
@@ -1235,6 +1242,9 @@ using UncertainTea
     @test gaussian_nuts_workspace.column_continuation_states[1].left.position ≈ view(gaussian_nuts_workspace.left_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].right.position ≈ view(gaussian_nuts_workspace.right_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].proposal.position ≈ view(gaussian_nuts_workspace.proposal_position, :, 1) atol=1e-8
+    @test gaussian_nuts_workspace.left_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].left.logjoint atol=1e-8
+    @test gaussian_nuts_workspace.right_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].right.logjoint atol=1e-8
+    @test gaussian_nuts_workspace.continuation_proposal_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].proposal.logjoint atol=1e-8
     gaussian_nuts_workspace.step_direction .= [1, -1, 1]
     subtree_active = BitVector([true, true, false])
     UncertainTea._initialize_batched_nuts_subtree_states!(gaussian_nuts_workspace, subtree_active)
@@ -1244,6 +1254,10 @@ using UncertainTea
     @test view(gaussian_nuts_workspace.tree_current_position, :, 2) ≈ view(gaussian_nuts_workspace.left_position, :, 2)
     @test view(gaussian_nuts_workspace.tree_proposal_position, :, 1) ≈ view(gaussian_nuts_workspace.right_position, :, 1)
     @test view(gaussian_nuts_workspace.tree_proposal_position, :, 2) ≈ view(gaussian_nuts_workspace.left_position, :, 2)
+    @test gaussian_nuts_workspace.tree_current_logjoint[1] ≈ gaussian_nuts_workspace.right_logjoint[1] atol=1e-8
+    @test gaussian_nuts_workspace.tree_current_logjoint[2] ≈ gaussian_nuts_workspace.left_logjoint[2] atol=1e-8
+    @test gaussian_nuts_workspace.tree_proposal_logjoint[1] ≈ gaussian_nuts_workspace.right_logjoint[1] atol=1e-8
+    @test gaussian_nuts_workspace.tree_proposal_logjoint[2] ≈ gaussian_nuts_workspace.left_logjoint[2] atol=1e-8
     @test gaussian_nuts_workspace.tree_depths[1] == 1
     @test gaussian_nuts_workspace.integration_steps[1] in 0:1
     @test isfinite(gaussian_nuts_workspace.continuation_log_weight[1])

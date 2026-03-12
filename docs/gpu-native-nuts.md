@@ -78,7 +78,9 @@ The current CPU NUTS path is intentionally narrow:
   proposal-selection/log-weight scratch there too, turning checks now run
   through batched helpers over the workspace matrices, and frontier/proposal
   buffer copies plus subtree start-state initialization now flow through
-  masked matrix-copy helpers
+  masked matrix-copy helpers; the same path now also keeps subtree and
+  continuation logjoint values in workspace-owned vectors with explicit sync
+  points for the reference scalar state objects
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

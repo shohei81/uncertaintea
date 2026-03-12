@@ -141,7 +141,8 @@ Current backend-lowering subset:
   helpers over the workspace matrices, with frontier/proposal column copies now
   routed through masked matrix-copy helpers, and subtree start-state
   initialization now uses that same masked-copy path instead of per-chain state
-  cloning; the
+  cloning; logjoint values for those batched subtree/continuation states now
+  also have workspace-owned vector storage with explicit sync helpers; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
