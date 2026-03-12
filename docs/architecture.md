@@ -138,7 +138,8 @@ Current backend-lowering subset:
   acceptance, and log-weight bookkeeping now stored in batch-owned scratch, and
   the continuation merge path now keeps proposal-selection/log-weight scratch
   there as well; turning checks on that path now also run through batched
-  helpers over the workspace matrices, and the
+  helpers over the workspace matrices, with frontier/proposal column copies now
+  routed through masked matrix-copy helpers, and the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

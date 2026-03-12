@@ -233,6 +233,9 @@ mutable struct BatchedNUTSWorkspace
     subtree_merged_turning::BitVector
     subtree_divergent::BitVector
     subtree_active::BitVector
+    subtree_copy_left::BitVector
+    subtree_copy_right::BitVector
+    subtree_select_proposal::BitVector
     step_valid::BitVector
     step_direction::Vector{Int}
     tree_depths::Vector{Int}
@@ -396,6 +399,9 @@ function BatchedNUTSWorkspace(
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
+        falses(num_chains),
+        falses(num_chains),
+        falses(num_chains),
         falses(num_chains),
         falses(num_chains),
         falses(num_chains),
@@ -1499,6 +1505,37 @@ function _copyto_nuts_state!(destination::NUTSState, source::NUTSState)
     return destination
 end
 
+function _copy_masked_columns!(
+    destination::AbstractMatrix,
+    source::AbstractMatrix,
+    mask::AbstractVector{Bool},
+)
+    size(destination) == size(source) ||
+        throw(DimensionMismatch("expected masked column copy inputs of matching size, got $(size(destination)) and $(size(source))"))
+    length(mask) == size(destination, 2) ||
+        throw(DimensionMismatch("expected masked column copy mask of length $(size(destination, 2)), got $(length(mask))"))
+    for chain_index in eachindex(mask)
+        mask[chain_index] || continue
+        copyto!(view(destination, :, chain_index), view(source, :, chain_index))
+    end
+    return destination
+end
+
+function _copy_masked_nuts_buffers!(
+    destination_position::AbstractMatrix,
+    destination_momentum::AbstractMatrix,
+    destination_gradient::AbstractMatrix,
+    source_position::AbstractMatrix,
+    source_momentum::AbstractMatrix,
+    source_gradient::AbstractMatrix,
+    mask::AbstractVector{Bool},
+)
+    _copy_masked_columns!(destination_position, source_position, mask)
+    _copy_masked_columns!(destination_momentum, source_momentum, mask)
+    _copy_masked_columns!(destination_gradient, source_gradient, mask)
+    return destination_position, destination_momentum, destination_gradient
+end
+
 function _load_nuts_state!(
     destination::NUTSState,
     position::AbstractVector,
@@ -1793,16 +1830,38 @@ function _merge_batched_nuts_continuation_frontiers!(
 )
     length(active) == size(workspace.left_position, 2) ||
         throw(DimensionMismatch("expected continuation-frontier active mask of length $(size(workspace.left_position, 2)), got $(length(active))"))
+    fill!(workspace.subtree_copy_left, false)
+    fill!(workspace.subtree_copy_right, false)
     for chain_index in eachindex(active)
         active[chain_index] || continue
         continuation = workspace.column_continuation_states[chain_index]
         tree_workspace = workspace.column_tree_workspaces[chain_index]
         if workspace.step_direction[chain_index] < 0
-            _copyto_nuts_state!(continuation.left, tree_workspace.left)
+            workspace.subtree_copy_left[chain_index] = true
+            continuation.left.logjoint = tree_workspace.left.logjoint
         else
-            _copyto_nuts_state!(continuation.right, tree_workspace.right)
+            workspace.subtree_copy_right[chain_index] = true
+            continuation.right.logjoint = tree_workspace.right.logjoint
         end
     end
+    _copy_masked_nuts_buffers!(
+        workspace.left_position,
+        workspace.left_momentum,
+        workspace.left_gradient,
+        workspace.tree_left_position,
+        workspace.tree_left_momentum,
+        workspace.tree_left_gradient,
+        workspace.subtree_copy_left,
+    )
+    _copy_masked_nuts_buffers!(
+        workspace.right_position,
+        workspace.right_momentum,
+        workspace.right_gradient,
+        workspace.tree_right_position,
+        workspace.tree_right_momentum,
+        workspace.tree_right_gradient,
+        workspace.subtree_copy_right,
+    )
     return workspace
 end
 
@@ -2049,6 +2108,9 @@ function _continue_batched_nuts_batched_subtree!(
     fill!(workspace.subtree_merged_turning, false)
     fill!(workspace.subtree_divergent, false)
     fill!(workspace.subtree_active, false)
+    fill!(workspace.subtree_copy_left, false)
+    fill!(workspace.subtree_copy_right, false)
+    fill!(workspace.subtree_select_proposal, false)
 
     active_depth = 0
     active_depth_count = 0
@@ -2111,6 +2173,9 @@ function _continue_batched_nuts_batched_subtree!(
         )
 
         any_active = false
+        fill!(workspace.subtree_copy_left, false)
+        fill!(workspace.subtree_copy_right, false)
+        fill!(workspace.subtree_select_proposal, false)
         for chain_index in 1:num_chains
             workspace.subtree_active[chain_index] || continue
             tree_workspace = workspace.column_tree_workspaces[chain_index]
@@ -2126,9 +2191,11 @@ function _continue_batched_nuts_batched_subtree!(
             workspace.subtree_integration_steps[chain_index] += 1
 
             if workspace.step_direction[chain_index] < 0
-                _copyto_nuts_state!(tree_workspace.left, tree_workspace.current)
+                workspace.subtree_copy_left[chain_index] = true
+                tree_workspace.left.logjoint = tree_workspace.current.logjoint
             else
-                _copyto_nuts_state!(tree_workspace.right, tree_workspace.current)
+                workspace.subtree_copy_right[chain_index] = true
+                tree_workspace.right.logjoint = tree_workspace.current.logjoint
             end
 
             delta_energy = workspace.subtree_proposed_energy[chain_index] - workspace.current_energy[chain_index]
@@ -2149,11 +2216,40 @@ function _continue_batched_nuts_batched_subtree!(
             )
             if !isfinite(workspace.subtree_log_weight[chain_index]) || log(rand(rng)) <
                 workspace.subtree_candidate_log_weight[chain_index] - workspace.subtree_combined_log_weight[chain_index]
-                _copyto_nuts_state!(tree_workspace.proposal, tree_workspace.current)
+                workspace.subtree_select_proposal[chain_index] = true
+                tree_workspace.proposal.logjoint = tree_workspace.current.logjoint
             end
             workspace.subtree_log_weight[chain_index] = workspace.subtree_combined_log_weight[chain_index]
 
         end
+
+        _copy_masked_nuts_buffers!(
+            workspace.tree_left_position,
+            workspace.tree_left_momentum,
+            workspace.tree_left_gradient,
+            workspace.tree_current_position,
+            workspace.tree_current_momentum,
+            workspace.tree_current_gradient,
+            workspace.subtree_copy_left,
+        )
+        _copy_masked_nuts_buffers!(
+            workspace.tree_right_position,
+            workspace.tree_right_momentum,
+            workspace.tree_right_gradient,
+            workspace.tree_current_position,
+            workspace.tree_current_momentum,
+            workspace.tree_current_gradient,
+            workspace.subtree_copy_right,
+        )
+        _copy_masked_nuts_buffers!(
+            workspace.tree_proposal_position,
+            workspace.tree_proposal_momentum,
+            workspace.tree_proposal_gradient,
+            workspace.tree_current_position,
+            workspace.tree_current_momentum,
+            workspace.tree_current_gradient,
+            workspace.subtree_select_proposal,
+        )
 
         _batched_is_turning!(
             workspace.subtree_turning,
@@ -2213,15 +2309,26 @@ function _continue_batched_nuts_batched_subtree!(
             workspace.continuation_select_proposal[chain_index] =
                 log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
                 workspace.continuation_combined_log_weight[chain_index]
-            if workspace.continuation_select_proposal[chain_index]
-                _copyto_nuts_state!(continuation.proposal, tree_workspace.proposal)
-            end
             workspace.continuation_log_weight[chain_index] = workspace.continuation_combined_log_weight[chain_index]
         end
 
         workspace.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
         workspace.continuation_turning[chain_index] =
             workspace.subtree_turning[chain_index] || workspace.subtree_merged_turning[chain_index]
+    end
+
+    _copy_masked_nuts_buffers!(
+        workspace.proposal_position,
+        workspace.proposal_momentum,
+        workspace.proposal_gradient,
+        workspace.tree_proposal_position,
+        workspace.tree_proposal_momentum,
+        workspace.tree_proposal_gradient,
+        workspace.continuation_select_proposal,
+    )
+    for chain_index in 1:num_chains
+        workspace.continuation_select_proposal[chain_index] || continue
+        workspace.proposed_logjoint[chain_index] = workspace.column_tree_workspaces[chain_index].proposal.logjoint
     end
 
     return true

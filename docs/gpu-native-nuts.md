@@ -75,8 +75,9 @@ The current CPU NUTS path is intentionally narrow:
   cohort by cohort whenever multiple active chains share a tree depth; subtree
   energy and acceptance/log-weight bookkeeping for that path also now live in
   batch-owned scratch, the continuation merge step now keeps its
-  proposal-selection/log-weight scratch there too, and turning checks now run
-  through batched helpers over the workspace matrices
+  proposal-selection/log-weight scratch there too, turning checks now run
+  through batched helpers over the workspace matrices, and frontier/proposal
+  buffer copies now flow through masked matrix-copy helpers
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

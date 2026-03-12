@@ -1192,6 +1192,15 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.subtree_candidate_log_weight) == 3
     @test length(gaussian_nuts_workspace.subtree_combined_log_weight) == 3
     @test length(gaussian_nuts_workspace.subtree_merged_turning) == 3
+    @test length(gaussian_nuts_workspace.subtree_copy_left) == 3
+    @test length(gaussian_nuts_workspace.subtree_copy_right) == 3
+    @test length(gaussian_nuts_workspace.subtree_select_proposal) == 3
+    masked_destination = reshape(collect(1.0:6.0), 2, 3)
+    masked_source = reshape(collect(7.0:12.0), 2, 3)
+    UncertainTea._copy_masked_columns!(masked_destination, masked_source, BitVector([true, false, true]))
+    @test masked_destination[:, 1] == masked_source[:, 1]
+    @test masked_destination[:, 2] == [3.0, 4.0]
+    @test masked_destination[:, 3] == masked_source[:, 3]
     turning_destination = falses(3)
     @test UncertainTea._batched_is_turning!(
         turning_destination,
@@ -1272,6 +1281,7 @@ using UncertainTea
     @test all(0.0 .<= gaussian_shared_nuts_workspace.subtree_accept_prob .<= 1.0)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_candidate_log_weight)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_combined_log_weight)
+    @test any(gaussian_shared_nuts_workspace.subtree_copy_left .| gaussian_shared_nuts_workspace.subtree_copy_right)
     @test gaussian_shared_nuts_workspace.subtree_merged_turning ==
         UncertainTea._batched_is_turning!(
             falses(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
@@ -1389,6 +1399,9 @@ using UncertainTea
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[2:3] == [3, 3]
     @test gaussian_mixed_depth_nuts_workspace.subtree_accept_stat_count[1] == 0
     @test gaussian_mixed_depth_nuts_workspace.subtree_candidate_log_weight[1] == -Inf
+    @test !gaussian_mixed_depth_nuts_workspace.subtree_copy_left[1]
+    @test !gaussian_mixed_depth_nuts_workspace.subtree_copy_right[1]
+    @test !gaussian_mixed_depth_nuts_workspace.subtree_select_proposal[1]
     gaussian_mixed_depth_nuts_workspace.continuation_turning[1] = false
     @test UncertainTea._continue_batched_nuts_batched_subtree!(
         gaussian_mixed_depth_nuts_workspace,

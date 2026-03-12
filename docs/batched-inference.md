@@ -135,6 +135,9 @@ for dynamic trajectory building:
 - turning checks for both subtree growth and merged continuation frontiers now
   run through batched helpers over the workspace matrices instead of per-chain
   scalar calls
+- those remaining proposal/frontier copies now also go through masked
+  matrix-copy helpers, so the batched subtree path no longer performs repeated
+  per-chain vector copies for position/momentum/gradient buffers
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
