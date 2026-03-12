@@ -191,7 +191,8 @@ Current backend-lowering subset:
   `:cuda`, and then into a launch-plan layer with concrete argument/shared
   bindings and per-stage executor skeletons, and then into a backend
   executor-plan layer with target-specific argument classes and kernel
-  symbols, and
+  symbols, and then into a codegen-plan layer with backend module symbols,
+  generated entry symbols, and per-stage generated-argument descriptors, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control

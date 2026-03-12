@@ -124,7 +124,9 @@ The current CPU NUTS path is intentionally narrow:
   `:gpu`, `:metal`, and `:cuda`, then into a launch-plan layer with concrete
   argument/shared bindings and per-stage executor skeletons, then into a
   backend executor-plan layer with target-specific argument classes and kernel
-  symbols, plus a
+  symbols, then into a codegen-plan layer with backend module symbols,
+  generated entry symbols, and per-stage generated-argument descriptors, plus
+  a
   small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through
