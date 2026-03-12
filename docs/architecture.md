@@ -181,7 +181,8 @@ Current backend-lowering subset:
   small kernel program with a fixed per-phase op sequence, so the control
   skeleton is increasingly declarative, and those op sequences now feed
   phase-specialized program executors rather than a monolithic kernel-op
-  interpreter; the
+  interpreter, with each program also exposing a typed primitive-step table
+  under the phase-specific executor; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

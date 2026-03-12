@@ -1678,6 +1678,8 @@ using UncertainTea
     @test idle_program isa UncertainTea.BatchedNUTSIdleKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(idle_program) ==
         (UncertainTea.NUTSKernelReloadControl,)
+    @test typeof.(UncertainTea._batched_nuts_kernel_steps(idle_program)) ==
+        (UncertainTea.BatchedNUTSReloadControlStep,)
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         idle_program,
@@ -1760,6 +1762,14 @@ using UncertainTea
             UncertainTea.NUTSKernelAdvance,
             UncertainTea.NUTSKernelTransitionPhase,
         )
+    @test typeof.(UncertainTea._batched_nuts_kernel_steps(expand_program)) ==
+        (
+            UncertainTea.BatchedNUTSReloadControlStep,
+            UncertainTea.BatchedNUTSLeapfrogStep,
+            UncertainTea.BatchedNUTSHamiltonianStep,
+            UncertainTea.BatchedNUTSAdvanceStep,
+            UncertainTea.BatchedNUTSTransitionPhaseStep,
+        )
     while gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1828,6 +1838,13 @@ using UncertainTea
             UncertainTea.NUTSKernelMerge,
             UncertainTea.NUTSKernelTransitionPhase,
         )
+    @test typeof.(UncertainTea._batched_nuts_kernel_steps(merge_program)) ==
+        (
+            UncertainTea.BatchedNUTSReloadControlStep,
+            UncertainTea.BatchedNUTSActivateMergeStep,
+            UncertainTea.BatchedNUTSMergeStep,
+            UncertainTea.BatchedNUTSTransitionPhaseStep,
+        )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1859,6 +1876,8 @@ using UncertainTea
     @test done_program isa UncertainTea.BatchedNUTSDoneKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(done_program) ==
         (UncertainTea.NUTSKernelReloadControl,)
+    @test typeof.(UncertainTea._batched_nuts_kernel_steps(done_program)) ==
+        (UncertainTea.BatchedNUTSReloadControlStep,)
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,

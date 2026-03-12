@@ -207,7 +207,8 @@ for dynamic trajectory building:
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,
   `transition_phase` for merge); those op tuples now remain as declarative
   metadata while execution itself dispatches through phase-specialized program
-  handlers rather than a generic kernel-op interpreter
+  handlers rather than a generic kernel-op interpreter, with a typed primitive
+  step table under each program so the executable part is also explicit
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

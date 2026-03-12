@@ -377,6 +377,16 @@ mutable struct BatchedNUTSKernelExecutionState
     any_active::Bool
 end
 
+abstract type AbstractBatchedNUTSKernelStep end
+
+struct BatchedNUTSReloadControlStep <: AbstractBatchedNUTSKernelStep end
+struct BatchedNUTSLeapfrogStep <: AbstractBatchedNUTSKernelStep end
+struct BatchedNUTSHamiltonianStep <: AbstractBatchedNUTSKernelStep end
+struct BatchedNUTSAdvanceStep <: AbstractBatchedNUTSKernelStep end
+struct BatchedNUTSActivateMergeStep <: AbstractBatchedNUTSKernelStep end
+struct BatchedNUTSMergeStep <: AbstractBatchedNUTSKernelStep end
+struct BatchedNUTSTransitionPhaseStep <: AbstractBatchedNUTSKernelStep end
+
 struct BatchedNUTSIdleKernelProgram <: AbstractBatchedNUTSKernelProgram
     frame::BatchedNUTSIdleKernelFrame
     ops::NTuple{1,BatchedNUTSKernelOp}
@@ -412,6 +422,21 @@ const _BATCHED_NUTS_MERGE_KERNEL_OPS = (
     NUTSKernelTransitionPhase,
 )
 const _BATCHED_NUTS_DONE_KERNEL_OPS = (NUTSKernelReloadControl,)
+const _BATCHED_NUTS_IDLE_KERNEL_STEPS = (BatchedNUTSReloadControlStep(),)
+const _BATCHED_NUTS_EXPAND_KERNEL_STEPS = (
+    BatchedNUTSReloadControlStep(),
+    BatchedNUTSLeapfrogStep(),
+    BatchedNUTSHamiltonianStep(),
+    BatchedNUTSAdvanceStep(),
+    BatchedNUTSTransitionPhaseStep(),
+)
+const _BATCHED_NUTS_MERGE_KERNEL_STEPS = (
+    BatchedNUTSReloadControlStep(),
+    BatchedNUTSActivateMergeStep(),
+    BatchedNUTSMergeStep(),
+    BatchedNUTSTransitionPhaseStep(),
+)
+const _BATCHED_NUTS_DONE_KERNEL_STEPS = (BatchedNUTSReloadControlStep(),)
 
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
@@ -2556,6 +2581,10 @@ function _batched_nuts_kernel_program(
 end
 
 _batched_nuts_kernel_ops(program::AbstractBatchedNUTSKernelProgram) = program.ops
+_batched_nuts_kernel_steps(::BatchedNUTSIdleKernelProgram) = _BATCHED_NUTS_IDLE_KERNEL_STEPS
+_batched_nuts_kernel_steps(::BatchedNUTSExpandKernelProgram) = _BATCHED_NUTS_EXPAND_KERNEL_STEPS
+_batched_nuts_kernel_steps(::BatchedNUTSMergeKernelProgram) = _BATCHED_NUTS_MERGE_KERNEL_STEPS
+_batched_nuts_kernel_steps(::BatchedNUTSDoneKernelProgram) = _BATCHED_NUTS_DONE_KERNEL_STEPS
 
 _batched_nuts_kernel_returns(::BatchedNUTSIdleKernelProgram) = false
 _batched_nuts_kernel_returns(::BatchedNUTSExpandKernelProgram) = true
@@ -3057,7 +3086,7 @@ end
 
 function _execute_batched_nuts_kernel_program!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSIdleKernelProgram,
+    program::AbstractBatchedNUTSKernelProgram,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -3067,14 +3096,29 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    _batched_nuts_kernel_reload_control!(workspace, program.frame)
-    _batched_nuts_kernel_transition_phase!(workspace, program.frame, execution)
+    for step in _batched_nuts_kernel_steps(program)
+        _execute_batched_nuts_kernel_step!(
+            workspace,
+            program.frame,
+            step,
+            execution,
+            model,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            step_size,
+            max_delta_energy,
+            rng,
+        )
+    end
     return nothing
 end
 
-function _execute_batched_nuts_kernel_program!(
+function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSExpandKernelProgram,
+    frame::AbstractBatchedNUTSKernelFrame,
+    ::BatchedNUTSReloadControlStep,
+    execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -3083,32 +3127,80 @@ function _execute_batched_nuts_kernel_program!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    execution = _batched_nuts_kernel_execution_state()
-    _batched_nuts_kernel_reload_control!(workspace, program.frame)
+    _batched_nuts_kernel_reload_control!(workspace, frame)
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_step!(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSExpandKernelFrame,
+    ::BatchedNUTSLeapfrogStep,
+    execution::BatchedNUTSKernelExecutionState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
     _batched_nuts_kernel_leapfrog!(
         workspace,
-        program.frame,
+        frame,
         model,
         inverse_mass_matrix,
         args,
         constraints,
         step_size,
     )
-    _batched_nuts_kernel_hamiltonian!(program.frame, inverse_mass_matrix)
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_step!(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSExpandKernelFrame,
+    ::BatchedNUTSHamiltonianStep,
+    execution::BatchedNUTSKernelExecutionState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _batched_nuts_kernel_hamiltonian!(frame, inverse_mass_matrix)
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_step!(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSExpandKernelFrame,
+    ::BatchedNUTSAdvanceStep,
+    execution::BatchedNUTSKernelExecutionState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
     execution.any_active = _advance_batched_nuts_subtree_cohort!(
         workspace,
-        program.frame,
+        frame,
         inverse_mass_matrix,
         max_delta_energy,
         rng,
     )
-    _batched_nuts_kernel_transition_phase!(workspace, program.frame, execution)
     return nothing
 end
 
-function _execute_batched_nuts_kernel_program!(
+function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSMergeKernelProgram,
+    frame::BatchedNUTSMergeKernelFrame,
+    ::BatchedNUTSActivateMergeStep,
+    execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -3117,27 +3209,18 @@ function _execute_batched_nuts_kernel_program!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    execution = _batched_nuts_kernel_execution_state()
-    _batched_nuts_kernel_reload_control!(workspace, program.frame)
     execution.any_active = _activate_batched_nuts_subtree_merge_cohort!(
         workspace,
-        program.frame.state.descriptor.block,
+        frame.state.descriptor.block,
     )
-    if execution.any_active
-        _merge_batched_nuts_subtree_cohort!(
-            workspace,
-            program.frame,
-            inverse_mass_matrix,
-            rng,
-        )
-    end
-    _batched_nuts_kernel_transition_phase!(workspace, program.frame, execution)
     return nothing
 end
 
-function _execute_batched_nuts_kernel_program!(
+function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSDoneKernelProgram,
+    frame::BatchedNUTSMergeKernelFrame,
+    ::BatchedNUTSMergeStep,
+    execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -3146,9 +3229,30 @@ function _execute_batched_nuts_kernel_program!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    execution = _batched_nuts_kernel_execution_state()
-    _batched_nuts_kernel_reload_control!(workspace, program.frame)
-    _batched_nuts_kernel_transition_phase!(workspace, program.frame, execution)
+    execution.any_active || return nothing
+    _merge_batched_nuts_subtree_cohort!(
+        workspace,
+        frame,
+        inverse_mass_matrix,
+        rng,
+    )
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_step!(
+    workspace::BatchedNUTSWorkspace,
+    frame::AbstractBatchedNUTSKernelFrame,
+    ::BatchedNUTSTransitionPhaseStep,
+    execution::BatchedNUTSKernelExecutionState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _batched_nuts_kernel_transition_phase!(workspace, frame, execution)
     return nothing
 end
 
