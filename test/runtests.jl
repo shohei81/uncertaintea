@@ -1670,6 +1670,27 @@ using UncertainTea
     @test idle_block isa UncertainTea.BatchedNUTSIdleControlBlock
     idle_descriptor = UncertainTea._batched_nuts_step_descriptor(gaussian_cohort_scheduler_workspace)
     @test idle_descriptor isa UncertainTea.BatchedNUTSIdleStepDescriptor
+    idle_state = UncertainTea._batched_nuts_step_state(gaussian_cohort_scheduler_workspace)
+    @test idle_state isa UncertainTea.BatchedNUTSIdleStepState
+    idle_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
+    @test idle_frame isa UncertainTea.BatchedNUTSIdleKernelFrame
+    idle_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
+    @test idle_program isa UncertainTea.BatchedNUTSIdleKernelProgram
+    @test UncertainTea._batched_nuts_kernel_ops(idle_program) ==
+        (UncertainTea.NUTSKernelReloadControl,)
+    @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
+        gaussian_cohort_scheduler_workspace,
+        idle_program,
+        gaussian_mean,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        cohort_rng,
+    )
+    @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
+        UncertainTea.NUTSSchedulerIdle
     @test UncertainTea._begin_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         4,
@@ -1838,6 +1859,19 @@ using UncertainTea
     @test done_program isa UncertainTea.BatchedNUTSDoneKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(done_program) ==
         (UncertainTea.NUTSKernelReloadControl,)
+    @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
+        gaussian_cohort_scheduler_workspace,
+        done_program,
+        gaussian_mean,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        cohort_rng,
+    )
+    @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
+        UncertainTea.NUTSSchedulerDone
     @test gaussian_cohort_scheduler_workspace.control.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
         BitVector([true, true, true])

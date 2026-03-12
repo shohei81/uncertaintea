@@ -179,7 +179,9 @@ Current backend-lowering subset:
   kernel-frame object then makes the concrete matrix/vector buffers for that
   step explicit as well; the current CPU path now also wraps that frame in a
   small kernel program with a fixed per-phase op sequence, so the control
-  skeleton is increasingly declarative; the
+  skeleton is increasingly declarative, and those op sequences now feed
+  phase-specialized program executors rather than a monolithic kernel-op
+  interpreter; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
