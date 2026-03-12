@@ -1931,7 +1931,7 @@ function _continue_batched_nuts_proposal!(
     return workspace
 end
 
-function _continue_batched_nuts_depth1!(
+function _continue_batched_nuts_batched_subtree!(
     workspace::BatchedNUTSWorkspace,
     model::TeaModel,
     position::AbstractMatrix{Float64},
@@ -1953,11 +1953,17 @@ function _continue_batched_nuts_depth1!(
     fill!(workspace.subtree_divergent, false)
     fill!(workspace.subtree_active, false)
 
+    active_depth = 0
     any_active = false
     for chain_index in 1:num_chains
-        workspace.tree_depths[chain_index] == 1 || continue
+        workspace.tree_depths[chain_index] < max_tree_depth || continue
         workspace.divergent_step[chain_index] && continue
         workspace.continuation_turning[chain_index] && continue
+        if active_depth == 0
+            active_depth = workspace.tree_depths[chain_index]
+        elseif workspace.tree_depths[chain_index] != active_depth
+            return false
+        end
         workspace.subtree_active[chain_index] = true
         workspace.step_direction[chain_index] = rand(rng, Bool) ? 1 : -1
         continuation = workspace.column_continuation_states[chain_index]
@@ -1971,7 +1977,7 @@ function _continue_batched_nuts_depth1!(
     end
     any_active || return false
 
-    for _ in 1:2
+    for _ in 1:(1 << active_depth)
         _batched_nuts_leapfrog_step_to!(
             workspace,
             model,
@@ -2043,7 +2049,7 @@ function _continue_batched_nuts_depth1!(
     end
 
     for chain_index in 1:num_chains
-        workspace.tree_depths[chain_index] == 1 || continue
+        workspace.tree_depths[chain_index] == active_depth || continue
         started = workspace.subtree_integration_steps[chain_index] > 0 || workspace.subtree_divergent[chain_index]
         started || continue
 
@@ -2182,7 +2188,7 @@ function _batched_nuts_proposals!(
         max_delta_energy,
         rng,
     )
-    _continue_batched_nuts_depth1!(
+    while _continue_batched_nuts_batched_subtree!(
         workspace,
         model,
         position,
@@ -2194,6 +2200,7 @@ function _batched_nuts_proposals!(
         max_delta_energy,
         rng,
     )
+    end
     for chain_index in 1:num_chains
         _continue_batched_nuts_proposal!(
             workspace,

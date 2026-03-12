@@ -1222,7 +1222,7 @@ using UncertainTea
         1000.0,
         MersenneTwister(94),
     )
-    @test UncertainTea._continue_batched_nuts_depth1!(
+    @test UncertainTea._continue_batched_nuts_batched_subtree!(
         gaussian_shared_nuts_workspace,
         gaussian_mean,
         gaussian_batch_params,
@@ -1238,6 +1238,65 @@ using UncertainTea
     @test all(steps >= 2 for steps in gaussian_shared_nuts_workspace.integration_steps)
     @test all(isfinite, gaussian_shared_nuts_workspace.continuation_log_weight)
     @test all(count >= 1 for count in gaussian_shared_nuts_workspace.continuation_accept_stat_count)
+    gaussian_single_shared_params = gaussian_batch_params[:, 1:1]
+    gaussian_single_shared_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_single_shared_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    gaussian_single_shared_logjoint = batched_logjoint_unconstrained(
+        gaussian_mean,
+        gaussian_single_shared_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    gaussian_single_shared_gradient = batched_logjoint_gradient_unconstrained(
+        gaussian_mean,
+        gaussian_single_shared_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_single_shared_nuts_workspace,
+        gaussian_mean,
+        gaussian_single_shared_params,
+        gaussian_single_shared_logjoint,
+        gaussian_single_shared_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        MersenneTwister(96),
+    )
+    @test UncertainTea._continue_batched_nuts_batched_subtree!(
+        gaussian_single_shared_nuts_workspace,
+        gaussian_mean,
+        gaussian_single_shared_params,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        3,
+        1000.0,
+        MersenneTwister(97),
+    )
+    @test gaussian_single_shared_nuts_workspace.tree_depths == [2]
+    @test UncertainTea._continue_batched_nuts_batched_subtree!(
+        gaussian_single_shared_nuts_workspace,
+        gaussian_mean,
+        gaussian_single_shared_params,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        3,
+        1000.0,
+        MersenneTwister(98),
+    )
+    @test gaussian_single_shared_nuts_workspace.tree_depths == [3]
+    @test gaussian_single_shared_nuts_workspace.integration_steps[1] >= 6
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)
