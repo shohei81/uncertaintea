@@ -24,8 +24,11 @@ export batched_logjoint, batched_logjoint_unconstrained, batched_logjoint_gradie
 export BatchedLogjointGradientCache, batched_logjoint_gradient_unconstrained!
 export initialparameters, parameter_vector, parameterchoicemap
 export transform_to_constrained, transform_to_unconstrained, transform_to_constrained_with_logabsdet
+export GPUBackendFileEntry, GPUBackendPackageLayout, GPUBackendEmission
+export gpu_backend_files, emit_gpu_backend_package
 export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSummary, HMCDiagnosticsSummary, HMCParameterSummary, HMCSummary
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts
+export batched_nuts_package_layout, emit_batched_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, rhat, ess, summarize
 export normal, lognormal, bernoulli
 
@@ -38,6 +41,7 @@ include("parameters.jl")
 include("evaluator.jl")
 include("backend.jl")
 include("batched.jl")
+include("gpu_backend.jl")
 include("inference.jl")
 include("frontend.jl")
 

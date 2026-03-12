@@ -199,7 +199,9 @@ Current backend-lowering subset:
   module-plan layer with materialized source blobs and backend-specific
   filenames, and then into a bundle-plan layer that groups stage modules
   behind a backend bundle manifest, and then into a package-plan layer with a
-  writeable root layout and concrete file entries, and
+  writeable root layout and concrete file entries, and then into a reusable
+  GPU-backend package-layout substrate plus an emitter stub that can write the
+  generated files to disk, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control

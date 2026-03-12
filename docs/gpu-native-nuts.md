@@ -132,7 +132,8 @@ The current CPU NUTS path is intentionally narrow:
   module-plan layer with materialized source blobs and backend-specific
   filenames, then into a bundle-plan layer that groups stage modules behind a
   backend bundle manifest, then into a package-plan layer with a writeable
-  root layout and concrete file entries, plus a
+  root layout and concrete file entries, then into a reusable GPU-backend
+  package-layout substrate plus an on-disk emitter stub, plus a
   small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through
