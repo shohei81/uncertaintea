@@ -442,7 +442,8 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    schedule = _batched_nuts_kernel_schedule(program)
+    plan = _batched_nuts_kernel_resource_plan(program)
+    schedule = plan.schedule
     for stage in _batched_nuts_kernel_schedule_stages(schedule)
         _execute_batched_nuts_kernel_dataflow!(
             workspace,
@@ -456,6 +457,13 @@ function _execute_batched_nuts_kernel_program!(
             max_delta_energy,
             rng,
         )
+        for barrier in _batched_nuts_kernel_barriers_after(plan, stage.index)
+            _execute_batched_nuts_kernel_barrier!(
+                workspace,
+                barrier,
+                execution,
+            )
+        end
     end
     return nothing
 end
@@ -485,6 +493,14 @@ function _execute_batched_nuts_kernel_dataflow!(
         max_delta_energy,
         rng,
     )
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_barrier!(
+    workspace::BatchedNUTSWorkspace,
+    barrier::BatchedNUTSKernelBarrierPlacement,
+    execution::BatchedNUTSKernelExecutionState,
+)
     return nothing
 end
 

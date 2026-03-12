@@ -208,6 +208,7 @@ for dynamic trajectory building:
   descriptor with explicit logical read/write buffer sets, alias classes, and
   a fixed intra-program dependency table, then bundles those per-step
   descriptors into a phase-local schedule with derived buffer lifecycles,
+  resource groups, and explicit barrier placements,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,

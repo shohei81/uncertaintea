@@ -147,6 +147,32 @@
         0,
         0,
     )
+    merge_plan = UncertainTea._batched_nuts_kernel_resource_plan(merge_program)
+    @test length(UncertainTea._batched_nuts_kernel_schedule_stages(merge_plan.schedule)) == 4
+    @test UncertainTea._batched_nuts_kernel_resource_groups(merge_plan)[1] ==
+        UncertainTea.BatchedNUTSKernelResourceGroup(
+            UncertainTea.NUTSKernelAliasControlBlock,
+            (UncertainTea.NUTSKernelBufferControlBlock,),
+            1,
+            2,
+        )
+    @test UncertainTea._batched_nuts_kernel_barriers(merge_plan) ==
+        (
+            UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                2,
+                UncertainTea.NUTSKernelDependencyBarrier,
+                (
+                    UncertainTea.NUTSKernelAliasControlState,
+                    UncertainTea.NUTSKernelAliasSchedulerState,
+                ),
+                (
+                    UncertainTea.NUTSKernelBufferControlState,
+                    UncertainTea.NUTSKernelBufferSchedulerState,
+                ),
+            ),
+        )
+    @test UncertainTea._batched_nuts_kernel_barriers_after(merge_plan, 2) ==
+        UncertainTea._batched_nuts_kernel_barriers(merge_plan)
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -205,6 +231,15 @@
     done_schedule = UncertainTea._batched_nuts_kernel_schedule(done_program)
     @test length(UncertainTea._batched_nuts_kernel_schedule_stages(done_schedule)) == 1
     @test isempty(UncertainTea._batched_nuts_kernel_schedule_lifecycles(done_schedule)) == false
+    done_plan = UncertainTea._batched_nuts_kernel_resource_plan(done_program)
+    @test isempty(UncertainTea._batched_nuts_kernel_barriers(done_plan))
+    @test UncertainTea._batched_nuts_kernel_resource_groups(done_plan)[1] ==
+        UncertainTea.BatchedNUTSKernelResourceGroup(
+            UncertainTea.NUTSKernelAliasControlBlock,
+            (UncertainTea.NUTSKernelBufferControlBlock,),
+            1,
+            1,
+        )
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,
@@ -429,6 +464,62 @@
             lifecycle.last_write_stage == 3,
         expand_lifecycles,
     )
+    expand_plan = UncertainTea._batched_nuts_kernel_resource_plan(expand_direct_program)
+    @test UncertainTea._batched_nuts_kernel_resource_groups(expand_plan)[1] ==
+        UncertainTea.BatchedNUTSKernelResourceGroup(
+            UncertainTea.NUTSKernelAliasControlBlock,
+            (UncertainTea.NUTSKernelBufferControlBlock,),
+            1,
+            1,
+        )
+    @test UncertainTea._batched_nuts_kernel_barriers(expand_plan) ==
+        (
+            UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                1,
+                UncertainTea.NUTSKernelDependencyBarrier,
+                (
+                    UncertainTea.NUTSKernelAliasControlState,
+                    UncertainTea.NUTSKernelAliasSchedulerState,
+                ),
+                (
+                    UncertainTea.NUTSKernelBufferControlState,
+                    UncertainTea.NUTSKernelBufferSchedulerState,
+                ),
+            ),
+            UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                2,
+                UncertainTea.NUTSKernelDependencyBarrier,
+                (
+                    UncertainTea.NUTSKernelAliasTreeState,
+                    UncertainTea.NUTSKernelAliasControlState,
+                ),
+                (
+                    UncertainTea.NUTSKernelBufferTreeNextState,
+                    UncertainTea.NUTSKernelBufferControlState,
+                ),
+            ),
+            UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                3,
+                UncertainTea.NUTSKernelDependencyBarrier,
+                (UncertainTea.NUTSKernelAliasTreeEnergy,),
+                (UncertainTea.NUTSKernelBufferTreeEnergy,),
+            ),
+        )
+    @test UncertainTea._batched_nuts_kernel_barriers_after(expand_plan, 2) ==
+        (
+            UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                2,
+                UncertainTea.NUTSKernelDependencyBarrier,
+                (
+                    UncertainTea.NUTSKernelAliasTreeState,
+                    UncertainTea.NUTSKernelAliasControlState,
+                ),
+                (
+                    UncertainTea.NUTSKernelBufferTreeNextState,
+                    UncertainTea.NUTSKernelBufferControlState,
+                ),
+            ),
+        )
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
     fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)

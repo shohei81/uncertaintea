@@ -103,10 +103,36 @@ struct BatchedNUTSKernelSchedule{S,L}
     lifecycles::L
 end
 
+struct BatchedNUTSKernelResourceGroup{B}
+    alias_class::BatchedNUTSKernelAliasClass
+    buffers::B
+    first_stage::Int
+    last_stage::Int
+end
+
+@enum BatchedNUTSKernelBarrierKind::UInt8 begin
+    NUTSKernelDependencyBarrier = 0
+end
+
+struct BatchedNUTSKernelBarrierPlacement{A,B}
+    after_stage::Int
+    kind::BatchedNUTSKernelBarrierKind
+    alias_classes::A
+    buffers::B
+end
+
+struct BatchedNUTSKernelResourcePlan{S,R,B}
+    schedule::S
+    resources::R
+    barriers::B
+end
+
 _batched_nuts_kernel_stage_dataflow(stage::BatchedNUTSKernelScheduleStage) = stage.dataflow
 _batched_nuts_kernel_stage_dependencies(stage::BatchedNUTSKernelScheduleStage) = stage.dependencies
 _batched_nuts_kernel_schedule_stages(schedule::BatchedNUTSKernelSchedule) = schedule.stages
 _batched_nuts_kernel_schedule_lifecycles(schedule::BatchedNUTSKernelSchedule) = schedule.lifecycles
+_batched_nuts_kernel_resource_groups(plan::BatchedNUTSKernelResourcePlan) = plan.resources
+_batched_nuts_kernel_barriers(plan::BatchedNUTSKernelResourcePlan) = plan.barriers
 
 function _batched_nuts_kernel_dataflow(
     access::BatchedNUTSIdleKernelAccess,
@@ -370,6 +396,95 @@ function _batched_nuts_kernel_schedule(
         stages,
         _batched_nuts_kernel_buffer_lifecycles(dataflows),
     )
+end
+
+function _batched_nuts_kernel_resource_groups(
+    lifecycles::Tuple,
+)
+    ordered_aliases = BatchedNUTSKernelAliasClass[]
+    seen = Set{BatchedNUTSKernelAliasClass}()
+    for lifecycle in lifecycles
+        alias_class = lifecycle.alias_class
+        if !(alias_class in seen)
+            push!(ordered_aliases, alias_class)
+            push!(seen, alias_class)
+        end
+    end
+
+    resources = BatchedNUTSKernelResourceGroup[]
+    for alias_class in ordered_aliases
+        buffers = BatchedNUTSKernelBuffer[]
+        first_stage = typemax(Int)
+        last_stage = 0
+        for lifecycle in lifecycles
+            lifecycle.alias_class == alias_class || continue
+            push!(buffers, lifecycle.buffer)
+            first_stage = min(first_stage, lifecycle.first_stage)
+            last_stage = max(last_stage, lifecycle.last_stage)
+        end
+        push!(
+            resources,
+            BatchedNUTSKernelResourceGroup(
+                alias_class,
+                Tuple(buffers),
+                first_stage == typemax(Int) ? 0 : first_stage,
+                last_stage,
+            ),
+        )
+    end
+    return Tuple(resources)
+end
+
+function _batched_nuts_kernel_barriers(
+    schedule::BatchedNUTSKernelSchedule,
+    dependencies::Tuple,
+)
+    barriers = BatchedNUTSKernelBarrierPlacement[]
+    num_stages = length(schedule.stages)
+    for stage_index in 1:num_stages
+        alias_classes = BatchedNUTSKernelAliasClass[]
+        buffers = BatchedNUTSKernelBuffer[]
+        for dependency in dependencies
+            dependency.producer_step == stage_index || continue
+            push!(alias_classes, dependency.alias_class)
+            push!(buffers, dependency.buffer)
+        end
+        isempty(alias_classes) && continue
+        push!(
+            barriers,
+            BatchedNUTSKernelBarrierPlacement(
+                stage_index,
+                NUTSKernelDependencyBarrier,
+                Tuple(unique(alias_classes)),
+                Tuple(unique(buffers)),
+            ),
+        )
+    end
+    return Tuple(barriers)
+end
+
+function _batched_nuts_kernel_resource_plan(
+    program::AbstractBatchedNUTSKernelProgram,
+)
+    schedule = _batched_nuts_kernel_schedule(program)
+    dependencies = _batched_nuts_kernel_dependencies(program)
+    return BatchedNUTSKernelResourcePlan(
+        schedule,
+        _batched_nuts_kernel_resource_groups(_batched_nuts_kernel_schedule_lifecycles(schedule)),
+        _batched_nuts_kernel_barriers(schedule, dependencies),
+    )
+end
+
+function _batched_nuts_kernel_barriers_after(
+    plan::BatchedNUTSKernelResourcePlan,
+    stage_index::Int,
+)
+    placements = BatchedNUTSKernelBarrierPlacement[]
+    for barrier in plan.barriers
+        barrier.after_stage == stage_index || continue
+        push!(placements, barrier)
+    end
+    return Tuple(placements)
 end
 
 const _BATCHED_NUTS_IDLE_KERNEL_DEPENDENCIES = ()
