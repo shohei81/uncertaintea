@@ -119,7 +119,9 @@ The current CPU NUTS path is intentionally narrow:
   buffer lifecycle metadata, resource groups, and barrier placements from
   those descriptors, lowers that metadata into a backend execution block with
   concrete buffer bindings and barrier hints, then into a device-plan
-  skeleton with segment-local slots and device-stage barrier hints, plus a
+  skeleton with segment-local slots and device-stage barrier hints, then into
+  a target-plan layer with target-specific allocation and barrier policy for
+  `:gpu`, `:metal`, and `:cuda`, plus a
   small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through

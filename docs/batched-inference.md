@@ -212,7 +212,8 @@ for dynamic trajectory building:
   and now further lowers that schedule into a backend execution block with
   concrete buffer bindings and per-stage barrier hints, and then into a
   device-plan skeleton with segment-local buffer slots and device-stage
-  barrier hints,
+  barrier hints, plus a target-plan layer that assigns target-specific
+  allocation and barrier strategy for `:gpu`, `:metal`, and `:cuda`,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,

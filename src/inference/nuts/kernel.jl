@@ -442,11 +442,11 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    device_plan = _batched_nuts_device_plan(program)
-    for stage in _batched_nuts_device_stages(device_plan)
-        _execute_batched_nuts_device_stage!(
+    target_plan = _batched_nuts_target_plan(program)
+    for stage in _batched_nuts_target_stages(target_plan)
+        _execute_batched_nuts_target_stage!(
             workspace,
-            device_plan,
+            target_plan,
             stage,
             execution,
             model,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_device_stage!(
+function _execute_batched_nuts_target_stage!(
     workspace::BatchedNUTSWorkspace,
-    device_plan::BatchedNUTSKernelDevicePlan,
-    stage::BatchedNUTSKernelDeviceStage,
+    target_plan::BatchedNUTSKernelTargetPlan,
+    stage::BatchedNUTSKernelTargetStage,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -476,7 +476,13 @@ function _execute_batched_nuts_device_stage!(
 )
     _execute_batched_nuts_kernel_dataflow!(
         workspace,
-        _batched_nuts_kernel_stage_dataflow(_batched_nuts_backend_stage(_batched_nuts_device_step_binding(stage))),
+        _batched_nuts_kernel_stage_dataflow(
+            _batched_nuts_backend_stage(
+                _batched_nuts_device_step_binding(
+                    _batched_nuts_target_device_stage(stage),
+                ),
+            ),
+        ),
         execution,
         model,
         inverse_mass_matrix,
@@ -486,7 +492,7 @@ function _execute_batched_nuts_device_stage!(
         max_delta_energy,
         rng,
     )
-    for barrier in _batched_nuts_device_barriers_after(stage)
+    for barrier in _batched_nuts_target_barriers_after(stage)
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
     return nothing
@@ -531,6 +537,14 @@ end
 function _execute_batched_nuts_kernel_barrier!(
     workspace::BatchedNUTSWorkspace,
     barrier::BatchedNUTSKernelDeviceBarrierHint,
+    execution::BatchedNUTSKernelExecutionState,
+)
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_barrier!(
+    workspace::BatchedNUTSWorkspace,
+    barrier::BatchedNUTSKernelTargetBarrierHint,
     execution::BatchedNUTSKernelExecutionState,
 )
     return nothing
