@@ -37,6 +37,7 @@ Before adding runtime code, read these files:
 - Prefer dense parameter layouts over heterogeneous trace containers
 - Prefer backend-agnostic interfaces with backend-specific implementations
 - Keep large subsystems split across focused source files; do not regrow monolithic files like `src/inference.jl`
+- Aim to keep individual source and test files under roughly 1000 lines
 - Default to ASCII unless an existing file clearly requires otherwise
 - Keep comments sparse and factual
 
