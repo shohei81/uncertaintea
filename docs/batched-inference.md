@@ -122,6 +122,9 @@ for dynamic trajectory building:
 - when batched chains share the same `args` and `constraints`, those remaining
   wrappers now also share a single `ForwardDiff` objective/config and differ
   only in which workspace-backed gradient column they write into
+- after the initial batched first step, the next depth-1 continuation subtree
+  now also runs through the batched leapfrog/value+gradient path before the
+  remaining deeper control flow falls back to per-chain subtree expansion
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

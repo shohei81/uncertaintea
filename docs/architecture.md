@@ -133,6 +133,8 @@ Current backend-lowering subset:
   matrices; per-chain gradient caches on that path also now target
   workspace-backed gradient columns, and they reuse a shared
   `ForwardDiff` objective/config when batch inputs are homogeneous; the
+  depth-1 continuation subtree now also runs through the batched leapfrog and
+  batched value+gradient path; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

@@ -406,6 +406,18 @@ using UncertainTea
     gaussian_batch_logjoint = batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
     gaussian_batch_gradient = batched_logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
     gaussian_batch_gradient_cache = BatchedLogjointGradientCache(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+    gaussian_shared_batch_logjoint = batched_logjoint_unconstrained(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    gaussian_shared_batch_gradient = batched_logjoint_gradient_unconstrained(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
     gaussian_batch_params_shifted = gaussian_batch_params .+ 0.15
     gaussian_batch_gradient_shifted = batched_logjoint_gradient_unconstrained(
         gaussian_batch_gradient_cache,
@@ -1197,6 +1209,35 @@ using UncertainTea
     @test gaussian_nuts_workspace.integration_steps[1] in 0:1
     @test isfinite(gaussian_nuts_workspace.continuation_log_weight[1])
     @test gaussian_nuts_workspace.continuation_accept_stat_count[1] in 0:1
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_shared_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_shared_batch_logjoint,
+        gaussian_shared_batch_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.05,
+        1000.0,
+        MersenneTwister(94),
+    )
+    @test UncertainTea._continue_batched_nuts_depth1!(
+        gaussian_shared_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.05,
+        2,
+        1000.0,
+        MersenneTwister(95),
+    )
+    @test all(depth == 2 for depth in gaussian_shared_nuts_workspace.tree_depths)
+    @test all(steps >= 2 for steps in gaussian_shared_nuts_workspace.integration_steps)
+    @test all(isfinite, gaussian_shared_nuts_workspace.continuation_log_weight)
+    @test all(count >= 1 for count in gaussian_shared_nuts_workspace.continuation_accept_stat_count)
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)
