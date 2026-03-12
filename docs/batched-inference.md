@@ -123,8 +123,8 @@ for dynamic trajectory building:
   wrappers now also share a single `ForwardDiff` objective/config and differ
   only in which workspace-backed gradient column they write into
 - after the initial batched first step, continuation subtrees now stay on the
-  batched leapfrog/value+gradient path as long as the active chains share the
-  same current tree depth, and only then fall back to per-chain subtree
+  batched leapfrog/value+gradient path depth-cohort by depth-cohort, picking
+  the largest active tree-depth group before falling back to per-chain subtree
   expansion
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside

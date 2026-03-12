@@ -1297,6 +1297,68 @@ using UncertainTea
     )
     @test gaussian_single_shared_nuts_workspace.tree_depths == [3]
     @test gaussian_single_shared_nuts_workspace.integration_steps[1] >= 6
+    gaussian_mixed_depth_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_mixed_depth_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_shared_batch_logjoint,
+        gaussian_shared_batch_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        MersenneTwister(99),
+    )
+    @test UncertainTea._continue_batched_nuts_batched_subtree!(
+        gaussian_mixed_depth_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        4,
+        1000.0,
+        MersenneTwister(100),
+    )
+    @test all(depth == 2 for depth in gaussian_mixed_depth_nuts_workspace.tree_depths)
+    gaussian_mixed_depth_nuts_workspace.continuation_turning[1] = true
+    @test UncertainTea._continue_batched_nuts_batched_subtree!(
+        gaussian_mixed_depth_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        4,
+        1000.0,
+        MersenneTwister(101),
+    )
+    @test gaussian_mixed_depth_nuts_workspace.tree_depths[1] == 2
+    @test gaussian_mixed_depth_nuts_workspace.tree_depths[2:3] == [3, 3]
+    gaussian_mixed_depth_nuts_workspace.continuation_turning[1] = false
+    @test UncertainTea._continue_batched_nuts_batched_subtree!(
+        gaussian_mixed_depth_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        4,
+        1000.0,
+        MersenneTwister(102),
+    )
+    @test gaussian_mixed_depth_nuts_workspace.tree_depths[1] == 2
+    @test gaussian_mixed_depth_nuts_workspace.tree_depths[2:3] == [4, 4]
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

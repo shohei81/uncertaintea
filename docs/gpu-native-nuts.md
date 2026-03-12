@@ -72,7 +72,7 @@ The current CPU NUTS path is intentionally narrow:
   gradient output storage are batch-owned; homogeneous batch inputs now let
   even that config/objective layer be shared across chains, and continuation
   subtrees now stay on the batched leapfrog and batched value+gradient path
-  whenever the active chains share the same current tree depth
+  cohort by cohort whenever multiple active chains share a tree depth
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

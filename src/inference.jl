@@ -1954,16 +1954,27 @@ function _continue_batched_nuts_batched_subtree!(
     fill!(workspace.subtree_active, false)
 
     active_depth = 0
+    active_depth_count = 0
+    for depth in 1:(max_tree_depth - 1)
+        depth_count = 0
+        for chain_index in 1:num_chains
+            workspace.tree_depths[chain_index] == depth || continue
+            workspace.divergent_step[chain_index] && continue
+            workspace.continuation_turning[chain_index] && continue
+            depth_count += 1
+        end
+        if depth_count > active_depth_count
+            active_depth = depth
+            active_depth_count = depth_count
+        end
+    end
+    active_depth_count > 0 || return false
+
     any_active = false
     for chain_index in 1:num_chains
-        workspace.tree_depths[chain_index] < max_tree_depth || continue
+        workspace.tree_depths[chain_index] == active_depth || continue
         workspace.divergent_step[chain_index] && continue
         workspace.continuation_turning[chain_index] && continue
-        if active_depth == 0
-            active_depth = workspace.tree_depths[chain_index]
-        elseif workspace.tree_depths[chain_index] != active_depth
-            return false
-        end
         workspace.subtree_active[chain_index] = true
         workspace.step_direction[chain_index] = rand(rng, Bool) ? 1 : -1
         continuation = workspace.column_continuation_states[chain_index]
