@@ -9,11 +9,14 @@ end
 
 to_constrained(::IdentityTransform, value) = value
 to_unconstrained(::IdentityTransform, value) = value
+to_constrained(::VectorIdentityTransform, value::AbstractVector) = value
+to_unconstrained(::VectorIdentityTransform, value::AbstractVector) = value
 to_constrained(::LogTransform, value) = exp(value)
 to_unconstrained(::LogTransform, value) = log(value)
 to_constrained(::LogitTransform, value) = inv(one(value) + exp(-value))
 to_unconstrained(::LogitTransform, value) = log(value) - log1p(-value)
 logabsdetjac(::IdentityTransform, value) = zero(value)
+logabsdetjac(::VectorIdentityTransform, value::AbstractVector) = isempty(value) ? 0.0 : zero(value[firstindex(value)])
 logabsdetjac(::LogTransform, value) = value
 function logabsdetjac(::LogitTransform, value)
     constrained = to_constrained(LogitTransform(), value)
@@ -133,6 +136,9 @@ function _transform_slot_to_constrained!(
     if slot.transform isa IdentityTransform
         destination[slot.value_index] = params[slot.index]
         return zero(params[slot.index])
+    elseif slot.transform isa VectorIdentityTransform
+        copyto!(view(destination, parametervalueindices(slot)), view(params, parameterindices(slot)))
+        return zero(params[first(parameterindices(slot))])
     elseif slot.transform isa LogTransform
         unconstrained_value = params[slot.index]
         destination[slot.value_index] = exp(unconstrained_value)
@@ -159,6 +165,8 @@ function _transform_slot_to_unconstrained!(
 )
     if slot.transform isa IdentityTransform
         destination[slot.index] = params[slot.value_index]
+    elseif slot.transform isa VectorIdentityTransform
+        copyto!(view(destination, parameterindices(slot)), view(params, parametervalueindices(slot)))
     elseif slot.transform isa LogTransform
         destination[slot.index] = log(params[slot.value_index])
     elseif slot.transform isa LogitTransform

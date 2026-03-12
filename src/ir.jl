@@ -37,6 +37,14 @@ end
 abstract type AbstractParameterTransform end
 
 struct IdentityTransform <: AbstractParameterTransform end
+struct VectorIdentityTransform <: AbstractParameterTransform
+    size::Int
+
+    function VectorIdentityTransform(size::Int)
+        size >= 1 || throw(ArgumentError("vector identity transform requires size >= 1"))
+        return new(size)
+    end
+end
 struct LogTransform <: AbstractParameterTransform end
 struct LogitTransform <: AbstractParameterTransform end
 struct SimplexTransform <: AbstractParameterTransform
@@ -375,6 +383,9 @@ end
 function _parameter_transform(rhs::DistributionSpec)
     if rhs.family === :normal || rhs.family === :laplace || rhs.family === :studentt
         return IdentityTransform()
+    elseif rhs.family === :mvnormal
+        size = _mvnormal_static_size(rhs.arguments)
+        isnothing(size) || return VectorIdentityTransform(size)
     elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma ||
            rhs.family === :inversegamma || rhs.family === :weibull
         return LogTransform()
@@ -390,6 +401,7 @@ end
 _parameter_transform(::AbstractChoiceRhsSpec) = nothing
 
 _parameter_dimensions(::IdentityTransform) = (1, 1)
+_parameter_dimensions(transform::VectorIdentityTransform) = (transform.size, transform.size)
 _parameter_dimensions(::LogTransform) = (1, 1)
 _parameter_dimensions(::LogitTransform) = (1, 1)
 _parameter_dimensions(transform::SimplexTransform) = (transform.size - 1, transform.size)
@@ -416,6 +428,17 @@ function _dirichlet_static_size(arguments::Vector)
         return _static_length(arguments[1])
     end
     return length(arguments)
+end
+
+function _mvnormal_static_size(arguments::Vector)
+    length(arguments) == 2 || return nothing
+    mu_size = _static_length(arguments[1])
+    sigma_size = _static_length(arguments[2])
+    if !isnothing(mu_size) && !isnothing(sigma_size)
+        mu_size == sigma_size || throw(ArgumentError("mvnormal requires mean and scale vectors with the same static length"))
+        return mu_size
+    end
+    return something(mu_size, sigma_size)
 end
 
 function _parameterize_step(

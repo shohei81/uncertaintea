@@ -195,7 +195,7 @@ The initial GPU-targeted distribution set should stay small:
 - `poisson`
 - `studentt`
 - `categorical`
-- a restricted `mvnormal`
+- a restricted diagonal `mvnormal`
 - simple transformed distributions
 
 Requirements:
@@ -209,6 +209,9 @@ Requirements:
 - `dirichlet` currently supports static simplex sizes in the CPU reference
   path and unconstrained HMC/NUTS through a simplex transform, but it does not
   yet lower to the GPU-native backend subset
+- `mvnormal` currently supports static diagonal vector sizes in the CPU
+  reference path and unconstrained HMC/NUTS through a vector-valued identity
+  transform, but it does not yet lower to the GPU-native backend subset
 
 ## Inference-Oriented Consequences
 

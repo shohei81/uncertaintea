@@ -85,6 +85,20 @@ struct DirichletDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct MvNormalDist{T<:AbstractFloat} <: AbstractTeaDistribution
+    mu::Vector{T}
+    sigma::Vector{T}
+
+    function MvNormalDist(mu::Vector{T}, sigma::Vector{T}) where {T<:AbstractFloat}
+        isempty(mu) && throw(ArgumentError("mvnormal requires at least one dimension"))
+        length(mu) == length(sigma) || throw(ArgumentError("mvnormal requires mean and scale vectors with the same length"))
+        for value in sigma
+            value > zero(T) || throw(ArgumentError("mvnormal requires sigma > 0 in every dimension"))
+        end
+        return new{T}(mu, sigma)
+    end
+end
+
 struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     p::T
 
@@ -215,6 +229,36 @@ function dirichlet(alpha::Vararg{Real})
     return DirichletDist(collect(promote(alpha...)))
 end
 
+function _mvnormal_vector(values)
+    if values isa AbstractVector || values isa Tuple
+        return collect(values)
+    end
+    throw(ArgumentError("mvnormal requires vector-like mean and scale arguments"))
+end
+
+function _mvnormal_promoted_type(vectors...)
+    promoted_type = nothing
+    for vector in vectors
+        for value in vector
+            promoted_type = isnothing(promoted_type) ? typeof(value) : promote_type(promoted_type, typeof(value))
+        end
+    end
+    isnothing(promoted_type) && throw(ArgumentError("mvnormal requires at least one dimension"))
+    return float(promoted_type)
+end
+
+function mvnormal(mu, sigma)
+    mu_values = _mvnormal_vector(mu)
+    sigma_values = _mvnormal_vector(sigma)
+    length(mu_values) == length(sigma_values) || throw(ArgumentError("mvnormal requires mean and scale vectors with the same length"))
+    isempty(mu_values) && throw(ArgumentError("mvnormal requires at least one dimension"))
+    promoted_type = _mvnormal_promoted_type(mu_values, sigma_values)
+    return MvNormalDist(
+        promoted_type[value for value in mu_values],
+        promoted_type[value for value in sigma_values],
+    )
+end
+
 function lognormal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return LogNormalDist(promoted_mu, promoted_sigma)
@@ -330,6 +374,14 @@ function Random.rand(rng::AbstractRNG, dist::DirichletDist)
     end
     for index in eachindex(draws)
         draws[index] /= total
+    end
+    return draws
+end
+
+function Random.rand(rng::AbstractRNG, dist::MvNormalDist{T}) where {T<:AbstractFloat}
+    draws = Vector{T}(undef, length(dist.mu))
+    for index in eachindex(draws)
+        draws[index] = dist.mu[index] + dist.sigma[index] * randn(rng, T)
     end
     return draws
 end
@@ -462,6 +514,18 @@ function logpdf(dist::DirichletDist, x)
         accumulator += (alpha - one(alpha)) * log(value)
     end
     abs(total - one(total)) <= sqrt(eps(float(total))) * length(promoted_values) * 16 || return oftype(total, -Inf)
+    return accumulator
+end
+
+function logpdf(dist::MvNormalDist, x)
+    values = x isa Tuple ? collect(x) : x
+    values isa AbstractVector || throw(ArgumentError("mvnormal logpdf expects a vector or tuple value"))
+    length(values) == length(dist.mu) || return -Inf
+
+    accumulator = logpdf(normal(dist.mu[1], dist.sigma[1]), values[1])
+    for index in 2:length(values)
+        accumulator += logpdf(normal(dist.mu[index], dist.sigma[index]), values[index])
+    end
     return accumulator
 end
 

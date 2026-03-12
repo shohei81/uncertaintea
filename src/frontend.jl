@@ -35,6 +35,7 @@ function _qualify_builtin_distribution(name)
         :weibull,
         :beta,
         :dirichlet,
+        :mvnormal,
         :bernoulli,
         :binomial,
         :geometric,
@@ -220,6 +221,9 @@ function _supported_distribution_family(rhs)
     if family === :dirichlet && !isnothing(_dirichlet_static_size(rhs))
         return family
     end
+    if family === :mvnormal && !isnothing(_mvnormal_static_size(rhs))
+        return family
+    end
     return nothing
 end
 
@@ -251,6 +255,18 @@ function _dirichlet_static_size(rhs)
     return length(rhs.args) - 1
 end
 
+function _mvnormal_static_size(rhs)
+    rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :mvnormal || return nothing
+    length(rhs.args) == 3 || return nothing
+    mu_size = _static_length_expr(rhs.args[2])
+    sigma_size = _static_length_expr(rhs.args[3])
+    if !isnothing(mu_size) && !isnothing(sigma_size)
+        mu_size == sigma_size || throw(ArgumentError("mvnormal requires mean and scale vectors with the same static length"))
+        return mu_size
+    end
+    return something(mu_size, sigma_size)
+end
+
 function _parameter_layout_sizes(rhs)
     family = _supported_distribution_family(rhs)
     isnothing(family) && throw(ArgumentError("unsupported parameter layout size for $rhs"))
@@ -258,6 +274,10 @@ function _parameter_layout_sizes(rhs)
         size = _dirichlet_static_size(rhs)
         isnothing(size) && throw(ArgumentError("dirichlet parameter slots require a statically known simplex size"))
         return size - 1, size
+    elseif family === :mvnormal
+        size = _mvnormal_static_size(rhs)
+        isnothing(size) && throw(ArgumentError("mvnormal parameter slots require a statically known vector size"))
+        return size, size
     end
     return 1, 1
 end
@@ -268,6 +288,10 @@ function _parameter_transform_expr(rhs)
 
     if family === :normal || family === :laplace
         return :($(_qualify(:IdentityTransform))())
+    elseif family === :mvnormal
+        size = _mvnormal_static_size(rhs)
+        isnothing(size) && throw(ArgumentError("mvnormal parameter slots require a statically known vector size"))
+        return :($(_qualify(:VectorIdentityTransform))($size))
     elseif family === :lognormal || family === :exponential || family === :gamma ||
            family === :inversegamma || family === :weibull
         return :($(_qualify(:LogTransform))())
