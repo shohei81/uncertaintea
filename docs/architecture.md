@@ -197,7 +197,8 @@ Current backend-lowering subset:
   kernel layouts, and then into a source-plan layer with generated stub source
   entrypoints and backend-specific argument declarations, and then into a
   module-plan layer with materialized source blobs and backend-specific
-  filenames, and
+  filenames, and then into a bundle-plan layer that groups stage modules
+  behind a backend bundle manifest, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control

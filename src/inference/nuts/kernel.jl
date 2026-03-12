@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    module_plan = _batched_nuts_module_plan(program)
-    for module_stage in _batched_nuts_module_stages(module_plan)
-        _execute_batched_nuts_module_stage!(
+    bundle_plan = _batched_nuts_bundle_plan(program)
+    for bundle_stage in _batched_nuts_bundle_stages(bundle_plan)
+        _execute_batched_nuts_bundle_stage!(
             workspace,
-            module_plan,
-            module_stage,
+            bundle_plan,
+            bundle_stage,
             execution,
             model,
             inverse_mass_matrix,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_module_stage!(
+function _execute_batched_nuts_bundle_stage!(
     workspace::BatchedNUTSWorkspace,
-    module_plan::BatchedNUTSKernelModulePlan,
-    module_stage::BatchedNUTSKernelModuleStage,
+    bundle_plan::BatchedNUTSKernelBundlePlan,
+    bundle_stage::BatchedNUTSKernelBundleStage,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -481,7 +481,9 @@ function _execute_batched_nuts_module_stage!(
                 _batched_nuts_codegen_executor_stage(
                     _batched_nuts_artifact_codegen_stage(
                         _batched_nuts_source_artifact_stage(
-                            _batched_nuts_module_source_stage(module_stage),
+                            _batched_nuts_module_source_stage(
+                                _batched_nuts_bundle_module_stage(bundle_stage),
+                            ),
                         ),
                     ),
                 ),
@@ -498,7 +500,9 @@ function _execute_batched_nuts_module_stage!(
     )
     for barrier in _batched_nuts_artifact_barriers_after(
         _batched_nuts_source_artifact_stage(
-            _batched_nuts_module_source_stage(module_stage),
+            _batched_nuts_module_source_stage(
+                _batched_nuts_bundle_module_stage(bundle_stage),
+            ),
         ),
     )
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
