@@ -1155,6 +1155,7 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].left.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) == 1
+    @test gaussian_nuts_workspace.column_tree_workspaces[1].summary isa UncertainTea.NUTSSubtreeMetadataState
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.position) === gaussian_nuts_workspace.tree_current_position
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.momentum) === gaussian_nuts_workspace.tree_current_momentum
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.gradient) === gaussian_nuts_workspace.tree_current_gradient
@@ -1266,6 +1267,21 @@ using UncertainTea
     )
     @test !gaussian_copy_nuts_workspace.subtree_merged_turning[1]
     @test !any(gaussian_copy_nuts_workspace.subtree_active)
+    scalar_tree_workspace = UncertainTea.NUTSSubtreeWorkspace(1)
+    scalar_tree_workspace.summary.log_weight = 1.0
+    scalar_tree_workspace.summary.accept_stat_sum = 2.0
+    scalar_tree_workspace.summary.accept_stat_count = 3
+    scalar_tree_workspace.summary.integration_steps = 4
+    scalar_tree_workspace.summary.turning = true
+    scalar_tree_workspace.summary.divergent = true
+    UncertainTea._reset_nuts_subtree_summary!(scalar_tree_workspace.summary)
+    scalar_tree_summary = UncertainTea._nuts_subtree_summary(scalar_tree_workspace.summary)
+    @test scalar_tree_summary.log_weight == -Inf
+    @test scalar_tree_summary.accept_stat_sum == 0.0
+    @test scalar_tree_summary.accept_stat_count == 0
+    @test scalar_tree_summary.integration_steps == 0
+    @test !scalar_tree_summary.turning
+    @test !scalar_tree_summary.divergent
     turning_destination = falses(3)
     @test UncertainTea._batched_is_turning!(
         turning_destination,

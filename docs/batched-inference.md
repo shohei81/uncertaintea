@@ -163,6 +163,9 @@ for dynamic trajectory building:
 - that fallback path now also routes one-chain frontier/proposal copies and the
   merged turning check through the same masked batch helpers used elsewhere, so
   even its state updates follow the batched workspace-copy model
+- the scalar subtree builder now keeps its own mutable subtree-summary scratch
+  object inside `NUTSSubtreeWorkspace`, so even the single-chain reference path
+  accumulates subtree metadata in a reusable state object rather than locals
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

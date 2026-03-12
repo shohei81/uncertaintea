@@ -132,12 +132,34 @@ mutable struct NUTSState{P<:AbstractVector{Float64}, M<:AbstractVector{Float64},
     gradient::G
 end
 
-mutable struct NUTSSubtreeWorkspace{C<:NUTSState,N<:NUTSState,L<:NUTSState,R<:NUTSState,P<:NUTSState}
+mutable struct NUTSSubtreeMetadataState
+    log_weight::Float64
+    accept_stat_sum::Float64
+    accept_stat_count::Int
+    integration_steps::Int
+    proposed_energy::Float64
+    delta_energy::Float64
+    accept_prob::Float64
+    candidate_log_weight::Float64
+    combined_log_weight::Float64
+    turning::Bool
+    divergent::Bool
+end
+
+mutable struct NUTSSubtreeWorkspace{
+    C<:NUTSState,
+    N<:NUTSState,
+    L<:NUTSState,
+    R<:NUTSState,
+    P<:NUTSState,
+    S<:NUTSSubtreeMetadataState,
+}
     current::C
     next::N
     left::L
     right::R
     proposal::P
+    summary::S
 end
 
 mutable struct NUTSContinuationState{L<:NUTSState,R<:NUTSState,P<:NUTSState}
@@ -333,6 +355,7 @@ function BatchedNUTSWorkspace(
             NUTSState(view(tree_left_position, :, chain_index), view(tree_left_momentum, :, chain_index), 0.0, view(tree_left_gradient, :, chain_index)),
             NUTSState(view(tree_right_position, :, chain_index), view(tree_right_momentum, :, chain_index), 0.0, view(tree_right_gradient, :, chain_index)),
             NUTSState(view(tree_proposal_position, :, chain_index), view(tree_proposal_momentum, :, chain_index), 0.0, view(tree_proposal_gradient, :, chain_index)),
+            NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, 0.0, -Inf, -Inf, false, false),
         ) for chain_index in 1:num_chains
     ]
     left_position = Matrix{Float64}(undef, num_params, num_chains)
@@ -1612,6 +1635,36 @@ struct NUTSSubtreeSummary
     divergent::Bool
 end
 
+function _reset_nuts_subtree_summary!(
+    summary::NUTSSubtreeMetadataState,
+)
+    summary.log_weight = -Inf
+    summary.accept_stat_sum = 0.0
+    summary.accept_stat_count = 0
+    summary.integration_steps = 0
+    summary.proposed_energy = Inf
+    summary.delta_energy = Inf
+    summary.accept_prob = 0.0
+    summary.candidate_log_weight = -Inf
+    summary.combined_log_weight = -Inf
+    summary.turning = false
+    summary.divergent = false
+    return summary
+end
+
+function _nuts_subtree_summary(
+    summary::NUTSSubtreeMetadataState,
+)
+    return NUTSSubtreeSummary(
+        summary.log_weight,
+        summary.accept_stat_sum,
+        summary.accept_stat_count,
+        summary.integration_steps,
+        summary.turning,
+        summary.divergent,
+    )
+end
+
 function _copy_nuts_state(state::NUTSState)
     return NUTSState(copy(state.position), copy(state.momentum), state.logjoint, copy(state.gradient))
 end
@@ -2042,7 +2095,8 @@ end
 
 function NUTSSubtreeWorkspace(num_params::Int)
     state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
-    return NUTSSubtreeWorkspace(state(), state(), state(), state(), state())
+    summary = NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, 0.0, -Inf, -Inf, false, false)
+    return NUTSSubtreeWorkspace(state(), state(), state(), state(), state(), summary)
 end
 
 function NUTSContinuationState(num_params::Int)
@@ -2327,16 +2381,12 @@ function _build_nuts_subtree(
     left = subtree_workspace.left
     right = subtree_workspace.right
     proposal = subtree_workspace.proposal
+    summary = subtree_workspace.summary
     _copyto_nuts_state!(current, start_state)
     _copyto_nuts_state!(left, start_state)
     _copyto_nuts_state!(right, start_state)
     _copyto_nuts_state!(proposal, start_state)
-    log_weight = -Inf
-    accept_stat_sum = 0.0
-    accept_stat_count = 0
-    integration_steps = 0
-    turning = false
-    divergent = false
+    _reset_nuts_subtree_summary!(summary)
 
     for _ in 1:(1 << depth)
         if !_leapfrog_step!(
@@ -2349,45 +2399,52 @@ function _build_nuts_subtree(
             constraints,
             direction * step_size,
         )
-            divergent = true
+            summary.divergent = true
             break
         end
         current, next = next, current
-        integration_steps += 1
+        summary.integration_steps += 1
         if direction < 0
             _copyto_nuts_state!(left, current)
         else
             _copyto_nuts_state!(right, current)
         end
 
-        proposed_hamiltonian = _hamiltonian(current.logjoint, current.momentum, inverse_mass_matrix)
-        delta_energy = proposed_hamiltonian - initial_hamiltonian
-        if !isfinite(delta_energy) || delta_energy > max_delta_energy
-            divergent = true
+        summary.proposed_energy = _hamiltonian(
+            current.logjoint,
+            current.momentum,
+            inverse_mass_matrix,
+        )
+        summary.delta_energy = summary.proposed_energy - initial_hamiltonian
+        if !isfinite(summary.delta_energy) || summary.delta_energy > max_delta_energy
+            summary.divergent = true
             break
         end
 
-        accept_stat_sum += min(1.0, exp(min(0.0, initial_hamiltonian - proposed_hamiltonian)))
-        accept_stat_count += 1
-        candidate_log_weight = -proposed_hamiltonian
-        combined_log_weight = _logaddexp(log_weight, candidate_log_weight)
-        if !isfinite(log_weight) || log(rand(rng)) < candidate_log_weight - combined_log_weight
+        summary.accept_prob = min(1.0, exp(min(0.0, -summary.delta_energy)))
+        summary.accept_stat_sum += summary.accept_prob
+        summary.accept_stat_count += 1
+        summary.candidate_log_weight = -summary.proposed_energy
+        summary.combined_log_weight = _logaddexp(
+            summary.log_weight,
+            summary.candidate_log_weight,
+        )
+        if !isfinite(summary.log_weight) || log(rand(rng)) <
+            summary.candidate_log_weight - summary.combined_log_weight
             _copyto_nuts_state!(proposal, current)
         end
-        log_weight = combined_log_weight
+        summary.log_weight = summary.combined_log_weight
 
-        turning = _is_turning(left.position, right.position, left.momentum, right.momentum)
-        turning && break
+        summary.turning = _is_turning(
+            left.position,
+            right.position,
+            left.momentum,
+            right.momentum,
+        )
+        summary.turning && break
     end
 
-    return NUTSSubtreeSummary(
-        log_weight,
-        accept_stat_sum,
-        accept_stat_count,
-        integration_steps,
-        turning,
-        divergent,
-    )
+    return _nuts_subtree_summary(summary)
 end
 
 function _continue_nuts_proposal!(
