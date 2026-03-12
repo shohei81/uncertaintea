@@ -202,6 +202,21 @@
         merge_step_binding,
     ) == UncertainTea._batched_nuts_kernel_writes(merge_dataflows[3])
     @test UncertainTea._batched_nuts_backend_barriers_after(merge_step_binding) == ()
+    merge_device_plan = UncertainTea._batched_nuts_device_plan(merge_program)
+    merge_control_slot = UncertainTea._batched_nuts_device_slot(
+        merge_device_plan,
+        UncertainTea.NUTSKernelBufferControlBlock,
+    )
+    @test merge_control_slot.binding === merge_control_binding
+    @test merge_control_slot.segment == UncertainTea.NUTSKernelDeviceUniformSegment
+    @test merge_control_slot.segment_slot == 1
+    merge_device_stage = UncertainTea._batched_nuts_device_stages(merge_device_plan)[3]
+    @test UncertainTea._batched_nuts_backend_stage(
+        UncertainTea._batched_nuts_device_step_binding(merge_device_stage),
+    ) === UncertainTea._batched_nuts_backend_stage(merge_step_binding)
+    @test UncertainTea._batched_nuts_device_read_slots(merge_device_stage) ==
+        UncertainTea._batched_nuts_backend_read_bindings(merge_step_binding)
+    @test isempty(UncertainTea._batched_nuts_device_barriers_after(merge_device_stage))
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -279,6 +294,12 @@
             UncertainTea._batched_nuts_backend_steps(done_backend_block)[1],
         ),
     )
+    done_device_plan = UncertainTea._batched_nuts_device_plan(done_program)
+    @test done_device_plan.target == :gpu
+    @test UncertainTea._batched_nuts_device_slot(
+        done_device_plan,
+        UncertainTea.NUTSKernelBufferControlState,
+    ).segment == UncertainTea.NUTSKernelDevicePersistentSegment
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,
@@ -591,6 +612,47 @@
                 (
                     UncertainTea.NUTSKernelBufferTreeNextState,
                     UncertainTea.NUTSKernelBufferControlState,
+                ),
+            ),
+        )
+    expand_device_plan = UncertainTea._batched_nuts_device_plan(expand_direct_program)
+    expand_next_slot = UncertainTea._batched_nuts_device_slot(
+        expand_device_plan,
+        UncertainTea.NUTSKernelBufferTreeNextState,
+    )
+    @test expand_next_slot.binding === expand_next_binding
+    @test expand_next_slot.segment == UncertainTea.NUTSKernelDeviceScratchSegment
+    @test expand_next_slot.segment_slot >= 1
+    expand_device_stage = UncertainTea._batched_nuts_device_stages(expand_device_plan)[2]
+    @test UncertainTea._batched_nuts_device_read_slots(expand_device_stage) ==
+        UncertainTea._batched_nuts_backend_read_bindings(expand_step_binding)
+    @test UncertainTea._batched_nuts_device_write_slots(expand_device_stage) ==
+        UncertainTea._batched_nuts_backend_write_bindings(expand_step_binding)
+    @test UncertainTea._batched_nuts_device_barriers_after(expand_device_stage) ==
+        (
+            UncertainTea.BatchedNUTSKernelDeviceBarrierHint(
+                UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                    2,
+                    UncertainTea.NUTSKernelDependencyBarrier,
+                    (
+                        UncertainTea.NUTSKernelAliasTreeState,
+                        UncertainTea.NUTSKernelAliasControlState,
+                    ),
+                    (
+                        UncertainTea.NUTSKernelBufferTreeNextState,
+                        UncertainTea.NUTSKernelBufferControlState,
+                    ),
+                ),
+                (
+                    UncertainTea.NUTSKernelDeviceScratchSegment,
+                    UncertainTea.NUTSKernelDevicePersistentSegment,
+                ),
+                (
+                    expand_next_binding.index,
+                    UncertainTea._batched_nuts_backend_buffer_binding(
+                        expand_backend_block,
+                        UncertainTea.NUTSKernelBufferControlState,
+                    ).index,
                 ),
             ),
         )

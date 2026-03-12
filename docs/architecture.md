@@ -185,6 +185,8 @@ Current backend-lowering subset:
   phase-local schedule plus buffer lifecycle metadata, resource groups, and
   barrier placements from those steps, and then lowers that metadata into a
   backend execution block with concrete buffer bindings and barrier hints, and
+  then into a device-plan skeleton with segment-local slots and device-stage
+  barrier hints, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
