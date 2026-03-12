@@ -1213,6 +1213,19 @@ using UncertainTea
     @test masked_destination[:, 3] == masked_source[:, 3]
     single_chain_mask = UncertainTea._single_chain_mask!(falses(3), 2)
     @test single_chain_mask == BitVector([false, true, false])
+    sampled_directions = zeros(Int, 3)
+    UncertainTea._sample_batched_nuts_directions!(
+        sampled_directions,
+        MersenneTwister(105),
+        BitVector([true, false, true]),
+    )
+    @test sampled_directions[1] in (-1, 1)
+    @test sampled_directions[2] == 0
+    @test sampled_directions[3] in (-1, 1)
+    @test UncertainTea._nuts_continuation_active(1, 3, false, false)
+    @test !UncertainTea._nuts_continuation_active(3, 3, false, false)
+    @test !UncertainTea._nuts_continuation_active(1, 3, true, false)
+    @test !UncertainTea._nuts_continuation_active(1, 3, false, true)
     @test UncertainTea._mean_acceptance_stat(3.0, 2) == 1.5
     @test UncertainTea._mean_acceptance_stat(0.0, 0) == 0.0
     moved_destination = falses(3)
@@ -1323,6 +1336,8 @@ using UncertainTea
         scalar_tree_workspace,
         -1,
     )
+    @test UncertainTea._nuts_subtree_start_state(scalar_continuation, -1) === scalar_continuation.left
+    @test UncertainTea._nuts_subtree_start_state(scalar_continuation, 1) === scalar_continuation.right
     @test scalar_continuation.left.logjoint == -0.5
     @test scalar_continuation.left.position == [3.0]
     UncertainTea._copy_nuts_continuation_proposal_from_tree!(

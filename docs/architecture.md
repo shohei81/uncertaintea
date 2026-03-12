@@ -158,7 +158,9 @@ Current backend-lowering subset:
   carries its metadata through a reusable scratch summary object attached to
   `NUTSSubtreeWorkspace`, and scalar continuation merge now consumes that
   scratch through a dedicated subtree-merge helper while scalar frontier /
-  proposal copies and turning updates also run through dedicated helpers; the
+  proposal copies and turning updates also run through dedicated helpers, and
+  direction sampling / active checks / subtree-start selection are now shared
+  helper concepts across scalar and batched continuation loops; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

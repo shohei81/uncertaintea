@@ -172,6 +172,9 @@ for dynamic trajectory building:
 - single-chain continuation frontier/proposal copies and merged-turning update
   now also run through dedicated helpers, so its expansion loop follows the
   same step-copy-merge structure as the batched fallback path
+- direction sampling, continuation-active checks, and subtree start-state
+  selection are now also helperized across scalar and batched continuation
+  loops, so the control skeleton is more obviously shared
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

@@ -1505,6 +1505,40 @@ function _mean_batched_adaptation_probability(
     return total / length(accept_prob)
 end
 
+function _sample_nuts_direction(rng::AbstractRNG)
+    return rand(rng, Bool) ? 1 : -1
+end
+
+function _sample_batched_nuts_directions!(
+    destination::AbstractVector{Int},
+    rng::AbstractRNG,
+    active::AbstractVector{Bool},
+)
+    length(destination) == length(active) ||
+        throw(DimensionMismatch("expected NUTS direction destination of length $(length(active)), got $(length(destination))"))
+    for index in eachindex(destination, active)
+        active[index] || continue
+        destination[index] = _sample_nuts_direction(rng)
+    end
+    return destination
+end
+
+function _nuts_continuation_active(
+    tree_depth::Integer,
+    max_tree_depth::Integer,
+    divergent::Bool,
+    turning::Bool,
+)
+    return tree_depth < max_tree_depth && !divergent && !turning
+end
+
+function _nuts_subtree_start_state(
+    continuation::NUTSContinuationState,
+    direction::Int,
+)
+    return direction < 0 ? continuation.left : continuation.right
+end
+
 function _batched_leapfrog!(
     workspace::BatchedHMCWorkspace,
     model::TeaModel,
@@ -2521,15 +2555,17 @@ function _continue_nuts_proposal!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    left = continuation.left
-    right = continuation.right
-    proposal = continuation.proposal
-    while continuation.tree_depth < max_tree_depth && !continuation.divergent && !continuation.turning
-        direction = rand(rng, Bool) ? 1 : -1
+    while _nuts_continuation_active(
+        continuation.tree_depth,
+        max_tree_depth,
+        continuation.divergent,
+        continuation.turning,
+    )
+        direction = _sample_nuts_direction(rng)
         subtree = _build_nuts_subtree(
             tree_workspace,
             model,
-            direction < 0 ? left : right,
+            _nuts_subtree_start_state(continuation, direction),
             gradient_cache,
             inverse_mass_matrix,
             args,
@@ -2594,17 +2630,17 @@ function _continue_batched_nuts_proposal!(
     rng::AbstractRNG,
 )
     continuation = workspace.column_continuation_states[chain_index]
-    left = continuation.left
-    right = continuation.right
-    proposal = continuation.proposal
-    while workspace.tree_depths[chain_index] < max_tree_depth &&
-        !workspace.divergent_step[chain_index] &&
-        !workspace.continuation_turning[chain_index]
-        direction = rand(rng, Bool) ? 1 : -1
+    while _nuts_continuation_active(
+        workspace.tree_depths[chain_index],
+        max_tree_depth,
+        workspace.divergent_step[chain_index],
+        workspace.continuation_turning[chain_index],
+    )
+        direction = _sample_nuts_direction(rng)
         subtree = _build_nuts_subtree(
             tree_workspace,
             model,
-            direction < 0 ? left : right,
+            _nuts_subtree_start_state(continuation, direction),
             gradient_cache,
             inverse_mass_matrix,
             args,
@@ -2712,8 +2748,12 @@ function _continue_batched_nuts_batched_subtree!(
         depth_count = 0
         for chain_index in 1:num_chains
             workspace.tree_depths[chain_index] == depth || continue
-            workspace.divergent_step[chain_index] && continue
-            workspace.continuation_turning[chain_index] && continue
+            _nuts_continuation_active(
+                workspace.tree_depths[chain_index],
+                max_tree_depth,
+                workspace.divergent_step[chain_index],
+                workspace.continuation_turning[chain_index],
+            ) || continue
             depth_count += 1
         end
         if depth_count > active_depth_count
@@ -2726,13 +2766,17 @@ function _continue_batched_nuts_batched_subtree!(
     any_active = false
     for chain_index in 1:num_chains
         workspace.tree_depths[chain_index] == active_depth || continue
-        workspace.divergent_step[chain_index] && continue
-        workspace.continuation_turning[chain_index] && continue
+        _nuts_continuation_active(
+            workspace.tree_depths[chain_index],
+            max_tree_depth,
+            workspace.divergent_step[chain_index],
+            workspace.continuation_turning[chain_index],
+        ) || continue
         workspace.subtree_active[chain_index] = true
-        workspace.step_direction[chain_index] = rand(rng, Bool) ? 1 : -1
         any_active = true
     end
     any_active || return false
+    _sample_batched_nuts_directions!(workspace.step_direction, rng, workspace.subtree_active)
     _initialize_batched_nuts_subtree_states!(workspace, workspace.subtree_active)
 
     for _ in 1:(1 << active_depth)
@@ -2959,7 +3003,7 @@ function _nuts_proposal(
         current_gradient,
     )
     initial_hamiltonian = _hamiltonian(initial_state.logjoint, initial_state.momentum, inverse_mass_matrix)
-    direction = rand(rng, Bool) ? 1 : -1
+    direction = _sample_nuts_direction(rng)
     first_step_valid = _leapfrog_step!(
         tree_workspace.next,
         model,
@@ -3095,9 +3139,7 @@ function _initialize_batched_nuts_continuations!(
     _sample_batched_momentum!(workspace.current_momentum, rng, sqrt.(Float64.(inverse_mass_matrix)))
     _batched_hamiltonian!(workspace.current_energy, current_logjoint, workspace.current_momentum, inverse_mass_matrix)
     fill!(workspace.accepted_step, true)
-    for chain_index in 1:num_chains
-        workspace.step_direction[chain_index] = rand(rng, Bool) ? 1 : -1
-    end
+    _sample_batched_nuts_directions!(workspace.step_direction, rng, workspace.accepted_step)
     _batched_nuts_leapfrog_step!(
         workspace,
         model,
