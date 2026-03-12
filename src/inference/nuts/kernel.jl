@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    bundle_plan = _batched_nuts_bundle_plan(program)
-    for bundle_stage in _batched_nuts_bundle_stages(bundle_plan)
-        _execute_batched_nuts_bundle_stage!(
+    package_plan = _batched_nuts_package_plan(program)
+    for stage_file in _batched_nuts_package_stage_files(package_plan)
+        _execute_batched_nuts_package_stage!(
             workspace,
-            bundle_plan,
-            bundle_stage,
+            package_plan,
+            stage_file,
             execution,
             model,
             inverse_mass_matrix,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_bundle_stage!(
+function _execute_batched_nuts_package_stage!(
     workspace::BatchedNUTSWorkspace,
-    bundle_plan::BatchedNUTSKernelBundlePlan,
-    bundle_stage::BatchedNUTSKernelBundleStage,
+    package_plan::BatchedNUTSKernelPackagePlan,
+    stage_file::BatchedNUTSKernelPackageStageFile,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -482,7 +482,9 @@ function _execute_batched_nuts_bundle_stage!(
                     _batched_nuts_artifact_codegen_stage(
                         _batched_nuts_source_artifact_stage(
                             _batched_nuts_module_source_stage(
-                                _batched_nuts_bundle_module_stage(bundle_stage),
+                                _batched_nuts_bundle_module_stage(
+                                    _batched_nuts_package_bundle_stage(stage_file),
+                                ),
                             ),
                         ),
                     ),
@@ -501,7 +503,9 @@ function _execute_batched_nuts_bundle_stage!(
     for barrier in _batched_nuts_artifact_barriers_after(
         _batched_nuts_source_artifact_stage(
             _batched_nuts_module_source_stage(
-                _batched_nuts_bundle_module_stage(bundle_stage),
+                _batched_nuts_bundle_module_stage(
+                    _batched_nuts_package_bundle_stage(stage_file),
+                ),
             ),
         ),
     )

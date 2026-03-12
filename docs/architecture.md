@@ -198,7 +198,8 @@ Current backend-lowering subset:
   entrypoints and backend-specific argument declarations, and then into a
   module-plan layer with materialized source blobs and backend-specific
   filenames, and then into a bundle-plan layer that groups stage modules
-  behind a backend bundle manifest, and
+  behind a backend bundle manifest, and then into a package-plan layer with a
+  writeable root layout and concrete file entries, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control

@@ -224,7 +224,8 @@ for dynamic trajectory building:
   backend-specific argument declarations, and then into a module-plan layer
   with materialized source blobs and backend-specific filenames, and then into
   a bundle-plan layer that groups stage modules behind a backend bundle
-  manifest,
+  manifest, and then into a package-plan layer with a writeable root layout
+  and concrete file entries,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,
