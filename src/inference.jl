@@ -1880,6 +1880,98 @@ function _update_single_batched_continuation_turning!(
     return workspace
 end
 
+function _reset_batched_nuts_subtree_scratch!(
+    workspace::BatchedNUTSWorkspace,
+)
+    fill!(workspace.subtree_log_weight, -Inf)
+    fill!(workspace.subtree_accept_stat_sum, 0.0)
+    fill!(workspace.subtree_accept_stat_count, 0)
+    fill!(workspace.subtree_integration_steps, 0)
+    fill!(workspace.subtree_proposed_energy, Inf)
+    fill!(workspace.subtree_delta_energy, Inf)
+    fill!(workspace.subtree_proposal_energy, Inf)
+    fill!(workspace.subtree_proposal_energy_error, Inf)
+    fill!(workspace.subtree_accept_prob, 0.0)
+    fill!(workspace.subtree_candidate_log_weight, -Inf)
+    fill!(workspace.subtree_combined_log_weight, -Inf)
+    fill!(workspace.subtree_turning, false)
+    fill!(workspace.subtree_merged_turning, false)
+    fill!(workspace.subtree_divergent, false)
+    fill!(workspace.subtree_active, false)
+    fill!(workspace.subtree_copy_left, false)
+    fill!(workspace.subtree_copy_right, false)
+    fill!(workspace.subtree_select_proposal, false)
+    return workspace
+end
+
+function _batched_nuts_active_depth(
+    workspace::BatchedNUTSWorkspace,
+    max_tree_depth::Int,
+)
+    active_depth = 0
+    active_depth_count = 0
+    for depth in 1:(max_tree_depth - 1)
+        depth_count = 0
+        for chain_index in eachindex(workspace.tree_depths)
+            workspace.tree_depths[chain_index] == depth || continue
+            _nuts_continuation_active(
+                workspace.tree_depths[chain_index],
+                max_tree_depth,
+                workspace.divergent_step[chain_index],
+                workspace.continuation_turning[chain_index],
+            ) || continue
+            depth_count += 1
+        end
+        if depth_count > active_depth_count
+            active_depth = depth
+            active_depth_count = depth_count
+        end
+    end
+    return active_depth, active_depth_count
+end
+
+function _activate_batched_nuts_subtree_cohort!(
+    workspace::BatchedNUTSWorkspace,
+    active_depth::Int,
+    max_tree_depth::Int,
+)
+    fill!(workspace.subtree_active, false)
+    any_active = false
+    for chain_index in eachindex(workspace.tree_depths)
+        workspace.tree_depths[chain_index] == active_depth || continue
+        _nuts_continuation_active(
+            workspace.tree_depths[chain_index],
+            max_tree_depth,
+            workspace.divergent_step[chain_index],
+            workspace.continuation_turning[chain_index],
+        ) || continue
+        workspace.subtree_active[chain_index] = true
+        any_active = true
+    end
+    return any_active
+end
+
+function _prepare_batched_nuts_subtree_cohort!(
+    workspace::BatchedNUTSWorkspace,
+    max_tree_depth::Int,
+    rng::AbstractRNG,
+)
+    _reset_batched_nuts_subtree_scratch!(workspace)
+    active_depth, active_depth_count = _batched_nuts_active_depth(
+        workspace,
+        max_tree_depth,
+    )
+    active_depth_count > 0 || return 0
+    _activate_batched_nuts_subtree_cohort!(
+        workspace,
+        active_depth,
+        max_tree_depth,
+    ) || return 0
+    _sample_batched_nuts_directions!(workspace.step_direction, rng, workspace.subtree_active)
+    _initialize_batched_nuts_subtree_states!(workspace, workspace.subtree_active)
+    return active_depth
+end
+
 function _load_batched_nuts_first_states!(
     workspace::BatchedNUTSWorkspace,
     position::AbstractMatrix,
@@ -2723,61 +2815,12 @@ function _continue_batched_nuts_batched_subtree!(
 )
     max_tree_depth > 1 || return false
     num_chains = size(position, 2)
-    fill!(workspace.subtree_log_weight, -Inf)
-    fill!(workspace.subtree_accept_stat_sum, 0.0)
-    fill!(workspace.subtree_accept_stat_count, 0)
-    fill!(workspace.subtree_integration_steps, 0)
-    fill!(workspace.subtree_proposed_energy, Inf)
-    fill!(workspace.subtree_delta_energy, Inf)
-    fill!(workspace.subtree_proposal_energy, Inf)
-    fill!(workspace.subtree_proposal_energy_error, Inf)
-    fill!(workspace.subtree_accept_prob, 0.0)
-    fill!(workspace.subtree_candidate_log_weight, -Inf)
-    fill!(workspace.subtree_combined_log_weight, -Inf)
-    fill!(workspace.subtree_turning, false)
-    fill!(workspace.subtree_merged_turning, false)
-    fill!(workspace.subtree_divergent, false)
-    fill!(workspace.subtree_active, false)
-    fill!(workspace.subtree_copy_left, false)
-    fill!(workspace.subtree_copy_right, false)
-    fill!(workspace.subtree_select_proposal, false)
-
-    active_depth = 0
-    active_depth_count = 0
-    for depth in 1:(max_tree_depth - 1)
-        depth_count = 0
-        for chain_index in 1:num_chains
-            workspace.tree_depths[chain_index] == depth || continue
-            _nuts_continuation_active(
-                workspace.tree_depths[chain_index],
-                max_tree_depth,
-                workspace.divergent_step[chain_index],
-                workspace.continuation_turning[chain_index],
-            ) || continue
-            depth_count += 1
-        end
-        if depth_count > active_depth_count
-            active_depth = depth
-            active_depth_count = depth_count
-        end
-    end
-    active_depth_count > 0 || return false
-
-    any_active = false
-    for chain_index in 1:num_chains
-        workspace.tree_depths[chain_index] == active_depth || continue
-        _nuts_continuation_active(
-            workspace.tree_depths[chain_index],
-            max_tree_depth,
-            workspace.divergent_step[chain_index],
-            workspace.continuation_turning[chain_index],
-        ) || continue
-        workspace.subtree_active[chain_index] = true
-        any_active = true
-    end
-    any_active || return false
-    _sample_batched_nuts_directions!(workspace.step_direction, rng, workspace.subtree_active)
-    _initialize_batched_nuts_subtree_states!(workspace, workspace.subtree_active)
+    active_depth = _prepare_batched_nuts_subtree_cohort!(
+        workspace,
+        max_tree_depth,
+        rng,
+    )
+    active_depth > 0 || return false
 
     for _ in 1:(1 << active_depth)
         _batched_nuts_leapfrog_step_to!(

@@ -1574,6 +1574,33 @@ using UncertainTea
     )
     @test all(depth == 2 for depth in gaussian_mixed_depth_nuts_workspace.tree_depths)
     gaussian_mixed_depth_nuts_workspace.continuation_turning[1] = true
+    @test UncertainTea._batched_nuts_active_depth(
+        gaussian_mixed_depth_nuts_workspace,
+        4,
+    ) == (2, 2)
+    @test UncertainTea._activate_batched_nuts_subtree_cohort!(
+        gaussian_mixed_depth_nuts_workspace,
+        2,
+        4,
+    )
+    @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
+        BitVector([false, true, true])
+    prepared_depth = UncertainTea._prepare_batched_nuts_subtree_cohort!(
+        gaussian_mixed_depth_nuts_workspace,
+        4,
+        MersenneTwister(1001),
+    )
+    @test prepared_depth == 2
+    @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
+        BitVector([false, true, true])
+    @test all(
+        gaussian_mixed_depth_nuts_workspace.step_direction[index] in (-1, 1)
+        for index in 2:3
+    )
+    @test all(
+        isfinite(gaussian_mixed_depth_nuts_workspace.tree_current_logjoint[index])
+        for index in 2:3
+    )
     @test UncertainTea._continue_batched_nuts_batched_subtree!(
         gaussian_mixed_depth_nuts_workspace,
         gaussian_mean,

@@ -95,7 +95,9 @@ The current CPU NUTS path is intentionally narrow:
   continuation merge now consumes that scratch through a dedicated helper while
   frontier/proposal copies and merged-turning updates also run through their
   own scalar helpers; direction sampling, active checks, and subtree-start
-  selection are now helperized across scalar and batched continuation loops
+  selection are now helperized across scalar and batched continuation loops,
+  and the batched depth-cohort scheduler now also stages reset/depth-select/
+  cohort-activate/initialize through explicit helpers
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local
