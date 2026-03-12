@@ -238,6 +238,9 @@ Current backend-lowering subset:
 - that shared emit layer now also owns the target-specific source/module policy
   (`.jl`, `.metal`, `.cu` and matching buffer-argument declarations), so both
   NUTS and static model backend packages consume the same target helpers
+- stub source-module bodies are now emitted through a shared source-template
+  helper as well, so backend-specific package generation no longer duplicates
+  string assembly across NUTS and static model lowering
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

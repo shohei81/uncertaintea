@@ -124,8 +124,7 @@ function _backend_module_source_lines(
     module_symbol::Symbol,
     entry_symbol::Symbol,
 )
-    lines = String[
-        string("module ", module_symbol),
+    preamble_lines = (
         string("const TARGET = :", target),
         string("const MODEL = :", model.name),
         string("const STEP_COUNT = ", length(plan.steps)),
@@ -134,16 +133,17 @@ function _backend_module_source_lines(
         string("const GENERIC_SLOTS = ", _backend_bool_vector_literal(plan.generic_slots)),
         "",
         "# Lowered backend plan",
-    ]
-    for (index, step) in enumerate(plan.steps)
-        push!(lines, string("# ", index, ". ", _backend_step_stub(step)))
-    end
-    push!(lines, "")
-    push!(lines, string("function ", entry_symbol, "()"))
-    push!(lines, "    return nothing")
-    push!(lines, "end")
-    push!(lines, "end")
-    return Tuple(lines)
+    )
+    step_lines = Tuple(
+        string("# ", index, ". ", _backend_step_stub(step)) for
+        (index, step) in enumerate(plan.steps)
+    )
+    return gpu_backend_stub_source_lines(
+        module_symbol,
+        entry_symbol,
+        ();
+        preamble_lines=(preamble_lines..., step_lines..., ""),
+    )
 end
 
 function _backend_bundle_layout(

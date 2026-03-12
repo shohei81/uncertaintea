@@ -91,20 +91,14 @@ function _batched_nuts_source_lines(
     device_arguments::Tuple,
     shared_arguments::Tuple,
 )
-    signature = join(
+    return gpu_backend_stub_source_lines(
+        source_module,
+        source_entry,
         (
             map(argument -> argument.declaration, constant_arguments)...,
             map(argument -> argument.declaration, device_arguments)...,
             map(argument -> argument.declaration, shared_arguments)...,
         ),
-        ", ",
-    )
-    return (
-        string("module ", source_module),
-        string("function ", source_entry, "(", signature, ")"),
-        "    return nothing",
-        "end",
-        "end",
     )
 end
 
