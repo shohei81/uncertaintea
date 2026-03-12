@@ -107,7 +107,9 @@ The current CPU NUTS path is intentionally narrow:
   (`IdleIR`/`ExpandIR`/`MergeIR`/`DoneIR`) for scheduler-step dispatch, with
   the expand/merge steps reloading their active masks from that IR payload
   through an explicit executable control-block layer and then a 1-step
-  descriptor for the phase-local scratch masks they touch
+  descriptor for the phase-local scratch masks they touch; the current CPU
+  path now also makes the phase-local numeric energy/log-weight scratch
+  explicit as a step-state object layered on top
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

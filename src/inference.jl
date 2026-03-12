@@ -273,6 +273,36 @@ struct BatchedNUTSDoneStepDescriptor <: AbstractBatchedNUTSStepDescriptor
     block::BatchedNUTSDoneControlBlock
 end
 
+abstract type AbstractBatchedNUTSStepState end
+
+struct BatchedNUTSIdleStepState <: AbstractBatchedNUTSStepState
+    descriptor::BatchedNUTSIdleStepDescriptor
+end
+
+struct BatchedNUTSExpandStepState <: AbstractBatchedNUTSStepState
+    descriptor::BatchedNUTSExpandStepDescriptor
+    log_weight::Vector{Float64}
+    proposed_energy::Vector{Float64}
+    delta_energy::Vector{Float64}
+    proposal_energy::Vector{Float64}
+    proposal_energy_error::Vector{Float64}
+    accept_prob::Vector{Float64}
+    candidate_log_weight::Vector{Float64}
+    combined_log_weight::Vector{Float64}
+end
+
+struct BatchedNUTSMergeStepState <: AbstractBatchedNUTSStepState
+    descriptor::BatchedNUTSMergeStepDescriptor
+    proposal_energy::Vector{Float64}
+    proposal_energy_error::Vector{Float64}
+    candidate_log_weight::Vector{Float64}
+    combined_log_weight::Vector{Float64}
+end
+
+struct BatchedNUTSDoneStepState <: AbstractBatchedNUTSStepState
+    descriptor::BatchedNUTSDoneStepDescriptor
+end
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -2244,6 +2274,59 @@ function _batched_nuts_step_descriptor(
     return BatchedNUTSDoneStepDescriptor(block)
 end
 
+function _batched_nuts_step_state(
+    workspace::BatchedNUTSWorkspace,
+)
+    return _batched_nuts_step_state(
+        workspace,
+        _batched_nuts_step_descriptor(workspace),
+    )
+end
+
+function _batched_nuts_step_state(
+    workspace::BatchedNUTSWorkspace,
+    descriptor::BatchedNUTSIdleStepDescriptor,
+)
+    return BatchedNUTSIdleStepState(descriptor)
+end
+
+function _batched_nuts_step_state(
+    workspace::BatchedNUTSWorkspace,
+    descriptor::BatchedNUTSExpandStepDescriptor,
+)
+    return BatchedNUTSExpandStepState(
+        descriptor,
+        workspace.subtree_log_weight,
+        workspace.subtree_proposed_energy,
+        workspace.subtree_delta_energy,
+        workspace.subtree_proposal_energy,
+        workspace.subtree_proposal_energy_error,
+        workspace.subtree_accept_prob,
+        workspace.subtree_candidate_log_weight,
+        workspace.subtree_combined_log_weight,
+    )
+end
+
+function _batched_nuts_step_state(
+    workspace::BatchedNUTSWorkspace,
+    descriptor::BatchedNUTSMergeStepDescriptor,
+)
+    return BatchedNUTSMergeStepState(
+        descriptor,
+        workspace.subtree_proposal_energy,
+        workspace.subtree_proposal_energy_error,
+        workspace.continuation_candidate_log_weight,
+        workspace.continuation_combined_log_weight,
+    )
+end
+
+function _batched_nuts_step_state(
+    workspace::BatchedNUTSWorkspace,
+    descriptor::BatchedNUTSDoneStepDescriptor,
+)
+    return BatchedNUTSDoneStepState(descriptor)
+end
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ::BatchedNUTSIdleIR,
@@ -2322,11 +2405,12 @@ end
 
 function _advance_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
-    descriptor::BatchedNUTSExpandStepDescriptor,
+    state::BatchedNUTSExpandStepState,
     inverse_mass_matrix::Vector{Float64},
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    descriptor = state.descriptor
     any_active = false
     fill!(descriptor.copy_left, false)
     fill!(descriptor.copy_right, false)
@@ -2354,32 +2438,31 @@ function _advance_batched_nuts_subtree_cohort!(
             workspace.tree_right_logjoint[chain_index] = workspace.tree_current_logjoint[chain_index]
         end
 
-        delta_energy = workspace.subtree_proposed_energy[chain_index] - workspace.current_energy[chain_index]
-        workspace.subtree_delta_energy[chain_index] = delta_energy
+        delta_energy = state.proposed_energy[chain_index] - workspace.current_energy[chain_index]
+        state.delta_energy[chain_index] = delta_energy
         if !isfinite(delta_energy) || delta_energy > max_delta_energy
             workspace.subtree_divergent[chain_index] = true
             workspace.subtree_active[chain_index] = false
             continue
         end
 
-        workspace.subtree_accept_prob[chain_index] = min(1.0, exp(min(0.0, -delta_energy)))
-        workspace.subtree_accept_stat_sum[chain_index] += workspace.subtree_accept_prob[chain_index]
+        state.accept_prob[chain_index] = min(1.0, exp(min(0.0, -delta_energy)))
+        workspace.subtree_accept_stat_sum[chain_index] += state.accept_prob[chain_index]
         workspace.subtree_accept_stat_count[chain_index] += 1
-        workspace.subtree_candidate_log_weight[chain_index] = -workspace.subtree_proposed_energy[chain_index]
-        workspace.subtree_combined_log_weight[chain_index] = _logaddexp(
-            workspace.subtree_log_weight[chain_index],
-            workspace.subtree_candidate_log_weight[chain_index],
+        state.candidate_log_weight[chain_index] = -state.proposed_energy[chain_index]
+        state.combined_log_weight[chain_index] = _logaddexp(
+            state.log_weight[chain_index],
+            state.candidate_log_weight[chain_index],
         )
-        if !isfinite(workspace.subtree_log_weight[chain_index]) || log(rand(rng)) <
-            workspace.subtree_candidate_log_weight[chain_index] -
-            workspace.subtree_combined_log_weight[chain_index]
+        if !isfinite(state.log_weight[chain_index]) || log(rand(rng)) <
+            state.candidate_log_weight[chain_index] -
+            state.combined_log_weight[chain_index]
             descriptor.select_proposal[chain_index] = true
             workspace.tree_proposal_logjoint[chain_index] = workspace.tree_current_logjoint[chain_index]
-            workspace.subtree_proposal_energy[chain_index] =
-                workspace.subtree_proposed_energy[chain_index]
-            workspace.subtree_proposal_energy_error[chain_index] = delta_energy
+            state.proposal_energy[chain_index] = state.proposed_energy[chain_index]
+            state.proposal_energy_error[chain_index] = delta_energy
         end
-        workspace.subtree_log_weight[chain_index] = workspace.subtree_combined_log_weight[chain_index]
+        state.log_weight[chain_index] = state.combined_log_weight[chain_index]
     end
 
     _copy_masked_nuts_buffers!(
@@ -2488,10 +2571,11 @@ end
 
 function _merge_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
-    descriptor::BatchedNUTSMergeStepDescriptor,
+    state::BatchedNUTSMergeStepState,
     inverse_mass_matrix::Vector{Float64},
     rng::AbstractRNG,
 )
+    descriptor = state.descriptor
     _merge_batched_nuts_continuation_frontiers!(workspace, workspace.subtree_active)
     _batched_is_turning!(
         descriptor.merged_turning,
@@ -2505,27 +2589,27 @@ function _merge_batched_nuts_subtree_cohort!(
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] || continue
         descriptor.select_proposal[chain_index] = false
-        workspace.continuation_candidate_log_weight[chain_index] = -Inf
-        workspace.continuation_combined_log_weight[chain_index] =
+        state.candidate_log_weight[chain_index] = -Inf
+        state.combined_log_weight[chain_index] =
             workspace.continuation_log_weight[chain_index]
         if isfinite(workspace.subtree_log_weight[chain_index])
-            workspace.continuation_candidate_log_weight[chain_index] =
+            state.candidate_log_weight[chain_index] =
                 workspace.subtree_log_weight[chain_index]
-            workspace.continuation_combined_log_weight[chain_index] = _logaddexp(
+            state.combined_log_weight[chain_index] = _logaddexp(
                 workspace.continuation_log_weight[chain_index],
-                workspace.continuation_candidate_log_weight[chain_index],
+                state.candidate_log_weight[chain_index],
             )
             descriptor.select_proposal[chain_index] =
-                log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
-                workspace.continuation_combined_log_weight[chain_index]
+                log(rand(rng)) < state.candidate_log_weight[chain_index] -
+                state.combined_log_weight[chain_index]
             if descriptor.select_proposal[chain_index]
-                workspace.subtree_proposal_energy[chain_index] = _hamiltonian(
+                state.proposal_energy[chain_index] = _hamiltonian(
                     workspace.tree_proposal_logjoint[chain_index],
                     view(workspace.tree_proposal_momentum, :, chain_index),
                     inverse_mass_matrix,
                 )
-                workspace.subtree_proposal_energy_error[chain_index] =
-                    workspace.subtree_proposal_energy[chain_index] -
+                state.proposal_energy_error[chain_index] =
+                    state.proposal_energy[chain_index] -
                     workspace.current_energy[chain_index]
             end
         end
@@ -2563,10 +2647,10 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    descriptor = _batched_nuts_step_descriptor(workspace)
+    state = _batched_nuts_step_state(workspace)
     return _step_batched_nuts_subtree_scheduler!(
         workspace,
-        descriptor,
+        state,
         model,
         inverse_mass_matrix,
         args,
@@ -2630,7 +2714,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    descriptor::BatchedNUTSIdleStepDescriptor,
+    descriptor::AbstractBatchedNUTSStepDescriptor,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2639,13 +2723,37 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_block!(workspace, descriptor.block)
+    return _step_batched_nuts_subtree_scheduler!(
+        workspace,
+        _batched_nuts_step_state(workspace, descriptor),
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    state::BatchedNUTSIdleStepState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _load_batched_nuts_control_block!(workspace, state.descriptor.block)
     return false
 end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    descriptor::BatchedNUTSExpandStepDescriptor,
+    state::BatchedNUTSExpandStepState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2654,6 +2762,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    descriptor = state.descriptor
     _load_batched_nuts_control_block!(workspace, descriptor.block)
     _batched_nuts_leapfrog_step_to!(
         workspace,
@@ -2673,14 +2782,14 @@ function _step_batched_nuts_subtree_scheduler!(
         descriptor.block.active_chains,
     )
     _batched_hamiltonian!(
-        workspace.subtree_proposed_energy,
+        state.proposed_energy,
         workspace.proposed_logjoint,
         workspace.tree_next_momentum,
         inverse_mass_matrix,
     )
     any_active = _advance_batched_nuts_subtree_cohort!(
         workspace,
-        descriptor,
+        state,
         inverse_mass_matrix,
         max_delta_energy,
         rng,
@@ -2694,7 +2803,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    descriptor::BatchedNUTSMergeStepDescriptor,
+    state::BatchedNUTSMergeStepState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2703,12 +2812,13 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    descriptor = state.descriptor
     _load_batched_nuts_control_block!(workspace, descriptor.block)
     any_active = _activate_batched_nuts_subtree_merge_cohort!(workspace, descriptor.block)
     if any_active
         _merge_batched_nuts_subtree_cohort!(
             workspace,
-            descriptor,
+            state,
             inverse_mass_matrix,
             rng,
         )
@@ -2720,7 +2830,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    descriptor::BatchedNUTSDoneStepDescriptor,
+    state::BatchedNUTSDoneStepState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2729,7 +2839,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_block!(workspace, descriptor.block)
+    _load_batched_nuts_control_block!(workspace, state.descriptor.block)
     return false
 end
 

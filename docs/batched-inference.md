@@ -197,7 +197,9 @@ for dynamic trajectory building:
   masks and sampled directions from the IR payload before executing, via an
   explicit executable control-block layer built from each IR snapshot; the
   scheduler now then derives a 1-step descriptor from that block so the
-  phase-local scratch masks used by expand/merge are explicit as well
+  phase-local scratch masks used by expand/merge are explicit as well, and a
+  final step-state layer now bundles those descriptors with the numeric
+  energy/log-weight scratch touched by the batched subtree step itself
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
