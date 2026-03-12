@@ -363,41 +363,55 @@ end
 
 abstract type AbstractBatchedNUTSKernelProgram end
 
+@enum BatchedNUTSKernelOp::UInt8 begin
+    NUTSKernelReloadControl = 0
+    NUTSKernelLeapfrog = 1
+    NUTSKernelHamiltonian = 2
+    NUTSKernelAdvance = 3
+    NUTSKernelActivateMerge = 4
+    NUTSKernelMerge = 5
+    NUTSKernelTransitionPhase = 6
+end
+
+mutable struct BatchedNUTSKernelExecutionState
+    any_active::Bool
+end
+
 struct BatchedNUTSIdleKernelProgram <: AbstractBatchedNUTSKernelProgram
     frame::BatchedNUTSIdleKernelFrame
-    ops::NTuple{1,Symbol}
+    ops::NTuple{1,BatchedNUTSKernelOp}
 end
 
 struct BatchedNUTSExpandKernelProgram <: AbstractBatchedNUTSKernelProgram
     frame::BatchedNUTSExpandKernelFrame
-    ops::NTuple{5,Symbol}
+    ops::NTuple{5,BatchedNUTSKernelOp}
 end
 
 struct BatchedNUTSMergeKernelProgram <: AbstractBatchedNUTSKernelProgram
     frame::BatchedNUTSMergeKernelFrame
-    ops::NTuple{4,Symbol}
+    ops::NTuple{4,BatchedNUTSKernelOp}
 end
 
 struct BatchedNUTSDoneKernelProgram <: AbstractBatchedNUTSKernelProgram
     frame::BatchedNUTSDoneKernelFrame
-    ops::NTuple{1,Symbol}
+    ops::NTuple{1,BatchedNUTSKernelOp}
 end
 
-const _BATCHED_NUTS_IDLE_KERNEL_OPS = (:reload_control,)
+const _BATCHED_NUTS_IDLE_KERNEL_OPS = (NUTSKernelReloadControl,)
 const _BATCHED_NUTS_EXPAND_KERNEL_OPS = (
-    :reload_control,
-    :leapfrog,
-    :hamiltonian,
-    :advance,
-    :transition_phase,
+    NUTSKernelReloadControl,
+    NUTSKernelLeapfrog,
+    NUTSKernelHamiltonian,
+    NUTSKernelAdvance,
+    NUTSKernelTransitionPhase,
 )
 const _BATCHED_NUTS_MERGE_KERNEL_OPS = (
-    :reload_control,
-    :activate_merge,
-    :merge,
-    :transition_phase,
+    NUTSKernelReloadControl,
+    NUTSKernelActivateMerge,
+    NUTSKernelMerge,
+    NUTSKernelTransitionPhase,
 )
-const _BATCHED_NUTS_DONE_KERNEL_OPS = (:reload_control,)
+const _BATCHED_NUTS_DONE_KERNEL_OPS = (NUTSKernelReloadControl,)
 
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
@@ -2543,6 +2557,20 @@ end
 
 _batched_nuts_kernel_ops(program::AbstractBatchedNUTSKernelProgram) = program.ops
 
+_batched_nuts_kernel_returns(::BatchedNUTSIdleKernelProgram) = false
+_batched_nuts_kernel_returns(::BatchedNUTSExpandKernelProgram) = true
+_batched_nuts_kernel_returns(::BatchedNUTSMergeKernelProgram) = true
+_batched_nuts_kernel_returns(::BatchedNUTSDoneKernelProgram) = false
+
+_batched_nuts_frame_control_block(frame::BatchedNUTSIdleKernelFrame) = frame.state.descriptor.block
+_batched_nuts_frame_control_block(frame::BatchedNUTSExpandKernelFrame) = frame.state.descriptor.block
+_batched_nuts_frame_control_block(frame::BatchedNUTSMergeKernelFrame) = frame.state.descriptor.block
+_batched_nuts_frame_control_block(frame::BatchedNUTSDoneKernelFrame) = frame.state.descriptor.block
+
+function _batched_nuts_kernel_execution_state()
+    return BatchedNUTSKernelExecutionState(false)
+end
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ::BatchedNUTSIdleIR,
@@ -3013,22 +3041,30 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        program.frame,
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
+    execution = _batched_nuts_kernel_execution_state()
+    for op in _batched_nuts_kernel_ops(program)
+        _batched_nuts_kernel_op!(
+            workspace,
+            program.frame,
+            op,
+            execution,
+            model,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            step_size,
+            max_delta_energy,
+            rng,
+        )
+    end
+    return _batched_nuts_kernel_returns(program)
 end
 
-function _step_batched_nuts_subtree_scheduler!(
+function _batched_nuts_kernel_op!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSIdleKernelProgram,
+    frame::AbstractBatchedNUTSKernelFrame,
+    op::BatchedNUTSKernelOp,
+    execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -3037,26 +3073,59 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    frame = program.frame
-    _load_batched_nuts_control_block!(workspace, frame.state.descriptor.block)
-    return false
+    if op == NUTSKernelReloadControl
+        _load_batched_nuts_control_block!(workspace, _batched_nuts_frame_control_block(frame))
+    elseif op == NUTSKernelLeapfrog
+        _batched_nuts_kernel_leapfrog!(
+            workspace,
+            frame,
+            model,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            step_size,
+        )
+    elseif op == NUTSKernelHamiltonian
+        _batched_nuts_kernel_hamiltonian!(frame, inverse_mass_matrix)
+    elseif op == NUTSKernelAdvance
+        execution.any_active = _advance_batched_nuts_subtree_cohort!(
+            workspace,
+            frame,
+            inverse_mass_matrix,
+            max_delta_energy,
+            rng,
+        )
+    elseif op == NUTSKernelActivateMerge
+        execution.any_active = _activate_batched_nuts_subtree_merge_cohort!(
+            workspace,
+            frame.state.descriptor.block,
+        )
+    elseif op == NUTSKernelMerge
+        execution.any_active || return nothing
+        _merge_batched_nuts_subtree_cohort!(
+            workspace,
+            frame,
+            inverse_mass_matrix,
+            rng,
+        )
+    elseif op == NUTSKernelTransitionPhase
+        _batched_nuts_kernel_transition_phase!(workspace, frame, execution)
+    else
+        throw(ArgumentError("unsupported batched NUTS kernel op: $op"))
+    end
+    return nothing
 end
 
-function _step_batched_nuts_subtree_scheduler!(
+function _batched_nuts_kernel_leapfrog!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSExpandKernelProgram,
+    frame::BatchedNUTSExpandKernelFrame,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
     constraints,
     step_size::Float64,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
 )
-    frame = program.frame
-    state = frame.state
-    descriptor = state.descriptor
-    _load_batched_nuts_control_block!(workspace, descriptor.block)
+    descriptor = frame.state.descriptor
     _batched_nuts_leapfrog_step_to!(
         workspace,
         model,
@@ -3074,69 +3143,50 @@ function _step_batched_nuts_subtree_scheduler!(
         descriptor.block.step_direction,
         descriptor.block.active_chains,
     )
+    return frame
+end
+
+function _batched_nuts_kernel_hamiltonian!(
+    frame::BatchedNUTSExpandKernelFrame,
+    inverse_mass_matrix::Vector{Float64},
+)
     _batched_hamiltonian!(
-        state.proposed_energy,
+        frame.state.proposed_energy,
         frame.proposed_logjoint,
         frame.next_momentum,
         inverse_mass_matrix,
     )
-    any_active = _advance_batched_nuts_subtree_cohort!(
-        workspace,
-        frame,
-        inverse_mass_matrix,
-        max_delta_energy,
-        rng,
-    )
+    return frame
+end
+
+function _batched_nuts_kernel_transition_phase!(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSExpandKernelFrame,
+    execution::BatchedNUTSKernelExecutionState,
+)
     workspace.control.scheduler.remaining_steps -= 1
-    if !any_active || workspace.control.scheduler.remaining_steps == 0
+    if !execution.any_active || workspace.control.scheduler.remaining_steps == 0
         workspace.control.scheduler.phase = NUTSSchedulerMerge
     end
-    return true
+    return workspace
 end
 
-function _step_batched_nuts_subtree_scheduler!(
+function _batched_nuts_kernel_transition_phase!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSMergeKernelProgram,
-    model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
-    args,
-    constraints,
-    step_size::Float64,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
+    frame::BatchedNUTSMergeKernelFrame,
+    execution::BatchedNUTSKernelExecutionState,
 )
-    frame = program.frame
-    state = frame.state
-    descriptor = state.descriptor
-    _load_batched_nuts_control_block!(workspace, descriptor.block)
-    any_active = _activate_batched_nuts_subtree_merge_cohort!(workspace, descriptor.block)
-    if any_active
-        _merge_batched_nuts_subtree_cohort!(
-            workspace,
-            frame,
-            inverse_mass_matrix,
-            rng,
-        )
-    end
     workspace.control.scheduler.phase = NUTSSchedulerDone
     workspace.control.scheduler.remaining_steps = 0
-    return true
+    return workspace
 end
 
-function _step_batched_nuts_subtree_scheduler!(
+function _batched_nuts_kernel_transition_phase!(
     workspace::BatchedNUTSWorkspace,
-    program::BatchedNUTSDoneKernelProgram,
-    model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
-    args,
-    constraints,
-    step_size::Float64,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
+    frame::Union{BatchedNUTSIdleKernelFrame,BatchedNUTSDoneKernelFrame},
+    execution::BatchedNUTSKernelExecutionState,
 )
-    frame = program.frame
-    _load_batched_nuts_control_block!(workspace, frame.state.descriptor.block)
-    return false
+    return workspace
 end
 
 function _load_batched_nuts_first_states!(

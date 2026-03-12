@@ -1732,7 +1732,13 @@ using UncertainTea
     expand_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test expand_program isa UncertainTea.BatchedNUTSExpandKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(expand_program) ==
-        (:reload_control, :leapfrog, :hamiltonian, :advance, :transition_phase)
+        (
+            UncertainTea.NUTSKernelReloadControl,
+            UncertainTea.NUTSKernelLeapfrog,
+            UncertainTea.NUTSKernelHamiltonian,
+            UncertainTea.NUTSKernelAdvance,
+            UncertainTea.NUTSKernelTransitionPhase,
+        )
     while gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1795,7 +1801,12 @@ using UncertainTea
     merge_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test merge_program isa UncertainTea.BatchedNUTSMergeKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(merge_program) ==
-        (:reload_control, :activate_merge, :merge, :transition_phase)
+        (
+            UncertainTea.NUTSKernelReloadControl,
+            UncertainTea.NUTSKernelActivateMerge,
+            UncertainTea.NUTSKernelMerge,
+            UncertainTea.NUTSKernelTransitionPhase,
+        )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1825,7 +1836,8 @@ using UncertainTea
     @test done_frame isa UncertainTea.BatchedNUTSDoneKernelFrame
     done_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test done_program isa UncertainTea.BatchedNUTSDoneKernelProgram
-    @test UncertainTea._batched_nuts_kernel_ops(done_program) == (:reload_control,)
+    @test UncertainTea._batched_nuts_kernel_ops(done_program) ==
+        (UncertainTea.NUTSKernelReloadControl,)
     @test gaussian_cohort_scheduler_workspace.control.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
         BitVector([true, true, true])
