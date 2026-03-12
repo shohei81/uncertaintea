@@ -195,7 +195,9 @@ for dynamic trajectory building:
   dispatches through that IR shape instead of branching directly on the raw
   phase enum; `ExpandIR` and `MergeIR` now also reload the scheduler's active
   masks and sampled directions from the IR payload before executing, via an
-  explicit executable control-block layer built from each IR snapshot
+  explicit executable control-block layer built from each IR snapshot; the
+  scheduler now then derives a 1-step descriptor from that block so the
+  phase-local scratch masks used by expand/merge are explicit as well
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
