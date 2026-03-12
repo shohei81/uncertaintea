@@ -153,6 +153,9 @@ for dynamic trajectory building:
 - the scalar NUTS proposal return path now uses the same acceptance/energy/move
   summary helper family, so diagnostics math is aligned between single-chain
   and batched implementations
+- both paths now treat continuation proposal energy and energy error as
+  source-of-truth state, so the final epilogue mostly copies precomputed
+  diagnostics instead of recomputing Hamiltonians again
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

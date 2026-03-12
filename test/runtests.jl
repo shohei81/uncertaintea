@@ -1256,6 +1256,18 @@ using UncertainTea
     @test gaussian_nuts_workspace.left_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].left.logjoint atol=1e-8
     @test gaussian_nuts_workspace.right_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].right.logjoint atol=1e-8
     @test gaussian_nuts_workspace.continuation_proposal_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].proposal.logjoint atol=1e-8
+    @test gaussian_nuts_workspace.continuation_proposed_energy[1] ≈
+        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
+    @test gaussian_nuts_workspace.continuation_delta_energy[1] ≈
+        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
+    gaussian_nuts_summary = UncertainTea._nuts_proposal_summary(
+        gaussian_nuts_workspace.column_continuation_states[1],
+        gaussian_batch_params[:, 1],
+    )
+    @test gaussian_nuts_summary[2] ≈
+        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
+    @test gaussian_nuts_summary[3] ≈
+        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
     gaussian_nuts_workspace.step_direction .= [1, -1, 1]
     subtree_active = BitVector([true, true, false])
     UncertainTea._initialize_batched_nuts_subtree_states!(gaussian_nuts_workspace, subtree_active)
@@ -1473,6 +1485,8 @@ using UncertainTea
     )
     @test gaussian_finalized_nuts_workspace.proposed_logjoint ≈
         gaussian_finalized_nuts_workspace.continuation_proposal_logjoint atol=1e-8
+    @test gaussian_finalized_nuts_workspace.proposed_energy ≈
+        gaussian_finalized_nuts_workspace.continuation_proposed_energy atol=1e-8
     @test gaussian_finalized_nuts_workspace.accept_prob ≈
         UncertainTea._mean_acceptance_stats!(
             similar(gaussian_finalized_nuts_workspace.accept_prob),
@@ -1480,11 +1494,7 @@ using UncertainTea
             gaussian_finalized_nuts_workspace.continuation_accept_stat_count,
         ) atol=1e-8
     @test gaussian_finalized_nuts_workspace.energy_error ≈
-        UncertainTea._energy_errors!(
-            similar(gaussian_finalized_nuts_workspace.energy_error),
-            gaussian_finalized_nuts_workspace.proposed_energy,
-            gaussian_finalized_nuts_workspace.current_energy,
-        ) atol=1e-8
+        gaussian_finalized_nuts_workspace.continuation_delta_energy atol=1e-8
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

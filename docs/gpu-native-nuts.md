@@ -84,7 +84,9 @@ The current CPU NUTS path is intentionally narrow:
   step now uses the same batch-owned load/restore helpers before the remaining
   chain-local selection logic runs; the final proposal summary path now also
   uses batch helpers for energy, acceptance, and moved-state aggregation, while
-  the scalar reference path now shares the same summary formulas
+  the scalar reference path now shares the same summary formulas, and both
+  paths now keep proposal energy/error as continuation-state data rather than
+  recomputing them at the very end
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

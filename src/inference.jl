@@ -144,6 +144,8 @@ mutable struct NUTSContinuationState{L<:NUTSState,R<:NUTSState,P<:NUTSState}
     left::L
     right::R
     proposal::P
+    proposal_energy::Float64
+    proposal_energy_error::Float64
     log_weight::Float64
     accept_stat_sum::Float64
     accept_stat_count::Int
@@ -346,6 +348,8 @@ function BatchedNUTSWorkspace(
             NUTSState(view(left_position, :, chain_index), view(left_momentum, :, chain_index), 0.0, view(left_gradient, :, chain_index)),
             NUTSState(view(right_position, :, chain_index), view(right_momentum, :, chain_index), 0.0, view(right_gradient, :, chain_index)),
             _batched_nuts_state(proposal_position, proposal_momentum, proposed_logjoint, proposal_gradient, chain_index),
+            Inf,
+            Inf,
             -Inf,
             0.0,
             0,
@@ -1401,17 +1405,16 @@ function _position_moved(
 end
 
 function _nuts_proposal_summary(
-    proposal_state::NUTSState,
+    continuation::NUTSContinuationState,
     current_position::AbstractVector,
-    current_energy::Float64,
-    accept_stat_sum::Float64,
-    accept_stat_count::Int,
-    inverse_mass_matrix::AbstractVector,
 )
-    proposed_energy = _hamiltonian(proposal_state.logjoint, proposal_state.momentum, inverse_mass_matrix)
-    energy_error = proposed_energy - current_energy
-    accept_stat = _mean_acceptance_stat(accept_stat_sum, accept_stat_count)
-    moved = _position_moved(proposal_state.position, current_position)
+    proposed_energy = continuation.proposal_energy
+    energy_error = continuation.proposal_energy_error
+    accept_stat = _mean_acceptance_stat(
+        continuation.accept_stat_sum,
+        continuation.accept_stat_count,
+    )
+    moved = _position_moved(continuation.proposal.position, current_position)
     return accept_stat, proposed_energy, energy_error, moved
 end
 
@@ -1440,11 +1443,10 @@ end
 function _finalize_batched_nuts_proposals!(
     workspace::BatchedNUTSWorkspace,
     position::AbstractMatrix,
-    inverse_mass_matrix::AbstractVector,
 )
     copyto!(workspace.proposed_logjoint, workspace.continuation_proposal_logjoint)
-    _batched_hamiltonian!(workspace.proposed_energy, workspace.proposed_logjoint, workspace.proposal_momentum, inverse_mass_matrix)
-    _energy_errors!(workspace.energy_error, workspace.proposed_energy, workspace.current_energy)
+    copyto!(workspace.proposed_energy, workspace.continuation_proposed_energy)
+    copyto!(workspace.energy_error, workspace.continuation_delta_energy)
     _mean_acceptance_stats!(
         workspace.accept_prob,
         workspace.continuation_accept_stat_sum,
@@ -1746,6 +1748,8 @@ function _initialize_nuts_continuation!(
     left::NUTSState,
     right::NUTSState,
     proposal::NUTSState,
+    proposal_energy::Float64,
+    proposal_energy_error::Float64,
     log_weight::Float64,
     accept_stat_sum::Float64,
     accept_stat_count::Int,
@@ -1757,6 +1761,8 @@ function _initialize_nuts_continuation!(
     _copyto_nuts_state!(continuation.left, left)
     _copyto_nuts_state!(continuation.right, right)
     _copyto_nuts_state!(continuation.proposal, proposal)
+    continuation.proposal_energy = proposal_energy
+    continuation.proposal_energy_error = proposal_energy_error
     continuation.log_weight = log_weight
     continuation.accept_stat_sum = accept_stat_sum
     continuation.accept_stat_count = accept_stat_count
@@ -1783,6 +1789,8 @@ function _initialize_nuts_first_step!(
         current_state,
         current_state,
         current_state,
+        initial_hamiltonian,
+        0.0,
         -initial_hamiltonian,
         0.0,
         0,
@@ -1815,6 +1823,8 @@ function _initialize_nuts_first_step!(
     moved = log(rand(rng)) < candidate_log_weight - combined_log_weight
     if moved
         _copyto_nuts_state!(continuation.proposal, proposed_state)
+        continuation.proposal_energy = proposed_hamiltonian
+        continuation.proposal_energy_error = delta_energy
     end
     continuation.log_weight = combined_log_weight
     continuation.turning = _is_turning(
@@ -1865,14 +1875,16 @@ function _initialize_batched_nuts_first_step!(
     _copyto_nuts_state!(continuation.left, current_state)
     _copyto_nuts_state!(continuation.right, current_state)
     _copyto_nuts_state!(continuation.proposal, current_state)
+    continuation.proposal_energy = initial_hamiltonian
+    continuation.proposal_energy_error = 0.0
     workspace.left_logjoint[chain_index] = current_state.logjoint
     workspace.right_logjoint[chain_index] = current_state.logjoint
     workspace.continuation_proposal_logjoint[chain_index] = current_state.logjoint
     workspace.continuation_log_weight[chain_index] = -initial_hamiltonian
     workspace.continuation_accept_stat_sum[chain_index] = 0.0
     workspace.continuation_accept_stat_count[chain_index] = 0
-    workspace.continuation_proposed_energy[chain_index] = Inf
-    workspace.continuation_delta_energy[chain_index] = Inf
+    workspace.continuation_proposed_energy[chain_index] = initial_hamiltonian
+    workspace.continuation_delta_energy[chain_index] = 0.0
     workspace.continuation_accept_prob[chain_index] = 0.0
     workspace.continuation_candidate_log_weight[chain_index] = -Inf
     workspace.continuation_combined_log_weight[chain_index] = -Inf
@@ -1919,6 +1931,8 @@ function _initialize_batched_nuts_first_step!(
     moved = workspace.continuation_select_proposal[chain_index]
     if moved
         _copyto_nuts_state!(continuation.proposal, proposed_state)
+        continuation.proposal_energy = workspace.continuation_proposed_energy[chain_index]
+        continuation.proposal_energy_error = delta_energy
         workspace.continuation_proposal_logjoint[chain_index] = proposed_state.logjoint
     end
     workspace.continuation_log_weight[chain_index] = workspace.continuation_combined_log_weight[chain_index]
@@ -1941,7 +1955,7 @@ end
 
 function NUTSContinuationState(num_params::Int)
     state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
-    return NUTSContinuationState(state(), state(), state(), -Inf, 0.0, 0, 0, 0, false, false)
+    return NUTSContinuationState(state(), state(), state(), Inf, Inf, -Inf, 0.0, 0, 0, 0, false, false)
 end
 
 function _logaddexp(x::Float64, y::Float64)
@@ -2308,6 +2322,13 @@ function _continue_nuts_proposal!(
             combined_log_weight = _logaddexp(continuation.log_weight, subtree.log_weight)
             if log(rand(rng)) < subtree.log_weight - combined_log_weight
                 _copyto_nuts_state!(proposal, tree_workspace.proposal)
+                continuation.proposal_energy = _hamiltonian(
+                    tree_workspace.proposal.logjoint,
+                    tree_workspace.proposal.momentum,
+                    inverse_mass_matrix,
+                )
+                continuation.proposal_energy_error =
+                    continuation.proposal_energy - initial_hamiltonian
             end
             continuation.log_weight = combined_log_weight
         end
@@ -2378,6 +2399,16 @@ function _continue_batched_nuts_proposal!(
             combined_log_weight = _logaddexp(workspace.continuation_log_weight[chain_index], subtree.log_weight)
             if log(rand(rng)) < subtree.log_weight - combined_log_weight
                 _copyto_nuts_state!(proposal, tree_workspace.proposal)
+                continuation.proposal_energy = _hamiltonian(
+                    tree_workspace.proposal.logjoint,
+                    tree_workspace.proposal.momentum,
+                    inverse_mass_matrix,
+                )
+                continuation.proposal_energy_error =
+                    continuation.proposal_energy - initial_hamiltonian
+                workspace.continuation_proposed_energy[chain_index] = continuation.proposal_energy
+                workspace.continuation_delta_energy[chain_index] =
+                    continuation.proposal_energy_error
                 workspace.continuation_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
             end
             workspace.continuation_log_weight[chain_index] = combined_log_weight
@@ -2616,7 +2647,18 @@ function _continue_batched_nuts_batched_subtree!(
                 log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
                 workspace.continuation_combined_log_weight[chain_index]
             if workspace.continuation_select_proposal[chain_index]
+                continuation.proposal_energy = _hamiltonian(
+                    workspace.tree_proposal_logjoint[chain_index],
+                    view(workspace.tree_proposal_momentum, :, chain_index),
+                    inverse_mass_matrix,
+                )
+                continuation.proposal_energy_error =
+                    continuation.proposal_energy - workspace.current_energy[chain_index]
                 workspace.continuation_proposal_logjoint[chain_index] = workspace.tree_proposal_logjoint[chain_index]
+                workspace.continuation_proposed_energy[chain_index] =
+                    continuation.proposal_energy
+                workspace.continuation_delta_energy[chain_index] =
+                    continuation.proposal_energy_error
             end
             workspace.continuation_log_weight[chain_index] = workspace.continuation_combined_log_weight[chain_index]
         end
@@ -2705,12 +2747,8 @@ function _nuts_proposal(
         rng,
     )
     accept_stat, proposed_energy, energy_error, moved = _nuts_proposal_summary(
-        continuation.proposal,
+        continuation,
         position,
-        initial_hamiltonian,
-        continuation.accept_stat_sum,
-        continuation.accept_stat_count,
-        inverse_mass_matrix,
     )
     return continuation.proposal, accept_stat, continuation.tree_depth, continuation.integration_steps, proposed_energy, energy_error, continuation.divergent, moved
 end
@@ -2773,7 +2811,7 @@ function _batched_nuts_proposals!(
             rng,
         )
     end
-    _finalize_batched_nuts_proposals!(workspace, position, inverse_mass_matrix)
+    _finalize_batched_nuts_proposals!(workspace, position)
     return workspace
 end
 
@@ -2840,6 +2878,8 @@ function _initialize_batched_nuts_continuations!(
     copyto!(workspace.left_logjoint, current_logjoint)
     copyto!(workspace.right_logjoint, current_logjoint)
     copyto!(workspace.continuation_proposal_logjoint, current_logjoint)
+    copyto!(workspace.continuation_proposed_energy, workspace.current_energy)
+    fill!(workspace.continuation_delta_energy, 0.0)
     _load_batched_nuts_first_states!(workspace, position, current_logjoint, current_gradient, trues(num_chains))
 
     for chain_index in 1:num_chains
