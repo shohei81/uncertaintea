@@ -28,8 +28,25 @@
         gaussian_cohort_scheduler_workspace,
         merge_state,
     ).state === merge_state
+    merge_access = UncertainTea._batched_nuts_kernel_access(
+        gaussian_cohort_scheduler_workspace,
+        merge_frame,
+    )
+    @test merge_access isa UncertainTea.BatchedNUTSMergeKernelAccess
+    @test merge_access.block === merge_frame.state.descriptor.block
+    @test merge_access.select_proposal ===
+        gaussian_cohort_scheduler_workspace.continuation_select_proposal
+    @test merge_access.left_position === gaussian_cohort_scheduler_workspace.left_position
+    @test merge_access.right_position === gaussian_cohort_scheduler_workspace.right_position
+    @test merge_access.proposal_position === gaussian_cohort_scheduler_workspace.proposal_position
+    @test merge_access.continuation_log_weight ===
+        gaussian_cohort_scheduler_workspace.continuation_log_weight
     merge_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test merge_program isa UncertainTea.BatchedNUTSMergeKernelProgram
+    @test UncertainTea._batched_nuts_kernel_access(merge_program) isa
+        UncertainTea.BatchedNUTSMergeKernelAccess
+    @test UncertainTea._batched_nuts_kernel_access(merge_program).left_position ===
+        merge_access.left_position
     @test UncertainTea._batched_nuts_kernel_ops(merge_program) ==
         (
             UncertainTea.NUTSKernelReloadControl,
@@ -71,8 +88,18 @@
     @test done_state isa UncertainTea.BatchedNUTSDoneStepState
     done_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
     @test done_frame isa UncertainTea.BatchedNUTSDoneKernelFrame
-    done_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
+    done_access = UncertainTea._batched_nuts_kernel_access(
+        gaussian_cohort_scheduler_workspace,
+        done_frame,
+    )
+    @test done_access isa UncertainTea.BatchedNUTSDoneKernelAccess
+    @test done_access.block === done_frame.state.descriptor.block
+    done_program = UncertainTea._batched_nuts_kernel_program(
+        gaussian_cohort_scheduler_workspace,
+        done_access,
+    )
     @test done_program isa UncertainTea.BatchedNUTSDoneKernelProgram
+    @test UncertainTea._batched_nuts_kernel_access(done_program).block === done_access.block
     @test UncertainTea._batched_nuts_kernel_ops(done_program) ==
         (UncertainTea.NUTSKernelReloadControl,)
     @test typeof.(UncertainTea._batched_nuts_kernel_steps(done_program)) ==
@@ -139,17 +166,34 @@
         expand_direct_state,
     )
     @test expand_direct_frame isa UncertainTea.BatchedNUTSExpandKernelFrame
-    expand_direct_program = UncertainTea._batched_nuts_kernel_program(
+    expand_direct_access = UncertainTea._batched_nuts_kernel_access(
         gaussian_expand_ir_workspace,
         expand_direct_frame,
     )
+    @test expand_direct_access isa UncertainTea.BatchedNUTSExpandKernelAccess
+    @test expand_direct_access.block === expand_direct_frame.state.descriptor.block
+    @test expand_direct_access.copy_left === gaussian_expand_ir_workspace.subtree_copy_left
+    @test expand_direct_access.copy_right === gaussian_expand_ir_workspace.subtree_copy_right
+    @test expand_direct_access.select_proposal ===
+        gaussian_expand_ir_workspace.subtree_select_proposal
+    @test expand_direct_access.current_position ===
+        gaussian_expand_ir_workspace.tree_current_position
+    @test expand_direct_access.next_position === gaussian_expand_ir_workspace.tree_next_position
+    @test expand_direct_access.proposed_energy ===
+        gaussian_expand_ir_workspace.subtree_proposed_energy
+    expand_direct_program = UncertainTea._batched_nuts_kernel_program(
+        gaussian_expand_ir_workspace,
+        expand_direct_access,
+    )
     @test expand_direct_program isa UncertainTea.BatchedNUTSExpandKernelProgram
+    @test UncertainTea._batched_nuts_kernel_access(expand_direct_program).next_position ===
+        expand_direct_access.next_position
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
     fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_expand_ir_workspace,
-        expand_direct_program,
+        expand_direct_access,
         gaussian_mean,
         [1.0],
         (),
@@ -219,17 +263,30 @@
         merge_direct_state,
     )
     @test merge_direct_frame isa UncertainTea.BatchedNUTSMergeKernelFrame
-    merge_direct_program = UncertainTea._batched_nuts_kernel_program(
+    merge_direct_access = UncertainTea._batched_nuts_kernel_access(
         gaussian_merge_ir_workspace,
         merge_direct_frame,
     )
+    @test merge_direct_access isa UncertainTea.BatchedNUTSMergeKernelAccess
+    @test merge_direct_access.block === merge_direct_frame.state.descriptor.block
+    @test merge_direct_access.select_proposal ===
+        gaussian_merge_ir_workspace.continuation_select_proposal
+    @test merge_direct_access.left_position === gaussian_merge_ir_workspace.left_position
+    @test merge_direct_access.tree_proposal_position ===
+        gaussian_merge_ir_workspace.tree_proposal_position
+    merge_direct_program = UncertainTea._batched_nuts_kernel_program(
+        gaussian_merge_ir_workspace,
+        merge_direct_access,
+    )
     @test merge_direct_program isa UncertainTea.BatchedNUTSMergeKernelProgram
+    @test UncertainTea._batched_nuts_kernel_access(merge_direct_program).proposal_position ===
+        merge_direct_access.proposal_position
     merge_tree_depths = copy(gaussian_merge_ir_workspace.control.tree_depths)
     fill!(gaussian_merge_ir_workspace.control.scheduler.subtree_started, false)
     fill!(gaussian_merge_ir_workspace.subtree_active, false)
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_merge_ir_workspace,
-        merge_direct_program,
+        merge_direct_access,
         gaussian_mean,
         [1.0],
         (),
@@ -419,4 +476,3 @@
     @test robust_variance_state.mean[1] < 1.0
     @test robust_variance_state.m2[1] < 1.0
     @test UncertainTea._inverse_mass_matrix(robust_variance_state, 1e-3)[1] > 1.0
-

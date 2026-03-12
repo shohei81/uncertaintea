@@ -612,7 +612,7 @@ function _batched_nuts_kernel_program(
 )
     return _batched_nuts_kernel_program(
         workspace,
-        _batched_nuts_kernel_frame(workspace),
+        _batched_nuts_kernel_access(workspace),
     )
 end
 
@@ -620,28 +620,40 @@ function _batched_nuts_kernel_program(
     workspace::BatchedNUTSWorkspace,
     frame::BatchedNUTSIdleKernelFrame,
 )
-    return BatchedNUTSIdleKernelProgram(frame, _BATCHED_NUTS_IDLE_KERNEL_OPS)
+    return _batched_nuts_kernel_program(
+        workspace,
+        _batched_nuts_kernel_access(workspace, frame),
+    )
 end
 
 function _batched_nuts_kernel_program(
     workspace::BatchedNUTSWorkspace,
     frame::BatchedNUTSExpandKernelFrame,
 )
-    return BatchedNUTSExpandKernelProgram(frame, _BATCHED_NUTS_EXPAND_KERNEL_OPS)
+    return _batched_nuts_kernel_program(
+        workspace,
+        _batched_nuts_kernel_access(workspace, frame),
+    )
 end
 
 function _batched_nuts_kernel_program(
     workspace::BatchedNUTSWorkspace,
     frame::BatchedNUTSMergeKernelFrame,
 )
-    return BatchedNUTSMergeKernelProgram(frame, _BATCHED_NUTS_MERGE_KERNEL_OPS)
+    return _batched_nuts_kernel_program(
+        workspace,
+        _batched_nuts_kernel_access(workspace, frame),
+    )
 end
 
 function _batched_nuts_kernel_program(
     workspace::BatchedNUTSWorkspace,
     frame::BatchedNUTSDoneKernelFrame,
 )
-    return BatchedNUTSDoneKernelProgram(frame, _BATCHED_NUTS_DONE_KERNEL_OPS)
+    return _batched_nuts_kernel_program(
+        workspace,
+        _batched_nuts_kernel_access(workspace, frame),
+    )
 end
 
 _batched_nuts_kernel_ops(program::AbstractBatchedNUTSKernelProgram) = program.ops
@@ -739,4 +751,3 @@ function _load_batched_nuts_control_block!(
 )
     return _load_batched_nuts_control_ir!(workspace, block.ir)
 end
-

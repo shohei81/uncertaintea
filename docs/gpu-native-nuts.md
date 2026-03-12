@@ -111,8 +111,10 @@ The current CPU NUTS path is intentionally narrow:
   path now also makes the phase-local numeric energy/log-weight scratch
   explicit as a step-state object layered on top, and then exposes the
   concrete numeric matrix/vector buffers for one subtree step as a kernel
-  frame built from that state, plus a small kernel-program wrapper with a
-  fixed per-phase op sequence whose execution now runs through
+  frame built from that state, then flattens that frame into a phase-local
+  kernel-access object whose fields directly name the buffers touched by the
+  step, plus a small kernel-program wrapper with a fixed per-phase op sequence
+  whose execution now runs through
   phase-specialized program handlers instead of a single generic op loop, with
   a typed primitive-step table underneath each phase program
 - per-chain current/next subtree scratch for the remaining CPU reference tree

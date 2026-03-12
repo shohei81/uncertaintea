@@ -1,16 +1,14 @@
 function _advance_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     inverse_mass_matrix::Vector{Float64},
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    state = frame.state
-    descriptor = state.descriptor
     any_active = false
-    fill!(descriptor.copy_left, false)
-    fill!(descriptor.copy_right, false)
-    fill!(descriptor.select_proposal, false)
+    fill!(access.copy_left, false)
+    fill!(access.copy_right, false)
+    fill!(access.select_proposal, false)
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] || continue
         tree_workspace = workspace.column_tree_workspaces[chain_index]
@@ -21,93 +19,97 @@ function _advance_batched_nuts_subtree_cohort!(
             continue
         end
 
-        frame.current_logjoint[chain_index] = frame.proposed_logjoint[chain_index]
-        tree_workspace.next.logjoint = frame.proposed_logjoint[chain_index]
+        access.current_logjoint[chain_index] = access.proposed_logjoint[chain_index]
+        tree_workspace.next.logjoint = access.proposed_logjoint[chain_index]
         _copyto_nuts_state!(tree_workspace.current, tree_workspace.next)
         workspace.subtree_integration_steps[chain_index] += 1
 
         if workspace.control.step_direction[chain_index] < 0
-            descriptor.copy_left[chain_index] = true
-            frame.left_logjoint[chain_index] = frame.current_logjoint[chain_index]
+            access.copy_left[chain_index] = true
+            access.left_logjoint[chain_index] = access.current_logjoint[chain_index]
         else
-            descriptor.copy_right[chain_index] = true
-            frame.right_logjoint[chain_index] = frame.current_logjoint[chain_index]
+            access.copy_right[chain_index] = true
+            access.right_logjoint[chain_index] = access.current_logjoint[chain_index]
         end
 
-        delta_energy = state.proposed_energy[chain_index] - frame.current_energy[chain_index]
-        state.delta_energy[chain_index] = delta_energy
+        delta_energy = access.proposed_energy[chain_index] - access.current_energy[chain_index]
+        access.delta_energy[chain_index] = delta_energy
         if !isfinite(delta_energy) || delta_energy > max_delta_energy
             workspace.subtree_divergent[chain_index] = true
             workspace.subtree_active[chain_index] = false
             continue
         end
 
-        state.accept_prob[chain_index] = min(1.0, exp(min(0.0, -delta_energy)))
-        workspace.subtree_accept_stat_sum[chain_index] += state.accept_prob[chain_index]
+        access.accept_prob[chain_index] = min(1.0, exp(min(0.0, -delta_energy)))
+        workspace.subtree_accept_stat_sum[chain_index] += access.accept_prob[chain_index]
         workspace.subtree_accept_stat_count[chain_index] += 1
-        state.candidate_log_weight[chain_index] = -state.proposed_energy[chain_index]
-        state.combined_log_weight[chain_index] = _logaddexp(
-            state.log_weight[chain_index],
-            state.candidate_log_weight[chain_index],
+        access.candidate_log_weight[chain_index] = -access.proposed_energy[chain_index]
+        access.combined_log_weight[chain_index] = _logaddexp(
+            access.log_weight[chain_index],
+            access.candidate_log_weight[chain_index],
         )
-        if !isfinite(state.log_weight[chain_index]) || log(rand(rng)) <
-            state.candidate_log_weight[chain_index] -
-            state.combined_log_weight[chain_index]
-            descriptor.select_proposal[chain_index] = true
-            frame.proposal_logjoint[chain_index] = frame.current_logjoint[chain_index]
-            state.proposal_energy[chain_index] = state.proposed_energy[chain_index]
-            state.proposal_energy_error[chain_index] = delta_energy
+        if !isfinite(access.log_weight[chain_index]) || log(rand(rng)) <
+            access.candidate_log_weight[chain_index] -
+            access.combined_log_weight[chain_index]
+            access.select_proposal[chain_index] = true
+            access.proposal_logjoint[chain_index] = access.current_logjoint[chain_index]
+            access.proposal_energy[chain_index] = access.proposed_energy[chain_index]
+            access.proposal_energy_error[chain_index] = delta_energy
         end
-        state.log_weight[chain_index] = state.combined_log_weight[chain_index]
+        access.log_weight[chain_index] = access.combined_log_weight[chain_index]
     end
 
     _copy_masked_nuts_buffers!(
-        frame.left_position,
-        frame.left_momentum,
-        frame.left_gradient,
-        frame.current_position,
-        frame.current_momentum,
-        frame.current_gradient,
-        descriptor.copy_left,
+        access.left_position,
+        access.left_momentum,
+        access.left_gradient,
+        access.current_position,
+        access.current_momentum,
+        access.current_gradient,
+        access.copy_left,
     )
     _copy_masked_nuts_buffers!(
-        frame.right_position,
-        frame.right_momentum,
-        frame.right_gradient,
-        frame.current_position,
-        frame.current_momentum,
-        frame.current_gradient,
-        descriptor.copy_right,
+        access.right_position,
+        access.right_momentum,
+        access.right_gradient,
+        access.current_position,
+        access.current_momentum,
+        access.current_gradient,
+        access.copy_right,
     )
     _copy_masked_nuts_buffers!(
-        frame.proposal_position,
-        frame.proposal_momentum,
-        frame.proposal_gradient,
-        frame.current_position,
-        frame.current_momentum,
-        frame.current_gradient,
-        descriptor.select_proposal,
+        access.proposal_position,
+        access.proposal_momentum,
+        access.proposal_gradient,
+        access.current_position,
+        access.current_momentum,
+        access.current_gradient,
+        access.select_proposal,
     )
-    _copy_masked_values!(frame.proposal_logjoint, frame.current_logjoint, descriptor.select_proposal)
+    _copy_masked_values!(
+        access.proposal_logjoint,
+        access.current_logjoint,
+        access.select_proposal,
+    )
     _sync_batched_tree_logjoint!(
         workspace,
         workspace.subtree_active .|
-        descriptor.copy_left .|
-        descriptor.copy_right .|
-        descriptor.select_proposal,
+        access.copy_left .|
+        access.copy_right .|
+        access.select_proposal,
     )
 
     _batched_is_turning!(
-        descriptor.turning,
-        frame.left_position,
-        frame.right_position,
-        frame.left_momentum,
-        frame.right_momentum,
+        access.turning,
+        access.left_position,
+        access.right_position,
+        access.left_momentum,
+        access.right_momentum,
         workspace.subtree_active,
     )
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] =
-            workspace.subtree_active[chain_index] && !descriptor.turning[chain_index]
+            workspace.subtree_active[chain_index] && !access.turning[chain_index]
         any_active |= workspace.subtree_active[chain_index]
     end
     return any_active
@@ -167,69 +169,67 @@ end
 
 function _merge_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSMergeKernelFrame,
+    access::BatchedNUTSMergeKernelAccess,
     inverse_mass_matrix::Vector{Float64},
     rng::AbstractRNG,
 )
-    state = frame.state
-    descriptor = state.descriptor
     _merge_batched_nuts_continuation_frontiers!(workspace, workspace.subtree_active)
     _batched_is_turning!(
-        descriptor.merged_turning,
-        frame.left_position,
-        frame.right_position,
-        frame.left_momentum,
-        frame.right_momentum,
+        access.merged_turning,
+        access.left_position,
+        access.right_position,
+        access.left_momentum,
+        access.right_momentum,
         workspace.subtree_active,
     )
 
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] || continue
-        descriptor.select_proposal[chain_index] = false
-        state.candidate_log_weight[chain_index] = -Inf
-        state.combined_log_weight[chain_index] =
-            frame.continuation_log_weight[chain_index]
+        access.select_proposal[chain_index] = false
+        access.candidate_log_weight[chain_index] = -Inf
+        access.combined_log_weight[chain_index] =
+            access.continuation_log_weight[chain_index]
         if isfinite(workspace.subtree_log_weight[chain_index])
-            state.candidate_log_weight[chain_index] =
+            access.candidate_log_weight[chain_index] =
                 workspace.subtree_log_weight[chain_index]
-            state.combined_log_weight[chain_index] = _logaddexp(
-                frame.continuation_log_weight[chain_index],
-                state.candidate_log_weight[chain_index],
+            access.combined_log_weight[chain_index] = _logaddexp(
+                access.continuation_log_weight[chain_index],
+                access.candidate_log_weight[chain_index],
             )
-            descriptor.select_proposal[chain_index] =
-                log(rand(rng)) < state.candidate_log_weight[chain_index] -
-                state.combined_log_weight[chain_index]
-            if descriptor.select_proposal[chain_index]
-                state.proposal_energy[chain_index] = _hamiltonian(
-                    frame.tree_proposal_logjoint[chain_index],
-                    view(frame.tree_proposal_momentum, :, chain_index),
+            access.select_proposal[chain_index] =
+                log(rand(rng)) < access.candidate_log_weight[chain_index] -
+                access.combined_log_weight[chain_index]
+            if access.select_proposal[chain_index]
+                access.proposal_energy[chain_index] = _hamiltonian(
+                    access.tree_proposal_logjoint[chain_index],
+                    view(access.tree_proposal_momentum, :, chain_index),
                     inverse_mass_matrix,
                 )
-                state.proposal_energy_error[chain_index] =
-                    state.proposal_energy[chain_index] -
-                    frame.current_energy[chain_index]
+                access.proposal_energy_error[chain_index] =
+                    access.proposal_energy[chain_index] -
+                    access.current_energy[chain_index]
             end
         end
         _merge_batched_subtree_summary!(workspace, chain_index)
     end
 
     _copy_masked_nuts_buffers!(
-        frame.proposal_position,
-        frame.proposal_momentum,
-        frame.proposal_gradient,
-        frame.tree_proposal_position,
-        frame.tree_proposal_momentum,
-        frame.tree_proposal_gradient,
-        descriptor.select_proposal,
+        access.proposal_position,
+        access.proposal_momentum,
+        access.proposal_gradient,
+        access.tree_proposal_position,
+        access.tree_proposal_momentum,
+        access.tree_proposal_gradient,
+        access.select_proposal,
     )
     _copy_masked_values!(
-        frame.proposed_logjoint,
-        frame.continuation_proposal_logjoint,
-        descriptor.select_proposal,
+        access.proposed_logjoint,
+        access.continuation_proposal_logjoint,
+        access.select_proposal,
     )
     _sync_batched_continuation_logjoint!(
         workspace,
-        workspace.subtree_active .| descriptor.select_proposal,
+        workspace.subtree_active .| access.select_proposal,
     )
     return workspace
 end
@@ -359,6 +359,30 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
+    access::AbstractBatchedNUTSKernelAccess,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    return _step_batched_nuts_subtree_scheduler!(
+        workspace,
+        _batched_nuts_kernel_program(workspace, access),
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
     frame::AbstractBatchedNUTSKernelFrame,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -370,7 +394,7 @@ function _step_batched_nuts_subtree_scheduler!(
 )
     return _step_batched_nuts_subtree_scheduler!(
         workspace,
-        _batched_nuts_kernel_program(workspace, frame),
+        _batched_nuts_kernel_access(workspace, frame),
         model,
         inverse_mass_matrix,
         args,
@@ -421,7 +445,7 @@ function _execute_batched_nuts_kernel_program!(
     for step in _batched_nuts_kernel_steps(program)
         _execute_batched_nuts_kernel_step!(
             workspace,
-            program.frame,
+            _batched_nuts_kernel_access(program),
             step,
             execution,
             model,
@@ -438,7 +462,7 @@ end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::AbstractBatchedNUTSKernelFrame,
+    access::AbstractBatchedNUTSKernelAccess,
     ::BatchedNUTSReloadControlStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -449,13 +473,13 @@ function _execute_batched_nuts_kernel_step!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _batched_nuts_kernel_reload_control!(workspace, frame)
+    _batched_nuts_kernel_reload_control!(workspace, access)
     return nothing
 end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     ::BatchedNUTSLeapfrogStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -468,7 +492,7 @@ function _execute_batched_nuts_kernel_step!(
 )
     _batched_nuts_kernel_leapfrog!(
         workspace,
-        frame,
+        access,
         model,
         inverse_mass_matrix,
         args,
@@ -480,7 +504,7 @@ end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     ::BatchedNUTSHamiltonianStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -491,13 +515,13 @@ function _execute_batched_nuts_kernel_step!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _batched_nuts_kernel_hamiltonian!(frame, inverse_mass_matrix)
+    _batched_nuts_kernel_hamiltonian!(access, inverse_mass_matrix)
     return nothing
 end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     ::BatchedNUTSAdvanceStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -510,7 +534,7 @@ function _execute_batched_nuts_kernel_step!(
 )
     execution.any_active = _advance_batched_nuts_subtree_cohort!(
         workspace,
-        frame,
+        access,
         inverse_mass_matrix,
         max_delta_energy,
         rng,
@@ -520,7 +544,7 @@ end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSMergeKernelFrame,
+    access::BatchedNUTSMergeKernelAccess,
     ::BatchedNUTSActivateMergeStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -533,14 +557,14 @@ function _execute_batched_nuts_kernel_step!(
 )
     execution.any_active = _activate_batched_nuts_subtree_merge_cohort!(
         workspace,
-        frame.state.descriptor.block,
+        access.block,
     )
     return nothing
 end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSMergeKernelFrame,
+    access::BatchedNUTSMergeKernelAccess,
     ::BatchedNUTSMergeStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -554,7 +578,7 @@ function _execute_batched_nuts_kernel_step!(
     execution.any_active || return nothing
     _merge_batched_nuts_subtree_cohort!(
         workspace,
-        frame,
+        access,
         inverse_mass_matrix,
         rng,
     )
@@ -563,7 +587,7 @@ end
 
 function _execute_batched_nuts_kernel_step!(
     workspace::BatchedNUTSWorkspace,
-    frame::AbstractBatchedNUTSKernelFrame,
+    access::AbstractBatchedNUTSKernelAccess,
     ::BatchedNUTSTransitionPhaseStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
@@ -574,64 +598,63 @@ function _execute_batched_nuts_kernel_step!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _batched_nuts_kernel_transition_phase!(workspace, frame, execution)
+    _batched_nuts_kernel_transition_phase!(workspace, access, execution)
     return nothing
 end
 
 function _batched_nuts_kernel_reload_control!(
     workspace::BatchedNUTSWorkspace,
-    frame::AbstractBatchedNUTSKernelFrame,
+    access::AbstractBatchedNUTSKernelAccess,
 )
-    _load_batched_nuts_control_block!(workspace, _batched_nuts_frame_control_block(frame))
+    _load_batched_nuts_control_block!(workspace, _batched_nuts_access_control_block(access))
     return workspace
 end
 
 function _batched_nuts_kernel_leapfrog!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
     constraints,
     step_size::Float64,
 )
-    descriptor = frame.state.descriptor
     _batched_nuts_leapfrog_step_to!(
         workspace,
         model,
-        frame.next_position,
-        frame.next_momentum,
-        frame.next_gradient,
-        frame.proposed_logjoint,
-        frame.current_position,
-        frame.current_momentum,
-        frame.current_gradient,
+        access.next_position,
+        access.next_momentum,
+        access.next_gradient,
+        access.proposed_logjoint,
+        access.current_position,
+        access.current_momentum,
+        access.current_gradient,
         inverse_mass_matrix,
         args,
         constraints,
         step_size,
-        descriptor.block.step_direction,
-        descriptor.block.active_chains,
+        access.block.step_direction,
+        access.block.active_chains,
     )
-    return frame
+    return access
 end
 
 function _batched_nuts_kernel_hamiltonian!(
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     inverse_mass_matrix::Vector{Float64},
 )
     _batched_hamiltonian!(
-        frame.state.proposed_energy,
-        frame.proposed_logjoint,
-        frame.next_momentum,
+        access.proposed_energy,
+        access.proposed_logjoint,
+        access.next_momentum,
         inverse_mass_matrix,
     )
-    return frame
+    return access
 end
 
 function _batched_nuts_kernel_transition_phase!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    access::BatchedNUTSExpandKernelAccess,
     execution::BatchedNUTSKernelExecutionState,
 )
     workspace.control.scheduler.remaining_steps -= 1
@@ -643,7 +666,7 @@ end
 
 function _batched_nuts_kernel_transition_phase!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSMergeKernelFrame,
+    access::BatchedNUTSMergeKernelAccess,
     execution::BatchedNUTSKernelExecutionState,
 )
     workspace.control.scheduler.phase = NUTSSchedulerDone
@@ -653,9 +676,8 @@ end
 
 function _batched_nuts_kernel_transition_phase!(
     workspace::BatchedNUTSWorkspace,
-    frame::Union{BatchedNUTSIdleKernelFrame,BatchedNUTSDoneKernelFrame},
+    access::Union{BatchedNUTSIdleKernelAccess,BatchedNUTSDoneKernelAccess},
     execution::BatchedNUTSKernelExecutionState,
 )
     return workspace
 end
-

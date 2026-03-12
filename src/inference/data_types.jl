@@ -361,6 +361,8 @@ struct BatchedNUTSDoneKernelFrame <: AbstractBatchedNUTSKernelFrame
     state::BatchedNUTSDoneStepState
 end
 
+abstract type AbstractBatchedNUTSKernelAccess end
+
 abstract type AbstractBatchedNUTSKernelProgram end
 
 @enum BatchedNUTSKernelOp::UInt8 begin
@@ -387,23 +389,23 @@ struct BatchedNUTSActivateMergeStep <: AbstractBatchedNUTSKernelStep end
 struct BatchedNUTSMergeStep <: AbstractBatchedNUTSKernelStep end
 struct BatchedNUTSTransitionPhaseStep <: AbstractBatchedNUTSKernelStep end
 
-struct BatchedNUTSIdleKernelProgram <: AbstractBatchedNUTSKernelProgram
-    frame::BatchedNUTSIdleKernelFrame
+struct BatchedNUTSIdleKernelProgram{A<:AbstractBatchedNUTSKernelAccess} <: AbstractBatchedNUTSKernelProgram
+    access::A
     ops::NTuple{1,BatchedNUTSKernelOp}
 end
 
-struct BatchedNUTSExpandKernelProgram <: AbstractBatchedNUTSKernelProgram
-    frame::BatchedNUTSExpandKernelFrame
+struct BatchedNUTSExpandKernelProgram{A<:AbstractBatchedNUTSKernelAccess} <: AbstractBatchedNUTSKernelProgram
+    access::A
     ops::NTuple{5,BatchedNUTSKernelOp}
 end
 
-struct BatchedNUTSMergeKernelProgram <: AbstractBatchedNUTSKernelProgram
-    frame::BatchedNUTSMergeKernelFrame
+struct BatchedNUTSMergeKernelProgram{A<:AbstractBatchedNUTSKernelAccess} <: AbstractBatchedNUTSKernelProgram
+    access::A
     ops::NTuple{4,BatchedNUTSKernelOp}
 end
 
-struct BatchedNUTSDoneKernelProgram <: AbstractBatchedNUTSKernelProgram
-    frame::BatchedNUTSDoneKernelFrame
+struct BatchedNUTSDoneKernelProgram{A<:AbstractBatchedNUTSKernelAccess} <: AbstractBatchedNUTSKernelProgram
+    access::A
     ops::NTuple{1,BatchedNUTSKernelOp}
 end
 
@@ -802,4 +804,3 @@ Base.iterate(chains::HMCChains, state...) = iterate(chains.chains, state...)
 Base.iterate(summary::HMCSummary, state...) = iterate(summary.parameters, state...)
 
 _sampler_label(chain::HMCChain) = uppercase(String(chain.sampler))
-

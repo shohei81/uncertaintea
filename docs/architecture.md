@@ -177,7 +177,9 @@ Current backend-lowering subset:
   step-state object then bundles that descriptor with the numeric subtree
   energy/log-weight scratch for the current batched scheduler step, and a
   kernel-frame object then makes the concrete matrix/vector buffers for that
-  step explicit as well; the current CPU path now also wraps that frame in a
+  step explicit as well; the current CPU path now also flattens that frame
+  into a phase-local kernel-access object whose fields directly expose the
+  buffers touched by each step, and then wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
   skeleton is increasingly declarative, and those op sequences now feed
   phase-specialized program executors rather than a monolithic kernel-op
