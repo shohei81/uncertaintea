@@ -88,7 +88,8 @@ The current CPU NUTS path is intentionally narrow:
   paths now keep proposal energy/error as continuation-state data rather than
   recomputing them at the very end; even the remaining chain-local batched
   fallback now stages subtree summary and proposal-energy metadata in
-  workspace-owned vectors before merge
+  workspace-owned vectors before merge, and its frontier/proposal copies plus
+  turning check now also run through one-chain masked batch helpers
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

@@ -1210,6 +1210,8 @@ using UncertainTea
     @test masked_destination[:, 1] == masked_source[:, 1]
     @test masked_destination[:, 2] == [3.0, 4.0]
     @test masked_destination[:, 3] == masked_source[:, 3]
+    single_chain_mask = UncertainTea._single_chain_mask!(falses(3), 2)
+    @test single_chain_mask == BitVector([false, true, false])
     @test UncertainTea._mean_acceptance_stat(3.0, 2) == 1.5
     @test UncertainTea._mean_acceptance_stat(0.0, 0) == 0.0
     moved_destination = falses(3)
@@ -1221,6 +1223,49 @@ using UncertainTea
     @test moved_destination == BitVector([false, true, false])
     @test UncertainTea._position_moved([1.0, 2.0], [1.0, 3.0])
     @test !UncertainTea._position_moved([1.0, 2.0], [1.0, 2.0])
+    gaussian_copy_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        gaussian_batch_constraints,
+    )
+    gaussian_copy_nuts_workspace.tree_left_position[:, 1] .= 11.0
+    gaussian_copy_nuts_workspace.tree_left_momentum[:, 1] .= 12.0
+    gaussian_copy_nuts_workspace.tree_left_gradient[:, 1] .= 13.0
+    gaussian_copy_nuts_workspace.tree_left_logjoint[1] = 1.5
+    UncertainTea._copy_single_batched_continuation_frontier_from_tree!(
+        gaussian_copy_nuts_workspace,
+        1,
+        -1,
+    )
+    @test view(gaussian_copy_nuts_workspace.left_position, :, 1) == [11.0]
+    @test view(gaussian_copy_nuts_workspace.left_momentum, :, 1) == [12.0]
+    @test view(gaussian_copy_nuts_workspace.left_gradient, :, 1) == [13.0]
+    @test gaussian_copy_nuts_workspace.left_logjoint[1] == 1.5
+    @test gaussian_copy_nuts_workspace.column_continuation_states[1].left.logjoint == 1.5
+    gaussian_copy_nuts_workspace.tree_proposal_position[:, 1] .= 21.0
+    gaussian_copy_nuts_workspace.tree_proposal_momentum[:, 1] .= 22.0
+    gaussian_copy_nuts_workspace.tree_proposal_gradient[:, 1] .= 23.0
+    gaussian_copy_nuts_workspace.tree_proposal_logjoint[1] = 2.5
+    UncertainTea._copy_single_batched_continuation_proposal_from_tree!(
+        gaussian_copy_nuts_workspace,
+        1,
+    )
+    @test view(gaussian_copy_nuts_workspace.proposal_position, :, 1) == [21.0]
+    @test view(gaussian_copy_nuts_workspace.proposal_momentum, :, 1) == [22.0]
+    @test view(gaussian_copy_nuts_workspace.proposal_gradient, :, 1) == [23.0]
+    @test gaussian_copy_nuts_workspace.continuation_proposal_logjoint[1] == 2.5
+    @test gaussian_copy_nuts_workspace.column_continuation_states[1].proposal.logjoint == 2.5
+    gaussian_copy_nuts_workspace.left_position[:, 1] .= 0.0
+    gaussian_copy_nuts_workspace.right_position[:, 1] .= 1.0
+    gaussian_copy_nuts_workspace.left_momentum[:, 1] .= 1.0
+    gaussian_copy_nuts_workspace.right_momentum[:, 1] .= 1.0
+    UncertainTea._update_single_batched_continuation_turning!(
+        gaussian_copy_nuts_workspace,
+        1,
+    )
+    @test !gaussian_copy_nuts_workspace.subtree_merged_turning[1]
+    @test !any(gaussian_copy_nuts_workspace.subtree_active)
     turning_destination = falses(3)
     @test UncertainTea._batched_is_turning!(
         turning_destination,

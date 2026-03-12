@@ -160,6 +160,9 @@ for dynamic trajectory building:
   proposal energy/error and subtree summary metadata in workspace vectors
   before merging into continuation state, so batched and fallback merge logic
   share the same scratch-backed bookkeeping path
+- that fallback path now also routes one-chain frontier/proposal copies and the
+  merged turning check through the same masked batch helpers used elsewhere, so
+  even its state updates follow the batched workspace-copy model
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

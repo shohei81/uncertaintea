@@ -152,8 +152,9 @@ Current backend-lowering subset:
   energy / moved-summary helper logic, with continuation proposal energy and
   energy-error values now carried as state on both paths; the remaining
   chain-local batched fallback now also records subtree summary and selected
-  subtree proposal energy/error in workspace vectors before continuation merge;
-  the
+  subtree proposal energy/error in workspace vectors before continuation merge,
+  and its frontier/proposal copies plus turning checks now also go through
+  one-chain masked batch helpers; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
