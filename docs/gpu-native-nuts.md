@@ -114,7 +114,8 @@ The current CPU NUTS path is intentionally narrow:
   frame built from that state, then flattens that frame into a phase-local
   kernel-access object whose fields directly name the buffers touched by the
   step, then lowers each primitive kernel step into a typed dataflow
-  descriptor with explicit logical read/write buffer sets, plus a small
+  descriptor with explicit logical read/write buffer sets, alias classes, and
+  a fixed intra-program dependency table, plus a small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through
   phase-specialized program handlers instead of a single generic op loop, with

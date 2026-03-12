@@ -69,6 +69,7 @@
         merge_access.proposal_position
     @test UncertainTea._batched_nuts_kernel_reads(merge_dataflows[3]) ==
         (
+            UncertainTea.NUTSKernelBufferControlState,
             UncertainTea.NUTSKernelBufferDescriptorScratch,
             UncertainTea.NUTSKernelBufferTreeFrontierState,
             UncertainTea.NUTSKernelBufferTreeProposalState,
@@ -78,6 +79,18 @@
             UncertainTea.NUTSKernelBufferContinuationSummary,
             UncertainTea.NUTSKernelBufferTreeEnergy,
         )
+    @test UncertainTea._batched_nuts_kernel_read_aliases(merge_dataflows[3]) ==
+        (
+            UncertainTea.NUTSKernelAliasControlState,
+            UncertainTea.NUTSKernelAliasDescriptorScratch,
+            UncertainTea.NUTSKernelAliasTreeState,
+            UncertainTea.NUTSKernelAliasTreeState,
+            UncertainTea.NUTSKernelAliasSubtreeSummary,
+            UncertainTea.NUTSKernelAliasContinuationState,
+            UncertainTea.NUTSKernelAliasContinuationState,
+            UncertainTea.NUTSKernelAliasContinuationSummary,
+            UncertainTea.NUTSKernelAliasTreeEnergy,
+        )
     @test UncertainTea._batched_nuts_kernel_writes(merge_dataflows[3]) ==
         (
             UncertainTea.NUTSKernelBufferDescriptorScratch,
@@ -85,6 +98,23 @@
             UncertainTea.NUTSKernelBufferContinuationFrontierState,
             UncertainTea.NUTSKernelBufferContinuationProposalState,
             UncertainTea.NUTSKernelBufferContinuationSummary,
+        )
+    @test UncertainTea._batched_nuts_kernel_dependencies(merge_program) ==
+        (
+            UncertainTea.BatchedNUTSKernelDependency(
+                2,
+                3,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferControlState,
+                UncertainTea.NUTSKernelAliasControlState,
+            ),
+            UncertainTea.BatchedNUTSKernelDependency(
+                2,
+                4,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferSchedulerState,
+                UncertainTea.NUTSKernelAliasSchedulerState,
+            ),
         )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
@@ -133,11 +163,14 @@
     @test length(done_dataflows) == 1
     @test UncertainTea._batched_nuts_kernel_reads(done_dataflows[1]) ==
         (UncertainTea.NUTSKernelBufferControlBlock,)
+    @test UncertainTea._batched_nuts_kernel_read_aliases(done_dataflows[1]) ==
+        (UncertainTea.NUTSKernelAliasControlBlock,)
     @test UncertainTea._batched_nuts_kernel_writes(done_dataflows[1]) ==
         (
             UncertainTea.NUTSKernelBufferSchedulerState,
             UncertainTea.NUTSKernelBufferControlState,
         )
+    @test isempty(UncertainTea._batched_nuts_kernel_dependencies(done_program))
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,
@@ -233,6 +266,11 @@
             UncertainTea.NUTSKernelBufferControlState,
             UncertainTea.NUTSKernelBufferTreeCurrentState,
         )
+    @test UncertainTea._batched_nuts_kernel_read_aliases(expand_dataflows[2]) ==
+        (
+            UncertainTea.NUTSKernelAliasControlState,
+            UncertainTea.NUTSKernelAliasTreeState,
+        )
     @test UncertainTea._batched_nuts_kernel_writes(expand_dataflows[2]) ==
         (
             UncertainTea.NUTSKernelBufferControlState,
@@ -255,6 +293,51 @@
             UncertainTea.NUTSKernelBufferTreeFrontierState,
             UncertainTea.NUTSKernelBufferTreeProposalState,
             UncertainTea.NUTSKernelBufferSubtreeSummary,
+        )
+    @test UncertainTea._batched_nuts_kernel_dependencies(expand_direct_program) ==
+        (
+            UncertainTea.BatchedNUTSKernelDependency(
+                1,
+                2,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferControlState,
+                UncertainTea.NUTSKernelAliasControlState,
+            ),
+            UncertainTea.BatchedNUTSKernelDependency(
+                1,
+                5,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferSchedulerState,
+                UncertainTea.NUTSKernelAliasSchedulerState,
+            ),
+            UncertainTea.BatchedNUTSKernelDependency(
+                2,
+                3,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferTreeNextState,
+                UncertainTea.NUTSKernelAliasTreeState,
+            ),
+            UncertainTea.BatchedNUTSKernelDependency(
+                2,
+                4,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferControlState,
+                UncertainTea.NUTSKernelAliasControlState,
+            ),
+            UncertainTea.BatchedNUTSKernelDependency(
+                2,
+                4,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferTreeNextState,
+                UncertainTea.NUTSKernelAliasTreeState,
+            ),
+            UncertainTea.BatchedNUTSKernelDependency(
+                3,
+                4,
+                UncertainTea.NUTSKernelFlowDependency,
+                UncertainTea.NUTSKernelBufferTreeEnergy,
+                UncertainTea.NUTSKernelAliasTreeEnergy,
+            ),
         )
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)

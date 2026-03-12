@@ -205,7 +205,8 @@ for dynamic trajectory building:
   explicit too, then flattens that frame into a phase-local kernel-access
   object whose fields name the concrete buffers touched by the current step,
   and now further lowers each primitive kernel step into a typed dataflow
-  descriptor with explicit logical read/write buffer sets,
+  descriptor with explicit logical read/write buffer sets, alias classes, and
+  a fixed intra-program dependency table,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,

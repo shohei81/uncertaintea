@@ -14,6 +14,36 @@
     NUTSKernelBufferContinuationSummary = 12
 end
 
+@enum BatchedNUTSKernelAliasClass::UInt8 begin
+    NUTSKernelAliasControlBlock = 0
+    NUTSKernelAliasSchedulerState = 1
+    NUTSKernelAliasControlState = 2
+    NUTSKernelAliasDescriptorScratch = 3
+    NUTSKernelAliasTreeState = 4
+    NUTSKernelAliasTreeEnergy = 5
+    NUTSKernelAliasSubtreeSummary = 6
+    NUTSKernelAliasContinuationState = 7
+    NUTSKernelAliasContinuationSummary = 8
+end
+
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferControlBlock}) = NUTSKernelAliasControlBlock
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferSchedulerState}) = NUTSKernelAliasSchedulerState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferControlState}) = NUTSKernelAliasControlState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferDescriptorScratch}) = NUTSKernelAliasDescriptorScratch
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferTreeCurrentState}) = NUTSKernelAliasTreeState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferTreeNextState}) = NUTSKernelAliasTreeState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferTreeFrontierState}) = NUTSKernelAliasTreeState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferTreeProposalState}) = NUTSKernelAliasTreeState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferTreeEnergy}) = NUTSKernelAliasTreeEnergy
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferSubtreeSummary}) = NUTSKernelAliasSubtreeSummary
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferContinuationFrontierState}) = NUTSKernelAliasContinuationState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferContinuationProposalState}) = NUTSKernelAliasContinuationState
+_batched_nuts_kernel_alias_class(::Val{NUTSKernelBufferContinuationSummary}) = NUTSKernelAliasContinuationSummary
+
+function _batched_nuts_kernel_alias_class(buffer::BatchedNUTSKernelBuffer)
+    return _batched_nuts_kernel_alias_class(Val(buffer))
+end
+
 abstract type AbstractBatchedNUTSKernelDataflow end
 
 struct BatchedNUTSKernelDataflow{
@@ -32,6 +62,24 @@ _batched_nuts_kernel_step(dataflow::BatchedNUTSKernelDataflow) = dataflow.step
 _batched_nuts_kernel_access(dataflow::BatchedNUTSKernelDataflow) = dataflow.access
 _batched_nuts_kernel_reads(dataflow::BatchedNUTSKernelDataflow) = dataflow.reads
 _batched_nuts_kernel_writes(dataflow::BatchedNUTSKernelDataflow) = dataflow.writes
+_batched_nuts_kernel_read_aliases(dataflow::BatchedNUTSKernelDataflow) =
+    map(_batched_nuts_kernel_alias_class, dataflow.reads)
+_batched_nuts_kernel_write_aliases(dataflow::BatchedNUTSKernelDataflow) =
+    map(_batched_nuts_kernel_alias_class, dataflow.writes)
+
+@enum BatchedNUTSKernelDependencyKind::UInt8 begin
+    NUTSKernelFlowDependency = 0
+    NUTSKernelAntiDependency = 1
+    NUTSKernelOutputDependency = 2
+end
+
+struct BatchedNUTSKernelDependency
+    producer_step::Int
+    consumer_step::Int
+    kind::BatchedNUTSKernelDependencyKind
+    buffer::BatchedNUTSKernelBuffer
+    alias_class::BatchedNUTSKernelAliasClass
+end
 
 function _batched_nuts_kernel_dataflow(
     access::BatchedNUTSIdleKernelAccess,
@@ -151,6 +199,7 @@ function _batched_nuts_kernel_dataflow(
         access,
         step,
         (
+            NUTSKernelBufferControlState,
             NUTSKernelBufferDescriptorScratch,
             NUTSKernelBufferTreeFrontierState,
             NUTSKernelBufferTreeProposalState,
@@ -200,3 +249,74 @@ function _batched_nuts_kernel_dataflows(
     access = _batched_nuts_kernel_access(program)
     return map(step -> _batched_nuts_kernel_dataflow(access, step), _batched_nuts_kernel_steps(program))
 end
+
+const _BATCHED_NUTS_IDLE_KERNEL_DEPENDENCIES = ()
+
+const _BATCHED_NUTS_EXPAND_KERNEL_DEPENDENCIES = (
+    BatchedNUTSKernelDependency(
+        1,
+        2,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferControlState,
+        NUTSKernelAliasControlState,
+    ),
+    BatchedNUTSKernelDependency(
+        1,
+        5,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferSchedulerState,
+        NUTSKernelAliasSchedulerState,
+    ),
+    BatchedNUTSKernelDependency(
+        2,
+        3,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferTreeNextState,
+        NUTSKernelAliasTreeState,
+    ),
+    BatchedNUTSKernelDependency(
+        2,
+        4,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferControlState,
+        NUTSKernelAliasControlState,
+    ),
+    BatchedNUTSKernelDependency(
+        2,
+        4,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferTreeNextState,
+        NUTSKernelAliasTreeState,
+    ),
+    BatchedNUTSKernelDependency(
+        3,
+        4,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferTreeEnergy,
+        NUTSKernelAliasTreeEnergy,
+    ),
+)
+
+const _BATCHED_NUTS_MERGE_KERNEL_DEPENDENCIES = (
+    BatchedNUTSKernelDependency(
+        2,
+        3,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferControlState,
+        NUTSKernelAliasControlState,
+    ),
+    BatchedNUTSKernelDependency(
+        2,
+        4,
+        NUTSKernelFlowDependency,
+        NUTSKernelBufferSchedulerState,
+        NUTSKernelAliasSchedulerState,
+    ),
+)
+
+const _BATCHED_NUTS_DONE_KERNEL_DEPENDENCIES = ()
+
+_batched_nuts_kernel_dependencies(::BatchedNUTSIdleKernelProgram) = _BATCHED_NUTS_IDLE_KERNEL_DEPENDENCIES
+_batched_nuts_kernel_dependencies(::BatchedNUTSExpandKernelProgram) = _BATCHED_NUTS_EXPAND_KERNEL_DEPENDENCIES
+_batched_nuts_kernel_dependencies(::BatchedNUTSMergeKernelProgram) = _BATCHED_NUTS_MERGE_KERNEL_DEPENDENCIES
+_batched_nuts_kernel_dependencies(::BatchedNUTSDoneKernelProgram) = _BATCHED_NUTS_DONE_KERNEL_DEPENDENCIES
