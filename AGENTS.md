@@ -36,6 +36,7 @@ Before adding runtime code, read these files:
 - Prefer explicit IR types over ad hoc dictionaries
 - Prefer dense parameter layouts over heterogeneous trace containers
 - Prefer backend-agnostic interfaces with backend-specific implementations
+- Keep large subsystems split across focused source files; do not regrow monolithic files like `src/inference.jl`
 - Default to ASCII unless an existing file clearly requires otherwise
 - Keep comments sparse and factual
 
