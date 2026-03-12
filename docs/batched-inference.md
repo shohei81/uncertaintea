@@ -126,6 +126,9 @@ for dynamic trajectory building:
   batched leapfrog/value+gradient path depth-cohort by depth-cohort, picking
   the largest active tree-depth group before falling back to per-chain subtree
   expansion
+- subtree energy, acceptance probability, and log-weight bookkeeping for those
+  cohort steps now also live in batch-owned scratch vectors rather than local
+  scalar temporaries
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

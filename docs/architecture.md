@@ -134,7 +134,8 @@ Current backend-lowering subset:
   workspace-backed gradient columns, and they reuse a shared
   `ForwardDiff` objective/config when batch inputs are homogeneous; continuation
   subtrees now also run through the batched leapfrog and batched value+gradient
-  path in same-depth cohorts before falling back; the
+  path in same-depth cohorts before falling back, with subtree energy,
+  acceptance, and log-weight bookkeeping now stored in batch-owned scratch; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

@@ -1180,6 +1180,11 @@ using UncertainTea
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) === gaussian_nuts_workspace.proposal_position
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.momentum) === gaussian_nuts_workspace.proposal_momentum
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.gradient) === gaussian_nuts_workspace.proposal_gradient
+    @test length(gaussian_nuts_workspace.subtree_proposed_energy) == 3
+    @test length(gaussian_nuts_workspace.subtree_delta_energy) == 3
+    @test length(gaussian_nuts_workspace.subtree_accept_prob) == 3
+    @test length(gaussian_nuts_workspace.subtree_candidate_log_weight) == 3
+    @test length(gaussian_nuts_workspace.subtree_combined_log_weight) == 3
     gaussian_nuts_tree_current = gaussian_nuts_workspace.column_tree_workspaces[1].current
     gaussian_nuts_tree_next = gaussian_nuts_workspace.column_tree_workspaces[1].next
     UncertainTea._initialize_batched_nuts_continuations!(
@@ -1238,6 +1243,11 @@ using UncertainTea
     @test all(steps >= 2 for steps in gaussian_shared_nuts_workspace.integration_steps)
     @test all(isfinite, gaussian_shared_nuts_workspace.continuation_log_weight)
     @test all(count >= 1 for count in gaussian_shared_nuts_workspace.continuation_accept_stat_count)
+    @test all(isfinite, gaussian_shared_nuts_workspace.subtree_proposed_energy)
+    @test all(isfinite, gaussian_shared_nuts_workspace.subtree_delta_energy)
+    @test all(0.0 .<= gaussian_shared_nuts_workspace.subtree_accept_prob .<= 1.0)
+    @test all(isfinite, gaussian_shared_nuts_workspace.subtree_candidate_log_weight)
+    @test all(isfinite, gaussian_shared_nuts_workspace.subtree_combined_log_weight)
     gaussian_single_shared_params = gaussian_batch_params[:, 1:1]
     gaussian_single_shared_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,
@@ -1344,6 +1354,8 @@ using UncertainTea
     )
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[1] == 2
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[2:3] == [3, 3]
+    @test gaussian_mixed_depth_nuts_workspace.subtree_accept_stat_count[1] == 0
+    @test gaussian_mixed_depth_nuts_workspace.subtree_candidate_log_weight[1] == -Inf
     gaussian_mixed_depth_nuts_workspace.continuation_turning[1] = false
     @test UncertainTea._continue_batched_nuts_batched_subtree!(
         gaussian_mixed_depth_nuts_workspace,

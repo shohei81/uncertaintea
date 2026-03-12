@@ -213,6 +213,11 @@ mutable struct BatchedNUTSWorkspace
     subtree_accept_stat_sum::Vector{Float64}
     subtree_accept_stat_count::Vector{Int}
     subtree_integration_steps::Vector{Int}
+    subtree_proposed_energy::Vector{Float64}
+    subtree_delta_energy::Vector{Float64}
+    subtree_accept_prob::Vector{Float64}
+    subtree_candidate_log_weight::Vector{Float64}
+    subtree_combined_log_weight::Vector{Float64}
     energy_error::Vector{Float64}
     accept_prob::Vector{Float64}
     accepted_step::BitVector
@@ -371,6 +376,11 @@ function BatchedNUTSWorkspace(
         Vector{Float64}(undef, num_chains),
         zeros(Int, num_chains),
         zeros(Int, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         falses(num_chains),
@@ -1949,6 +1959,11 @@ function _continue_batched_nuts_batched_subtree!(
     fill!(workspace.subtree_accept_stat_sum, 0.0)
     fill!(workspace.subtree_accept_stat_count, 0)
     fill!(workspace.subtree_integration_steps, 0)
+    fill!(workspace.subtree_proposed_energy, Inf)
+    fill!(workspace.subtree_delta_energy, Inf)
+    fill!(workspace.subtree_accept_prob, 0.0)
+    fill!(workspace.subtree_candidate_log_weight, -Inf)
+    fill!(workspace.subtree_combined_log_weight, -Inf)
     fill!(workspace.subtree_turning, false)
     fill!(workspace.subtree_divergent, false)
     fill!(workspace.subtree_active, false)
@@ -2006,6 +2021,12 @@ function _continue_batched_nuts_batched_subtree!(
             workspace.step_direction,
             workspace.subtree_active,
         )
+        _batched_hamiltonian!(
+            workspace.subtree_proposed_energy,
+            workspace.proposed_logjoint,
+            workspace.tree_next_momentum,
+            inverse_mass_matrix,
+        )
 
         any_active = false
         for chain_index in 1:num_chains
@@ -2028,22 +2049,27 @@ function _continue_batched_nuts_batched_subtree!(
                 _copyto_nuts_state!(tree_workspace.right, tree_workspace.current)
             end
 
-            proposed_hamiltonian = _hamiltonian(tree_workspace.current.logjoint, tree_workspace.current.momentum, inverse_mass_matrix)
-            delta_energy = proposed_hamiltonian - workspace.current_energy[chain_index]
+            delta_energy = workspace.subtree_proposed_energy[chain_index] - workspace.current_energy[chain_index]
+            workspace.subtree_delta_energy[chain_index] = delta_energy
             if !isfinite(delta_energy) || delta_energy > max_delta_energy
                 workspace.subtree_divergent[chain_index] = true
                 workspace.subtree_active[chain_index] = false
                 continue
             end
 
-            workspace.subtree_accept_stat_sum[chain_index] += min(1.0, exp(min(0.0, -delta_energy)))
+            workspace.subtree_accept_prob[chain_index] = min(1.0, exp(min(0.0, -delta_energy)))
+            workspace.subtree_accept_stat_sum[chain_index] += workspace.subtree_accept_prob[chain_index]
             workspace.subtree_accept_stat_count[chain_index] += 1
-            candidate_log_weight = -proposed_hamiltonian
-            combined_log_weight = _logaddexp(workspace.subtree_log_weight[chain_index], candidate_log_weight)
-            if !isfinite(workspace.subtree_log_weight[chain_index]) || log(rand(rng)) < candidate_log_weight - combined_log_weight
+            workspace.subtree_candidate_log_weight[chain_index] = -workspace.subtree_proposed_energy[chain_index]
+            workspace.subtree_combined_log_weight[chain_index] = _logaddexp(
+                workspace.subtree_log_weight[chain_index],
+                workspace.subtree_candidate_log_weight[chain_index],
+            )
+            if !isfinite(workspace.subtree_log_weight[chain_index]) || log(rand(rng)) <
+                workspace.subtree_candidate_log_weight[chain_index] - workspace.subtree_combined_log_weight[chain_index]
                 _copyto_nuts_state!(tree_workspace.proposal, tree_workspace.current)
             end
-            workspace.subtree_log_weight[chain_index] = combined_log_weight
+            workspace.subtree_log_weight[chain_index] = workspace.subtree_combined_log_weight[chain_index]
 
             turning = _is_turning(
                 tree_workspace.left.position,
