@@ -147,6 +147,9 @@ for dynamic trajectory building:
 - the initial batched NUTS first step now also loads `current/next` tree
   states through a batched helper and restores rejected/divergent proposal
   columns with masked batch copies rather than per-chain buffer resets
+- the final batched NUTS proposal summary now computes acceptance means,
+  proposal energies, energy errors, and moved masks through batch helpers over
+  the workspace vectors instead of a per-chain epilogue
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

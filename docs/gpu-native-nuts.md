@@ -82,7 +82,8 @@ The current CPU NUTS path is intentionally narrow:
   continuation logjoint values in workspace-owned vectors with explicit sync
   points for the reference scalar state objects, and the first batched NUTS
   step now uses the same batch-owned load/restore helpers before the remaining
-  chain-local selection logic runs
+  chain-local selection logic runs; the final proposal summary path now also
+  uses batch helpers for energy, acceptance, and moved-state aggregation
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

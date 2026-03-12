@@ -146,7 +146,9 @@ Current backend-lowering subset:
   first-step batched NUTS initialization now likewise loads `current/next`
   tree states through batched helpers and restores rejected/divergent proposal
   columns through masked batch copies before the remaining chain-local
-  selection logic continues; the
+  selection logic continues; final batched proposal summary statistics now also
+  run through batch helpers over workspace vectors rather than a per-chain
+  epilogue loop; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

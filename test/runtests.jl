@@ -1208,6 +1208,13 @@ using UncertainTea
     @test masked_destination[:, 1] == masked_source[:, 1]
     @test masked_destination[:, 2] == [3.0, 4.0]
     @test masked_destination[:, 3] == masked_source[:, 3]
+    moved_destination = falses(3)
+    UncertainTea._batched_positions_moved!(
+        moved_destination,
+        reshape([1.0, 2.0, 3.0], 1, 3),
+        reshape([1.0, 4.0, 3.0], 1, 3),
+    )
+    @test moved_destination == BitVector([false, true, false])
     turning_destination = falses(3)
     @test UncertainTea._batched_is_turning!(
         turning_destination,
@@ -1440,6 +1447,34 @@ using UncertainTea
     )
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[1] == 2
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[2:3] == [4, 4]
+    gaussian_finalized_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    UncertainTea._batched_nuts_proposals!(
+        gaussian_finalized_nuts_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_shared_batch_logjoint,
+        gaussian_shared_batch_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.05,
+        3,
+        1000.0,
+        MersenneTwister(103),
+    )
+    @test gaussian_finalized_nuts_workspace.proposed_logjoint ≈
+        gaussian_finalized_nuts_workspace.continuation_proposal_logjoint atol=1e-8
+    @test gaussian_finalized_nuts_workspace.accept_prob ≈
+        UncertainTea._mean_acceptance_stats!(
+            similar(gaussian_finalized_nuts_workspace.accept_prob),
+            gaussian_finalized_nuts_workspace.continuation_accept_stat_sum,
+            gaussian_finalized_nuts_workspace.continuation_accept_stat_count,
+        ) atol=1e-8
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)

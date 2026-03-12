@@ -1355,6 +1355,60 @@ function _batched_acceptance_probability!(
     return destination
 end
 
+function _mean_acceptance_stats!(
+    destination::AbstractVector,
+    accept_sum::AbstractVector,
+    accept_count::AbstractVector{Int},
+)
+    length(destination) == length(accept_sum) == length(accept_count) ||
+        throw(DimensionMismatch("expected acceptance-stat inputs of matching length, got $(length(destination)), $(length(accept_sum)), and $(length(accept_count))"))
+    for index in eachindex(destination)
+        destination[index] = accept_count[index] == 0 ? 0.0 : accept_sum[index] / accept_count[index]
+    end
+    return destination
+end
+
+function _batched_positions_moved!(
+    destination::AbstractVector{Bool},
+    proposal_position::AbstractMatrix,
+    current_position::AbstractMatrix,
+)
+    size(proposal_position) == size(current_position) ||
+        throw(DimensionMismatch("expected moved-position inputs of matching size, got $(size(proposal_position)) and $(size(current_position))"))
+    length(destination) == size(proposal_position, 2) ||
+        throw(DimensionMismatch("expected moved-position destination of length $(size(proposal_position, 2)), got $(length(destination))"))
+    for chain_index in eachindex(destination)
+        moved = false
+        for parameter_index in axes(proposal_position, 1)
+            if proposal_position[parameter_index, chain_index] != current_position[parameter_index, chain_index]
+                moved = true
+                break
+            end
+        end
+        destination[chain_index] = moved
+    end
+    return destination
+end
+
+function _finalize_batched_nuts_proposals!(
+    workspace::BatchedNUTSWorkspace,
+    position::AbstractMatrix,
+    inverse_mass_matrix::AbstractVector,
+)
+    copyto!(workspace.proposed_logjoint, workspace.continuation_proposal_logjoint)
+    _batched_hamiltonian!(workspace.proposed_energy, workspace.proposed_logjoint, workspace.proposal_momentum, inverse_mass_matrix)
+    for chain_index in eachindex(workspace.energy_error)
+        workspace.energy_error[chain_index] = workspace.proposed_energy[chain_index] - workspace.current_energy[chain_index]
+    end
+    _mean_acceptance_stats!(
+        workspace.accept_prob,
+        workspace.continuation_accept_stat_sum,
+        workspace.continuation_accept_stat_count,
+    )
+    _batched_positions_moved!(workspace.accepted_step, workspace.proposal_position, position)
+    return workspace
+end
+
 function _mean_acceptance_probability(accept_prob::AbstractVector)
     isempty(accept_prob) && return 0.0
     return sum(accept_prob) / length(accept_prob)
@@ -2266,8 +2320,10 @@ function _continue_batched_nuts_proposal!(
 
         if direction < 0
             _copyto_nuts_state!(left, tree_workspace.left)
+            workspace.left_logjoint[chain_index] = tree_workspace.left.logjoint
         else
             _copyto_nuts_state!(right, tree_workspace.right)
+            workspace.right_logjoint[chain_index] = tree_workspace.right.logjoint
         end
 
         workspace.integration_steps[chain_index] += subtree.integration_steps
@@ -2277,6 +2333,7 @@ function _continue_batched_nuts_proposal!(
             combined_log_weight = _logaddexp(workspace.continuation_log_weight[chain_index], subtree.log_weight)
             if log(rand(rng)) < subtree.log_weight - combined_log_weight
                 _copyto_nuts_state!(proposal, tree_workspace.proposal)
+                workspace.continuation_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
             end
             workspace.continuation_log_weight[chain_index] = combined_log_weight
         end
@@ -2666,18 +2723,8 @@ function _batched_nuts_proposals!(
             max_delta_energy,
             rng,
         )
-        continuation = workspace.column_continuation_states[chain_index]
-        accept_stat = workspace.continuation_accept_stat_count[chain_index] == 0 ? 0.0 :
-            workspace.continuation_accept_stat_sum[chain_index] / workspace.continuation_accept_stat_count[chain_index]
-        proposed_energy = _hamiltonian(continuation.proposal.logjoint, continuation.proposal.momentum, inverse_mass_matrix)
-        energy_error = proposed_energy - workspace.current_energy[chain_index]
-        moved_step = any(continuation.proposal.position .!= view(position, :, chain_index))
-        workspace.proposed_logjoint[chain_index] = continuation.proposal.logjoint
-        workspace.proposed_energy[chain_index] = proposed_energy
-        workspace.energy_error[chain_index] = energy_error
-        workspace.accept_prob[chain_index] = accept_stat
-        workspace.accepted_step[chain_index] = moved_step
     end
+    _finalize_batched_nuts_proposals!(workspace, position, inverse_mass_matrix)
     return workspace
 end
 
