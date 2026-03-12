@@ -162,7 +162,9 @@ Current backend-lowering subset:
   direction sampling / active checks / subtree-start selection are now shared
   helper concepts across scalar and batched continuation loops; the batched
   depth-cohort scheduler now also runs through explicit reset / select /
-  activate / initialize / advance / merge helpers; the
+  activate / initialize / advance / merge helpers, with continuation gating
+  masks and selected cohort depth/count now stored directly on the batched
+  workspace; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

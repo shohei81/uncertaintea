@@ -179,6 +179,9 @@ for dynamic trajectory building:
   scratch reset, active-depth selection, cohort activation, subtree
   initialization, cohort advancement, and continuation merge, so the
   scheduler body is mostly orchestration over explicit state-machine phases
+- continuation gating and selected cohort metadata now also live in workspace
+  masks and scalar scheduler state (`continuation_active`, `subtree_started`,
+  selected depth/count) rather than transient local variables
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

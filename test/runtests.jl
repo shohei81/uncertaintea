@@ -1578,10 +1578,12 @@ using UncertainTea
         gaussian_mixed_depth_nuts_workspace,
         4,
     ) == (2, 2)
+    @test gaussian_mixed_depth_nuts_workspace.continuation_active ==
+        BitVector([false, true, true])
+    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth == 2
+    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth_count == 2
     @test UncertainTea._activate_batched_nuts_subtree_cohort!(
         gaussian_mixed_depth_nuts_workspace,
-        2,
-        4,
     )
     @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
         BitVector([false, true, true])
@@ -1591,6 +1593,10 @@ using UncertainTea
         MersenneTwister(1001),
     )
     @test prepared_depth == 2
+    @test gaussian_mixed_depth_nuts_workspace.continuation_active ==
+        BitVector([false, true, true])
+    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth == 2
+    @test gaussian_mixed_depth_nuts_workspace.scheduler_active_depth_count == 2
     @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
         BitVector([false, true, true])
     @test all(
@@ -1661,6 +1667,10 @@ using UncertainTea
         cohort_rng,
     )
     @test cohort_depth == 1
+    @test gaussian_cohort_scheduler_workspace.continuation_active ==
+        BitVector([true, true, true])
+    @test gaussian_cohort_scheduler_workspace.scheduler_active_depth == 1
+    @test gaussian_cohort_scheduler_workspace.scheduler_active_depth_count == 3
     for _ in 1:(1 << cohort_depth)
         UncertainTea._batched_nuts_leapfrog_step_to!(
             gaussian_cohort_scheduler_workspace,
@@ -1692,9 +1702,13 @@ using UncertainTea
             cohort_rng,
         ) || break
     end
+    @test UncertainTea._mark_batched_nuts_subtree_started!(
+        gaussian_cohort_scheduler_workspace,
+    )
+    @test gaussian_cohort_scheduler_workspace.subtree_started ==
+        BitVector([true, true, true])
     @test UncertainTea._activate_batched_nuts_subtree_merge_cohort!(
         gaussian_cohort_scheduler_workspace,
-        cohort_depth,
     )
     @test gaussian_cohort_scheduler_workspace.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
