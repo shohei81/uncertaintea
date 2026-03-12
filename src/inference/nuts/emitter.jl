@@ -1,24 +1,40 @@
-function _batched_nuts_package_file_entries(plan::BatchedNUTSKernelPackagePlan)
+function _batched_nuts_backend_manifest_file(plan::BatchedNUTSKernelPackagePlan)
     manifest_file = _batched_nuts_package_manifest_file(plan)
-    manifest_entry = GPUBackendFileEntry(
+    return GPUBackendManifestFile(
         _batched_nuts_package_relative_path(manifest_file),
         _batched_nuts_package_contents(manifest_file),
     )
-    stage_entries = Tuple(
-        GPUBackendFileEntry(
+end
+
+function _batched_nuts_backend_stage_files(plan::BatchedNUTSKernelPackagePlan)
+    return Tuple(
+        GPUBackendStageFile(
+            _batched_nuts_module_entry_symbol(
+                _batched_nuts_bundle_module_stage(
+                    _batched_nuts_package_bundle_stage(stage_file),
+                ),
+            ),
             _batched_nuts_package_relative_path(stage_file),
             _batched_nuts_package_contents(stage_file),
         ) for stage_file in _batched_nuts_package_stage_files(plan)
     )
-    return (manifest_entry, stage_entries...)
+end
+
+function _batched_nuts_backend_bundle_layout(plan::BatchedNUTSKernelPackagePlan)
+    return gpu_backend_bundle_layout(
+        plan.target,
+        _batched_nuts_bundle_symbol(_batched_nuts_package_bundle_plan(plan)),
+        _batched_nuts_backend_manifest_file(plan),
+        _batched_nuts_backend_stage_files(plan),
+    )
 end
 
 function batched_nuts_package_layout(plan::BatchedNUTSKernelPackagePlan)
-    return GPUBackendPackageLayout(
+    return gpu_backend_package_layout(
         plan.target,
         _batched_nuts_package_symbol(plan),
         _batched_nuts_package_root_dir(plan),
-        _batched_nuts_package_file_entries(plan),
+        (_batched_nuts_backend_bundle_layout(plan),),
     )
 end
 

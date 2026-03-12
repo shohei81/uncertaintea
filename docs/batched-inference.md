@@ -226,8 +226,8 @@ for dynamic trajectory building:
   a bundle-plan layer that groups stage modules behind a backend bundle
   manifest, and then into a package-plan layer with a writeable root layout
   and concrete file entries, and now further into a generic GPU-backend
-  package-layout substrate plus an on-disk emitter stub for materializing that
-  layout under a target-specific output root,
+  bundle/package-layout substrate plus an on-disk emitter stub for
+  materializing that layout under a target-specific output root,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,
