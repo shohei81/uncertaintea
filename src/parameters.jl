@@ -11,8 +11,14 @@ to_constrained(::IdentityTransform, value) = value
 to_unconstrained(::IdentityTransform, value) = value
 to_constrained(::LogTransform, value) = exp(value)
 to_unconstrained(::LogTransform, value) = log(value)
+to_constrained(::LogitTransform, value) = inv(one(value) + exp(-value))
+to_unconstrained(::LogitTransform, value) = log(value) - log1p(-value)
 logabsdetjac(::IdentityTransform, value) = zero(value)
 logabsdetjac(::LogTransform, value) = value
+function logabsdetjac(::LogitTransform, value)
+    constrained = to_constrained(LogitTransform(), value)
+    return log(constrained) + log1p(-constrained)
+end
 
 function parameterchoicemap(model::TeaModel, params::AbstractVector)
     layout = parameterlayout(model)

@@ -43,8 +43,16 @@ function _backend_gradient_supported_step(step::BackendGammaChoicePlanStep)
     return _backend_gradient_supported_expr(step.shape) && _backend_gradient_supported_expr(step.rate)
 end
 
+function _backend_gradient_supported_step(step::BackendBetaChoicePlanStep)
+    return _backend_gradient_supported_expr(step.alpha) && _backend_gradient_supported_expr(step.beta)
+end
+
 function _backend_gradient_supported_step(step::BackendBernoulliChoicePlanStep)
     return isnothing(step.parameter_slot) && _backend_gradient_supported_expr(step.probability)
+end
+
+function _backend_gradient_supported_step(step::BackendCategoricalChoicePlanStep)
+    return isnothing(step.parameter_slot) && all(_backend_gradient_supported_expr, step.probabilities)
 end
 
 function _backend_gradient_supported_step(step::BackendPoissonChoicePlanStep)
@@ -69,7 +77,9 @@ _backend_gradient_supported_step(step::BackendNormalChoicePlanStep, numeric_slot
 _backend_gradient_supported_step(step::BackendLognormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendExponentialChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendGammaChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendBetaChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendBernoulliChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendCategoricalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendPoissonChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendStudentTChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 

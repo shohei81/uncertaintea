@@ -163,6 +163,37 @@ function _accumulate_gamma_gradient!(
     return totals, gradients
 end
 
+function _accumulate_beta_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    value_values::AbstractVector{Float64},
+    value_gradients::AbstractMatrix{Float64},
+    alpha_values::AbstractVector{Float64},
+    alpha_gradients::AbstractMatrix{Float64},
+    beta_values::AbstractVector{Float64},
+    beta_gradients::AbstractMatrix{Float64},
+)
+    for batch_index in eachindex(totals)
+        value = value_values[batch_index]
+        alpha = alpha_values[batch_index]
+        beta_parameter = beta_values[batch_index]
+        totals[batch_index] += _backend_beta_logpdf(alpha, beta_parameter, value)
+        if !(0 < value < 1)
+            continue
+        end
+        dvalue = (alpha - 1) / value - (beta_parameter - 1) / (1 - value)
+        dalpha = digamma(alpha + beta_parameter) - digamma(alpha) + log(value)
+        dbeta = digamma(alpha + beta_parameter) - digamma(beta_parameter) + log1p(-value)
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] +=
+                dvalue * value_gradients[parameter_index, batch_index] +
+                dalpha * alpha_gradients[parameter_index, batch_index] +
+                dbeta * beta_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
 function _accumulate_poisson_gradient!(
     totals::AbstractVector{Float64},
     gradients::AbstractMatrix{Float64},
@@ -179,6 +210,28 @@ function _accumulate_poisson_gradient!(
         derivative = count / lambda - 1
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] += derivative * lambda_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+function _accumulate_categorical_gradient!(
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    probability_values::Tuple,
+    probability_gradients::Tuple,
+    value_values::AbstractVector{Float64},
+)
+    for batch_index in eachindex(totals)
+        probabilities = map(values -> values[batch_index], probability_values)
+        value = value_values[batch_index]
+        totals[batch_index] += _backend_categorical_logpdf(probabilities, value)
+        index = _categorical_index(value, length(probabilities))
+        isnothing(index) && continue
+        derivative = 1 / probabilities[index]
+        selected_gradients = probability_gradients[index]
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] += derivative * selected_gradients[parameter_index, batch_index]
         end
     end
     return totals, gradients
@@ -225,6 +278,46 @@ function _accumulate_studentt_gradient!(
     return totals, gradients
 end
 
+function _assign_backend_choice_value!(
+    env::BatchedPlanEnvironment{Float64},
+    slot_gradients::Array{Float64,3},
+    slot::Int,
+    values::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+)
+    if env.numeric_slots[slot]
+        copyto!(view(env.numeric_values, slot, :), values)
+        _store_slot_gradient!(slot_gradients, slot, gradients)
+    elseif env.index_slots[slot]
+        for batch_index in 1:env.batch_size
+            value = values[batch_index]
+            index = _integer_like_choice_value(value)
+            isnothing(index) && throw(
+                BatchedBackendFallback("index backend slot $slot received non-integer choice value"),
+            )
+            env.index_values[slot, batch_index] = index
+        end
+    else
+        storage = env.generic_values[slot]
+        for batch_index in 1:env.batch_size
+            storage[batch_index] = values[batch_index]
+        end
+    end
+    env.assigned[slot] = true
+    return env
+end
+
+function _integer_like_choice_value(value)
+    if value isa Integer
+        return Int(value)
+    elseif value isa Real && isfinite(value)
+        truncated = trunc(value)
+        value == truncated || return nothing
+        return Int(truncated)
+    end
+    return nothing
+end
+
 function _score_backend_step_and_gradient!(
     step::BackendNormalChoicePlanStep,
     totals::AbstractVector{Float64},
@@ -247,7 +340,7 @@ function _score_backend_step_and_gradient!(
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 5)
     _accumulate_normal_gradient!(totals, gradients, value_values, value_gradients, mu_values, mu_gradients, sigma_values, sigma_gradients)
-    isnothing(step.binding_slot) || _set_numeric_binding!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -273,7 +366,7 @@ function _score_backend_step_and_gradient!(
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 5)
     _accumulate_lognormal_gradient!(totals, gradients, value_values, value_gradients, mu_values, mu_gradients, sigma_values, sigma_gradients)
-    isnothing(step.binding_slot) || _set_numeric_binding!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -296,7 +389,7 @@ function _score_backend_step_and_gradient!(
     _fill_choice_gradient!(value_gradients, step.parameter_slot)
     _eval_backend_numeric_expr_and_gradient!(rate_values, rate_gradients, cache, env, step.rate, 3)
     _accumulate_exponential_gradient!(totals, gradients, value_values, value_gradients, rate_values, rate_gradients)
-    isnothing(step.binding_slot) || _set_numeric_binding!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -331,7 +424,42 @@ function _score_backend_step_and_gradient!(
         rate_values,
         rate_gradients,
     )
-    isnothing(step.binding_slot) || _set_numeric_binding!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendBetaChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    value_values = env.observed_values
+    value_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    alpha_values = _batched_numeric_scratch!(env, 1)
+    alpha_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    beta_values = _batched_numeric_scratch!(env, 2)
+    beta_gradients = _batched_backend_gradient_scratch!(cache, 3)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _eval_backend_numeric_expr_and_gradient!(alpha_values, alpha_gradients, cache, env, step.alpha, 4)
+    _eval_backend_numeric_expr_and_gradient!(beta_values, beta_gradients, cache, env, step.beta, 5)
+    _accumulate_beta_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        alpha_values,
+        alpha_gradients,
+        beta_values,
+        beta_gradients,
+    )
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -355,19 +483,53 @@ function _score_backend_step_and_gradient!(
     _accumulate_bernoulli_gradient!(totals, gradients, probability_values, probability_gradients, value_values)
 
     if !isnothing(step.binding_slot)
-        if env.numeric_slots[step.binding_slot]
-            copyto!(view(env.numeric_values, step.binding_slot, :), value_values)
-        elseif env.index_slots[step.binding_slot]
-            for batch_index in 1:env.batch_size
-                env.index_values[step.binding_slot, batch_index] = Int(round(value_values[batch_index]))
-            end
-        else
-            values = env.generic_values[step.binding_slot]
-            for batch_index in 1:env.batch_size
-                values[batch_index] = value_values[batch_index]
-            end
-        end
-        env.assigned[step.binding_slot] = true
+        _assign_backend_choice_value!(
+            env,
+            cache.slot_gradients,
+            step.binding_slot,
+            value_values,
+            _zero_gradient!(_batched_backend_gradient_scratch!(cache, 3)),
+        )
+    end
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendCategoricalChoicePlanStep,
+    totals::AbstractVector{Float64},
+    gradients::AbstractMatrix{Float64},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{Float64},
+    params::AbstractMatrix{Float64},
+    constraints,
+)
+    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support categorical latent parameters"))
+    value_values = env.observed_values
+    probability_values = ntuple(index -> _batched_numeric_scratch!(env, index), length(step.probabilities))
+    probability_gradients = ntuple(index -> _batched_backend_gradient_scratch!(cache, index), length(step.probabilities))
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    for (index, probability) in enumerate(step.probabilities)
+        _eval_backend_numeric_expr_and_gradient!(
+            probability_values[index],
+            probability_gradients[index],
+            cache,
+            env,
+            probability,
+            length(step.probabilities) + index,
+        )
+    end
+    _accumulate_categorical_gradient!(totals, gradients, probability_values, probability_gradients, value_values)
+
+    if !isnothing(step.binding_slot)
+        _assign_backend_choice_value!(
+            env,
+            cache.slot_gradients,
+            step.binding_slot,
+            value_values,
+            _zero_gradient!(_batched_backend_gradient_scratch!(cache, length(step.probabilities) + 1)),
+        )
     end
     return totals, gradients
 end
@@ -408,7 +570,7 @@ function _score_backend_step_and_gradient!(
         sigma_values,
         sigma_gradients,
     )
-    isnothing(step.binding_slot) || _set_numeric_binding!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -432,20 +594,13 @@ function _score_backend_step_and_gradient!(
     _accumulate_poisson_gradient!(totals, gradients, lambda_values, lambda_gradients, value_values)
 
     if !isnothing(step.binding_slot)
-        if env.numeric_slots[step.binding_slot]
-            copyto!(view(env.numeric_values, step.binding_slot, :), value_values)
-            fill!(view(cache.slot_gradients, :, step.binding_slot, :), 0.0)
-        elseif env.index_slots[step.binding_slot]
-            for batch_index in 1:env.batch_size
-                env.index_values[step.binding_slot, batch_index] = Int(round(value_values[batch_index]))
-            end
-        else
-            values = env.generic_values[step.binding_slot]
-            for batch_index in 1:env.batch_size
-                values[batch_index] = Int(round(value_values[batch_index]))
-            end
-        end
-        env.assigned[step.binding_slot] = true
+        _assign_backend_choice_value!(
+            env,
+            cache.slot_gradients,
+            step.binding_slot,
+            value_values,
+            _zero_gradient!(_batched_backend_gradient_scratch!(cache, 3)),
+        )
     end
     return totals, gradients
 end
@@ -527,6 +682,13 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
                 constrained[slot_index, batch_index] = constrained_value
                 logabsdet[batch_index] += unconstrained_value
             end
+        elseif slot.transform isa LogitTransform
+            for batch_index in 1:size(params, 2)
+                unconstrained_value = Float64(params[slot_index, batch_index])
+                constrained_value = to_constrained(slot.transform, unconstrained_value)
+                constrained[slot_index, batch_index] = constrained_value
+                logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
+            end
         else
             throw(BatchedBackendFallback("batched backend gradient does not support transform $(typeof(slot.transform))"))
         end
@@ -542,6 +704,14 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
             for batch_index in 1:size(params, 2)
                 gradients[slot_index, batch_index] =
                     gradients[slot_index, batch_index] * constrained[slot_index, batch_index] + 1.0
+            end
+        elseif slot.transform isa LogitTransform
+            slot_index = slot.index
+            for batch_index in 1:size(params, 2)
+                constrained_value = constrained[slot_index, batch_index]
+                gradients[slot_index, batch_index] =
+                    gradients[slot_index, batch_index] * constrained_value * (1 - constrained_value) +
+                    (1 - 2 * constrained_value)
             end
         end
     end

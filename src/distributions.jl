@@ -30,12 +30,39 @@ struct GammaDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct BetaDist{T<:Real} <: AbstractTeaDistribution
+    alpha::T
+    beta::T
+
+    function BetaDist(alpha::T, beta::T) where {T<:Real}
+        alpha > zero(T) || throw(ArgumentError("beta requires alpha > 0"))
+        beta > zero(T) || throw(ArgumentError("beta requires beta > 0"))
+        new{T}(alpha, beta)
+    end
+end
+
 struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     p::T
 
     function BernoulliDist(p::T) where {T<:Real}
         zero(T) <= p <= one(T) || throw(ArgumentError("bernoulli requires 0 <= p <= 1"))
         new{T}(p)
+    end
+end
+
+struct CategoricalDist{T<:Real} <: AbstractTeaDistribution
+    probabilities::Vector{T}
+
+    function CategoricalDist(probabilities::Vector{T}) where {T<:Real}
+        isempty(probabilities) && throw(ArgumentError("categorical requires at least one probability"))
+        total = zero(T)
+        for probability in probabilities
+            zero(T) <= probability <= one(T) || throw(ArgumentError("categorical requires 0 <= p <= 1"))
+            total += probability
+        end
+        tolerance = sqrt(eps(float(total))) * max(length(probabilities), 1) * 8
+        abs(total - one(total)) <= tolerance || throw(ArgumentError("categorical probabilities must sum to 1"))
+        new{T}(probabilities)
     end
 end
 
@@ -84,6 +111,11 @@ function gamma(shape, rate)
     return GammaDist(promoted_shape, promoted_rate)
 end
 
+function beta(alpha, beta_parameter)
+    promoted_alpha, promoted_beta = promote(alpha, beta_parameter)
+    return BetaDist(promoted_alpha, promoted_beta)
+end
+
 function lognormal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return LogNormalDist(promoted_mu, promoted_sigma)
@@ -91,6 +123,16 @@ end
 
 function bernoulli(p)
     return BernoulliDist(p)
+end
+
+function categorical(probabilities::AbstractVector)
+    promoted = map(float, collect(probabilities))
+    return CategoricalDist(promoted)
+end
+
+function categorical(probabilities::Vararg{Real})
+    promoted = collect(promote(probabilities...))
+    return CategoricalDist(promoted)
 end
 
 function poisson(lambda)
@@ -137,8 +179,26 @@ function Random.rand(rng::AbstractRNG, dist::GammaDist)
     return _rand_gamma_marsaglia(rng, shape, rate)
 end
 
+function Random.rand(rng::AbstractRNG, dist::BetaDist)
+    alpha = float(dist.alpha)
+    beta_parameter = float(dist.beta)
+    x = _rand_gamma_marsaglia(rng, alpha, one(alpha))
+    y = _rand_gamma_marsaglia(rng, beta_parameter, one(beta_parameter))
+    return x / (x + y)
+end
+
 function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
     return rand(rng) < dist.p
+end
+
+function Random.rand(rng::AbstractRNG, dist::CategoricalDist)
+    threshold = rand(rng, eltype(dist.probabilities))
+    cumulative = zero(threshold)
+    for (index, probability) in enumerate(dist.probabilities)
+        cumulative += probability
+        threshold <= cumulative && return index
+    end
+    return length(dist.probabilities)
 end
 
 function Random.rand(rng::AbstractRNG, dist::PoissonDist)
@@ -184,6 +244,14 @@ function logpdf(dist::GammaDist, x)
     return shape * log(rate) - loggamma(shape) + (shape - one(shape)) * log(xx) - rate * xx
 end
 
+function logpdf(dist::BetaDist, x)
+    xx, alpha, beta_parameter = promote(x, dist.alpha, dist.beta)
+    zero(xx) < xx < one(xx) || return oftype(xx, -Inf)
+    return loggamma(alpha + beta_parameter) - loggamma(alpha) - loggamma(beta_parameter) +
+           (alpha - one(alpha)) * log(xx) +
+           (beta_parameter - one(beta_parameter)) * log1p(-xx)
+end
+
 function logpdf(dist::BernoulliDist, x)
     value = x isa Bool ? x : x != 0
     return value ? log(dist.p) : log1p(-dist.p)
@@ -197,6 +265,22 @@ function _poisson_count(x)
         return x >= zero(x) && x == truncated ? Int(truncated) : nothing
     end
     return nothing
+end
+
+function _categorical_index(x, categories::Int)
+    if x isa Integer
+        return 1 <= x <= categories ? Int(x) : nothing
+    elseif x isa Real && isfinite(x)
+        truncated = trunc(x)
+        return one(x) <= x <= categories && x == truncated ? Int(truncated) : nothing
+    end
+    return nothing
+end
+
+function logpdf(dist::CategoricalDist, x)
+    index = _categorical_index(x, length(dist.probabilities))
+    isnothing(index) && return oftype(float(dist.probabilities[1]), -Inf)
+    return log(dist.probabilities[index])
 end
 
 function _logfactorial_like(value, n::Integer)

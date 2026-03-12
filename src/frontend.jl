@@ -116,6 +116,7 @@ function _rhs_spec_expr(rhs)
             :lognormal,
             :exponential,
             :gamma,
+            :beta,
             :bernoulli,
             :poisson,
             :studentt,
@@ -172,7 +173,7 @@ end
 function _supported_distribution_family(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
     family = rhs.args[1]
-    family in (:normal, :lognormal, :exponential, :gamma, :studentt) || return nothing
+    family in (:normal, :lognormal, :exponential, :gamma, :beta, :studentt) || return nothing
     return family
 end
 
@@ -188,6 +189,8 @@ function _parameter_transform_expr(rhs)
         return :($(_qualify(:IdentityTransform))())
     elseif family === :lognormal || family === :exponential || family === :gamma
         return :($(_qualify(:LogTransform))())
+    elseif family === :beta
+        return :($(_qualify(:LogitTransform))())
     elseif family === :studentt
         return :($(_qualify(:IdentityTransform))())
     end

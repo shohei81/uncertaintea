@@ -110,12 +110,36 @@ function _backend_step_stub(step::BackendGammaChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendBetaChoicePlanStep)
+    return string(
+        "choice beta address=",
+        _backend_address_stub(step.address),
+        " alpha=",
+        _backend_expr_stub(step.alpha),
+        " beta=",
+        _backend_expr_stub(step.beta),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
 function _backend_step_stub(step::BackendBernoulliChoicePlanStep)
     return string(
         "choice bernoulli address=",
         _backend_address_stub(step.address),
         " probability=",
         _backend_expr_stub(step.probability),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
+function _backend_step_stub(step::BackendCategoricalChoicePlanStep)
+    return string(
+        "choice categorical address=",
+        _backend_address_stub(step.address),
+        " probabilities=",
+        _backend_expr_stub(BackendTupleExpr(step.probabilities)),
         " parameter_slot=",
         repr(step.parameter_slot),
     )

@@ -38,6 +38,7 @@ abstract type AbstractParameterTransform end
 
 struct IdentityTransform <: AbstractParameterTransform end
 struct LogTransform <: AbstractParameterTransform end
+struct LogitTransform <: AbstractParameterTransform end
 
 struct ChoiceSpec
     binding::Union{Nothing,Symbol}
@@ -358,6 +359,8 @@ function _parameter_transform(rhs::DistributionSpec)
         return IdentityTransform()
     elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma
         return LogTransform()
+    elseif rhs.family === :beta
+        return LogitTransform()
     end
     return nothing
 end
