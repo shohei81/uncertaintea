@@ -1191,6 +1191,16 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.subtree_accept_prob) == 3
     @test length(gaussian_nuts_workspace.subtree_candidate_log_weight) == 3
     @test length(gaussian_nuts_workspace.subtree_combined_log_weight) == 3
+    @test length(gaussian_nuts_workspace.subtree_merged_turning) == 3
+    turning_destination = falses(3)
+    @test UncertainTea._batched_is_turning!(
+        turning_destination,
+        reshape([0.0, 0.0, 0.0], 1, 3),
+        reshape([1.0, -1.0, 2.0], 1, 3),
+        reshape([1.0, 1.0, 1.0], 1, 3),
+        reshape([1.0, -1.0, -1.0], 1, 3),
+        BitVector([true, true, false]),
+    ) == BitVector([false, true, false])
     gaussian_nuts_tree_current = gaussian_nuts_workspace.column_tree_workspaces[1].current
     gaussian_nuts_tree_next = gaussian_nuts_workspace.column_tree_workspaces[1].next
     UncertainTea._initialize_batched_nuts_continuations!(
@@ -1262,6 +1272,15 @@ using UncertainTea
     @test all(0.0 .<= gaussian_shared_nuts_workspace.subtree_accept_prob .<= 1.0)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_candidate_log_weight)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_combined_log_weight)
+    @test gaussian_shared_nuts_workspace.subtree_merged_turning ==
+        UncertainTea._batched_is_turning!(
+            falses(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
+            gaussian_shared_nuts_workspace.left_position,
+            gaussian_shared_nuts_workspace.right_position,
+            gaussian_shared_nuts_workspace.left_momentum,
+            gaussian_shared_nuts_workspace.right_momentum,
+            trues(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
+        )
     gaussian_single_shared_params = gaussian_batch_params[:, 1:1]
     gaussian_single_shared_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,

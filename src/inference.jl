@@ -230,6 +230,7 @@ mutable struct BatchedNUTSWorkspace
     divergent_step::BitVector
     continuation_turning::BitVector
     subtree_turning::BitVector
+    subtree_merged_turning::BitVector
     subtree_divergent::BitVector
     subtree_active::BitVector
     step_valid::BitVector
@@ -395,6 +396,7 @@ function BatchedNUTSWorkspace(
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
+        falses(num_chains),
         falses(num_chains),
         falses(num_chains),
         falses(num_chains),
@@ -1752,6 +1754,58 @@ function _is_turning(
     return dot(delta, left_momentum) <= 0 || dot(delta, right_momentum) <= 0
 end
 
+function _batched_is_turning!(
+    destination::AbstractVector{Bool},
+    left_position::AbstractMatrix,
+    right_position::AbstractMatrix,
+    left_momentum::AbstractMatrix,
+    right_momentum::AbstractMatrix,
+    active::AbstractVector{Bool},
+)
+    num_chains = size(left_position, 2)
+    size(left_position) == size(right_position) == size(left_momentum) == size(right_momentum) ||
+        throw(DimensionMismatch("batched turning check requires matching position and momentum matrices"))
+    length(destination) == num_chains ||
+        throw(DimensionMismatch("expected turning destination of length $num_chains, got $(length(destination))"))
+    length(active) == num_chains ||
+        throw(DimensionMismatch("expected active mask of length $num_chains, got $(length(active))"))
+
+    for chain_index in 1:num_chains
+        if !active[chain_index]
+            destination[chain_index] = false
+            continue
+        end
+        left_dot = 0.0
+        right_dot = 0.0
+        for parameter_index in axes(left_position, 1)
+            delta = right_position[parameter_index, chain_index] - left_position[parameter_index, chain_index]
+            left_dot += delta * left_momentum[parameter_index, chain_index]
+            right_dot += delta * right_momentum[parameter_index, chain_index]
+        end
+        destination[chain_index] = left_dot <= 0 || right_dot <= 0
+    end
+    return destination
+end
+
+function _merge_batched_nuts_continuation_frontiers!(
+    workspace::BatchedNUTSWorkspace,
+    active::AbstractVector{Bool},
+)
+    length(active) == size(workspace.left_position, 2) ||
+        throw(DimensionMismatch("expected continuation-frontier active mask of length $(size(workspace.left_position, 2)), got $(length(active))"))
+    for chain_index in eachindex(active)
+        active[chain_index] || continue
+        continuation = workspace.column_continuation_states[chain_index]
+        tree_workspace = workspace.column_tree_workspaces[chain_index]
+        if workspace.step_direction[chain_index] < 0
+            _copyto_nuts_state!(continuation.left, tree_workspace.left)
+        else
+            _copyto_nuts_state!(continuation.right, tree_workspace.right)
+        end
+    end
+    return workspace
+end
+
 function _build_nuts_subtree(
     subtree_workspace::NUTSSubtreeWorkspace,
     model::TeaModel,
@@ -1992,6 +2046,7 @@ function _continue_batched_nuts_batched_subtree!(
     fill!(workspace.subtree_candidate_log_weight, -Inf)
     fill!(workspace.subtree_combined_log_weight, -Inf)
     fill!(workspace.subtree_turning, false)
+    fill!(workspace.subtree_merged_turning, false)
     fill!(workspace.subtree_divergent, false)
     fill!(workspace.subtree_active, false)
 
@@ -2098,20 +2153,26 @@ function _continue_batched_nuts_batched_subtree!(
             end
             workspace.subtree_log_weight[chain_index] = workspace.subtree_combined_log_weight[chain_index]
 
-            turning = _is_turning(
-                tree_workspace.left.position,
-                tree_workspace.right.position,
-                tree_workspace.left.momentum,
-                tree_workspace.right.momentum,
-            )
-            workspace.subtree_turning[chain_index] = turning
-            workspace.subtree_active[chain_index] = !turning
+        end
+
+        _batched_is_turning!(
+            workspace.subtree_turning,
+            workspace.tree_left_position,
+            workspace.tree_right_position,
+            workspace.tree_left_momentum,
+            workspace.tree_right_momentum,
+            workspace.subtree_active,
+        )
+        any_active = false
+        for chain_index in 1:num_chains
+            workspace.subtree_active[chain_index] = workspace.subtree_active[chain_index] && !workspace.subtree_turning[chain_index]
             any_active |= workspace.subtree_active[chain_index]
         end
 
         any_active || break
     end
 
+    fill!(workspace.subtree_active, false)
     for chain_index in 1:num_chains
         workspace.tree_depths[chain_index] == active_depth || continue
         started = workspace.subtree_integration_steps[chain_index] > 0 || workspace.subtree_divergent[chain_index]
@@ -2123,14 +2184,23 @@ function _continue_batched_nuts_batched_subtree!(
             continue
         end
 
+        workspace.subtree_active[chain_index] = true
+    end
+
+    _merge_batched_nuts_continuation_frontiers!(workspace, workspace.subtree_active)
+    _batched_is_turning!(
+        workspace.subtree_merged_turning,
+        workspace.left_position,
+        workspace.right_position,
+        workspace.left_momentum,
+        workspace.right_momentum,
+        workspace.subtree_active,
+    )
+
+    for chain_index in 1:num_chains
+        workspace.subtree_active[chain_index] || continue
         continuation = workspace.column_continuation_states[chain_index]
         tree_workspace = workspace.column_tree_workspaces[chain_index]
-        if workspace.step_direction[chain_index] < 0
-            _copyto_nuts_state!(continuation.left, tree_workspace.left)
-        else
-            _copyto_nuts_state!(continuation.right, tree_workspace.right)
-        end
-
         workspace.integration_steps[chain_index] += workspace.subtree_integration_steps[chain_index]
         workspace.continuation_accept_stat_sum[chain_index] += workspace.subtree_accept_stat_sum[chain_index]
         workspace.continuation_accept_stat_count[chain_index] += workspace.subtree_accept_stat_count[chain_index]
@@ -2150,12 +2220,8 @@ function _continue_batched_nuts_batched_subtree!(
         end
 
         workspace.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
-        workspace.continuation_turning[chain_index] = workspace.subtree_turning[chain_index] || _is_turning(
-            continuation.left.position,
-            continuation.right.position,
-            continuation.left.momentum,
-            continuation.right.momentum,
-        )
+        workspace.continuation_turning[chain_index] =
+            workspace.subtree_turning[chain_index] || workspace.subtree_merged_turning[chain_index]
     end
 
     return true

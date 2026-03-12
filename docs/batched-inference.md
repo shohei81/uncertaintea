@@ -132,6 +132,9 @@ for dynamic trajectory building:
 - the continuation merge step now uses batch-owned scratch for candidate and
   combined log weights plus proposal-selection decisions, leaving only the
   actual proposal-state copies as column-wise work
+- turning checks for both subtree growth and merged continuation frontiers now
+  run through batched helpers over the workspace matrices instead of per-chain
+  scalar calls
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
