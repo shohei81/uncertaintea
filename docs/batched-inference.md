@@ -156,6 +156,10 @@ for dynamic trajectory building:
 - both paths now treat continuation proposal energy and energy error as
   source-of-truth state, so the final epilogue mostly copies precomputed
   diagnostics instead of recomputing Hamiltonians again
+- the remaining chain-local batched-NUTS fallback now also stages subtree
+  proposal energy/error and subtree summary metadata in workspace vectors
+  before merging into continuation state, so batched and fallback merge logic
+  share the same scratch-backed bookkeeping path
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

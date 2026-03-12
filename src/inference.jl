@@ -230,6 +230,8 @@ mutable struct BatchedNUTSWorkspace
     subtree_integration_steps::Vector{Int}
     subtree_proposed_energy::Vector{Float64}
     subtree_delta_energy::Vector{Float64}
+    subtree_proposal_energy::Vector{Float64}
+    subtree_proposal_energy_error::Vector{Float64}
     subtree_accept_prob::Vector{Float64}
     subtree_candidate_log_weight::Vector{Float64}
     subtree_combined_log_weight::Vector{Float64}
@@ -410,6 +412,8 @@ function BatchedNUTSWorkspace(
         Vector{Float64}(undef, num_chains),
         zeros(Int, num_chains),
         zeros(Int, num_chains),
+        Vector{Float64}(undef, num_chains),
+        Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
         Vector{Float64}(undef, num_chains),
@@ -2185,6 +2189,36 @@ function _initialize_batched_nuts_subtree_states!(
     return workspace
 end
 
+function _merge_batched_subtree_summary!(
+    workspace::BatchedNUTSWorkspace,
+    chain_index::Int,
+)
+    continuation = workspace.column_continuation_states[chain_index]
+    workspace.integration_steps[chain_index] += workspace.subtree_integration_steps[chain_index]
+    workspace.continuation_accept_stat_sum[chain_index] += workspace.subtree_accept_stat_sum[chain_index]
+    workspace.continuation_accept_stat_count[chain_index] += workspace.subtree_accept_stat_count[chain_index]
+    if isfinite(workspace.subtree_log_weight[chain_index])
+        if workspace.continuation_select_proposal[chain_index]
+            continuation.proposal_energy = workspace.subtree_proposal_energy[chain_index]
+            continuation.proposal_energy_error =
+                workspace.subtree_proposal_energy_error[chain_index]
+            workspace.continuation_proposal_logjoint[chain_index] =
+                workspace.tree_proposal_logjoint[chain_index]
+            workspace.continuation_proposed_energy[chain_index] =
+                continuation.proposal_energy
+            workspace.continuation_delta_energy[chain_index] =
+                continuation.proposal_energy_error
+        end
+        workspace.continuation_log_weight[chain_index] = workspace.continuation_combined_log_weight[chain_index]
+    end
+
+    workspace.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
+    workspace.continuation_turning[chain_index] =
+        workspace.subtree_turning[chain_index] ||
+        workspace.subtree_merged_turning[chain_index]
+    return workspace
+end
+
 function _build_nuts_subtree(
     subtree_workspace::NUTSSubtreeWorkspace,
     model::TeaModel,
@@ -2378,9 +2412,18 @@ function _continue_batched_nuts_proposal!(
             rng,
         )
         workspace.tree_depths[chain_index] += 1
+        workspace.subtree_log_weight[chain_index] = subtree.log_weight
+        workspace.subtree_accept_stat_sum[chain_index] = subtree.accept_stat_sum
+        workspace.subtree_accept_stat_count[chain_index] = subtree.accept_stat_count
+        workspace.subtree_integration_steps[chain_index] = subtree.integration_steps
+        workspace.subtree_turning[chain_index] = subtree.turning
+        workspace.subtree_divergent[chain_index] = subtree.divergent
+        workspace.subtree_merged_turning[chain_index] = false
+        workspace.subtree_proposal_energy[chain_index] = Inf
+        workspace.subtree_proposal_energy_error[chain_index] = Inf
 
         if subtree.integration_steps == 0
-            workspace.divergent_step[chain_index] = subtree.divergent
+            workspace.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
             break
         end
 
@@ -2392,31 +2435,35 @@ function _continue_batched_nuts_proposal!(
             workspace.right_logjoint[chain_index] = tree_workspace.right.logjoint
         end
 
-        workspace.integration_steps[chain_index] += subtree.integration_steps
-        workspace.continuation_accept_stat_sum[chain_index] += subtree.accept_stat_sum
-        workspace.continuation_accept_stat_count[chain_index] += subtree.accept_stat_count
-        if isfinite(subtree.log_weight)
-            combined_log_weight = _logaddexp(workspace.continuation_log_weight[chain_index], subtree.log_weight)
-            if log(rand(rng)) < subtree.log_weight - combined_log_weight
+        workspace.continuation_select_proposal[chain_index] = false
+        workspace.continuation_candidate_log_weight[chain_index] = -Inf
+        workspace.continuation_combined_log_weight[chain_index] =
+            workspace.continuation_log_weight[chain_index]
+        if isfinite(workspace.subtree_log_weight[chain_index])
+            workspace.subtree_proposal_energy[chain_index] = _hamiltonian(
+                tree_workspace.proposal.logjoint,
+                tree_workspace.proposal.momentum,
+                inverse_mass_matrix,
+            )
+            workspace.subtree_proposal_energy_error[chain_index] =
+                workspace.subtree_proposal_energy[chain_index] - initial_hamiltonian
+            workspace.continuation_candidate_log_weight[chain_index] =
+                workspace.subtree_log_weight[chain_index]
+            workspace.continuation_combined_log_weight[chain_index] = _logaddexp(
+                workspace.continuation_log_weight[chain_index],
+                workspace.continuation_candidate_log_weight[chain_index],
+            )
+            workspace.continuation_select_proposal[chain_index] =
+                log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
+                workspace.continuation_combined_log_weight[chain_index]
+            workspace.tree_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
+            if workspace.continuation_select_proposal[chain_index]
                 _copyto_nuts_state!(proposal, tree_workspace.proposal)
-                continuation.proposal_energy = _hamiltonian(
-                    tree_workspace.proposal.logjoint,
-                    tree_workspace.proposal.momentum,
-                    inverse_mass_matrix,
-                )
-                continuation.proposal_energy_error =
-                    continuation.proposal_energy - initial_hamiltonian
-                workspace.continuation_proposed_energy[chain_index] = continuation.proposal_energy
-                workspace.continuation_delta_energy[chain_index] =
-                    continuation.proposal_energy_error
-                workspace.continuation_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
             end
-            workspace.continuation_log_weight[chain_index] = combined_log_weight
         end
-
-        workspace.divergent_step[chain_index] = subtree.divergent
-        workspace.continuation_turning[chain_index] =
-            subtree.turning || _is_turning(left.position, right.position, left.momentum, right.momentum)
+        workspace.subtree_merged_turning[chain_index] =
+            _is_turning(left.position, right.position, left.momentum, right.momentum)
+        _merge_batched_subtree_summary!(workspace, chain_index)
     end
     return workspace
 end
@@ -2441,6 +2488,8 @@ function _continue_batched_nuts_batched_subtree!(
     fill!(workspace.subtree_integration_steps, 0)
     fill!(workspace.subtree_proposed_energy, Inf)
     fill!(workspace.subtree_delta_energy, Inf)
+    fill!(workspace.subtree_proposal_energy, Inf)
+    fill!(workspace.subtree_proposal_energy_error, Inf)
     fill!(workspace.subtree_accept_prob, 0.0)
     fill!(workspace.subtree_candidate_log_weight, -Inf)
     fill!(workspace.subtree_combined_log_weight, -Inf)
@@ -2553,6 +2602,9 @@ function _continue_batched_nuts_batched_subtree!(
                 workspace.subtree_candidate_log_weight[chain_index] - workspace.subtree_combined_log_weight[chain_index]
                 workspace.subtree_select_proposal[chain_index] = true
                 workspace.tree_proposal_logjoint[chain_index] = workspace.tree_current_logjoint[chain_index]
+                workspace.subtree_proposal_energy[chain_index] =
+                    workspace.subtree_proposed_energy[chain_index]
+                workspace.subtree_proposal_energy_error[chain_index] = delta_energy
             end
             workspace.subtree_log_weight[chain_index] = workspace.subtree_combined_log_weight[chain_index]
 
@@ -2632,11 +2684,10 @@ function _continue_batched_nuts_batched_subtree!(
 
     for chain_index in 1:num_chains
         workspace.subtree_active[chain_index] || continue
-        continuation = workspace.column_continuation_states[chain_index]
-        tree_workspace = workspace.column_tree_workspaces[chain_index]
-        workspace.integration_steps[chain_index] += workspace.subtree_integration_steps[chain_index]
-        workspace.continuation_accept_stat_sum[chain_index] += workspace.subtree_accept_stat_sum[chain_index]
-        workspace.continuation_accept_stat_count[chain_index] += workspace.subtree_accept_stat_count[chain_index]
+        workspace.continuation_select_proposal[chain_index] = false
+        workspace.continuation_candidate_log_weight[chain_index] = -Inf
+        workspace.continuation_combined_log_weight[chain_index] =
+            workspace.continuation_log_weight[chain_index]
         if isfinite(workspace.subtree_log_weight[chain_index])
             workspace.continuation_candidate_log_weight[chain_index] = workspace.subtree_log_weight[chain_index]
             workspace.continuation_combined_log_weight[chain_index] = _logaddexp(
@@ -2647,25 +2698,17 @@ function _continue_batched_nuts_batched_subtree!(
                 log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
                 workspace.continuation_combined_log_weight[chain_index]
             if workspace.continuation_select_proposal[chain_index]
-                continuation.proposal_energy = _hamiltonian(
+                workspace.subtree_proposal_energy[chain_index] = _hamiltonian(
                     workspace.tree_proposal_logjoint[chain_index],
                     view(workspace.tree_proposal_momentum, :, chain_index),
                     inverse_mass_matrix,
                 )
-                continuation.proposal_energy_error =
-                    continuation.proposal_energy - workspace.current_energy[chain_index]
-                workspace.continuation_proposal_logjoint[chain_index] = workspace.tree_proposal_logjoint[chain_index]
-                workspace.continuation_proposed_energy[chain_index] =
-                    continuation.proposal_energy
-                workspace.continuation_delta_energy[chain_index] =
-                    continuation.proposal_energy_error
+                workspace.subtree_proposal_energy_error[chain_index] =
+                    workspace.subtree_proposal_energy[chain_index] -
+                    workspace.current_energy[chain_index]
             end
-            workspace.continuation_log_weight[chain_index] = workspace.continuation_combined_log_weight[chain_index]
         end
-
-        workspace.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
-        workspace.continuation_turning[chain_index] =
-            workspace.subtree_turning[chain_index] || workspace.subtree_merged_turning[chain_index]
+        _merge_batched_subtree_summary!(workspace, chain_index)
     end
 
     _copy_masked_nuts_buffers!(

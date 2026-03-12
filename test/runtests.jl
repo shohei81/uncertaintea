@@ -1195,6 +1195,8 @@ using UncertainTea
     @test length(gaussian_nuts_workspace.continuation_select_proposal) == 3
     @test length(gaussian_nuts_workspace.subtree_proposed_energy) == 3
     @test length(gaussian_nuts_workspace.subtree_delta_energy) == 3
+    @test length(gaussian_nuts_workspace.subtree_proposal_energy) == 3
+    @test length(gaussian_nuts_workspace.subtree_proposal_energy_error) == 3
     @test length(gaussian_nuts_workspace.subtree_accept_prob) == 3
     @test length(gaussian_nuts_workspace.subtree_candidate_log_weight) == 3
     @test length(gaussian_nuts_workspace.subtree_combined_log_weight) == 3
@@ -1327,6 +1329,10 @@ using UncertainTea
     @test all(0.0 .<= gaussian_shared_nuts_workspace.subtree_accept_prob .<= 1.0)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_candidate_log_weight)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_combined_log_weight)
+    @test gaussian_shared_nuts_workspace.continuation_proposed_energy ≈
+        [state.proposal_energy for state in gaussian_shared_nuts_workspace.column_continuation_states] atol=1e-8
+    @test gaussian_shared_nuts_workspace.continuation_delta_energy ≈
+        [state.proposal_energy_error for state in gaussian_shared_nuts_workspace.column_continuation_states] atol=1e-8
     @test any(gaussian_shared_nuts_workspace.subtree_copy_left .| gaussian_shared_nuts_workspace.subtree_copy_right)
     @test gaussian_shared_nuts_workspace.subtree_merged_turning ==
         UncertainTea._batched_is_turning!(

@@ -86,7 +86,9 @@ The current CPU NUTS path is intentionally narrow:
   uses batch helpers for energy, acceptance, and moved-state aggregation, while
   the scalar reference path now shares the same summary formulas, and both
   paths now keep proposal energy/error as continuation-state data rather than
-  recomputing them at the very end
+  recomputing them at the very end; even the remaining chain-local batched
+  fallback now stages subtree summary and proposal-energy metadata in
+  workspace-owned vectors before merge
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

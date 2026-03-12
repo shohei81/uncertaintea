@@ -150,7 +150,10 @@ Current backend-lowering subset:
   run through batch helpers over workspace vectors rather than a per-chain
   epilogue loop, and the single-chain NUTS path now uses the same acceptance /
   energy / moved-summary helper logic, with continuation proposal energy and
-  energy-error values now carried as state on both paths; the
+  energy-error values now carried as state on both paths; the remaining
+  chain-local batched fallback now also records subtree summary and selected
+  subtree proposal energy/error in workspace vectors before continuation merge;
+  the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
