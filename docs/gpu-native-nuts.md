@@ -169,3 +169,7 @@ The first GPU-native NUTS target should assume:
 
 This is compatible with the existing batched evaluator direction and avoids
 reintroducing dynamic trace semantics into the hot path.
+
+The current lowering stack is also no longer NUTS-specific at the package
+boundary: backend-lowered static models can now reuse the same generic GPU
+bundle/package substrate and emitter path for stub package generation.

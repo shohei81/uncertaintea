@@ -269,6 +269,9 @@ The next lowering layer is now explicit:
 - `backend_execution_plan(model)` produces a symbolic primitive-only plan for
   the GPU-friendly subset
 - `backend_report(model)` reports whether a model stays inside that subset
+- backend-lowered models can now also lower into the same generic GPU-backend
+  bundle/package substrate used by the NUTS lowering stack and be emitted as
+  stub packages on disk
 - unsupported models keep working through the compiled CPU fallback path
 - batched backend execution currently requires synchronized loop iterables across
   the batch; divergent loop shapes fall back to the compiled CPU path

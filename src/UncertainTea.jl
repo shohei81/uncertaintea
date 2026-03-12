@@ -20,6 +20,7 @@ export parameterlayout, parametercount
 export executionplan
 export choicemap, generate, assess, logjoint, logjoint_unconstrained, logjoint_gradient_unconstrained
 export BackendExecutionPlan, BackendLoweringReport, backend_report, backend_execution_plan
+export backend_package_layout, emit_backend_package
 export batched_logjoint, batched_logjoint_unconstrained, batched_logjoint_gradient_unconstrained
 export BatchedLogjointGradientCache, batched_logjoint_gradient_unconstrained!
 export initialparameters, parameter_vector, parameterchoicemap

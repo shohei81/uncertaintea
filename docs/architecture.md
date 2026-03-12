@@ -230,6 +230,10 @@ Current backend-lowering subset:
 - supported backend choice steps now preload their batched choice values into a
   shared numeric buffer, so `normal`, `lognormal`, and `bernoulli` score
   evaluation no longer performs value lookup inside the per-column scoring loop
+- backend-lowered static models can now also adapt their lowered execution plan
+  into the generic GPU-backend bundle/package substrate and emit a stub package
+  to disk, so that substrate is now shared between model lowering and NUTS
+  lowering
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 
