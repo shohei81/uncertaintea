@@ -102,7 +102,9 @@ The current CPU NUTS path is intentionally narrow:
   in a dedicated scheduler state on the batched workspace, and with an explicit
   `idle/expand/merge/done` scheduler phase plus remaining-step counter; the
   per-chain accepted/divergent flags, sampled directions, and tree-depth /
-  integration counters now also live in a dedicated control state object
+  integration counters now also live in a dedicated control state object, which
+  can in turn be snapshotted as a small control IR
+  (`IdleIR`/`ExpandIR`/`MergeIR`/`DoneIR`) for scheduler-step dispatch
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

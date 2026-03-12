@@ -168,7 +168,9 @@ Current backend-lowering subset:
   `idle/expand/merge/done` phases with a remaining-step counter; accepted /
   divergent flags, step directions, tree depths, and integration counters now
   also live in a dedicated batched NUTS control object instead of as top-level
-  workspace fields; the
+  workspace fields, and that control object now lowers to a small
+  `IdleIR`/`ExpandIR`/`MergeIR`/`DoneIR` snapshot that the scheduler step can
+  dispatch through directly; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

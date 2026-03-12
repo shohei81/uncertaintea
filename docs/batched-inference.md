@@ -190,6 +190,10 @@ for dynamic trajectory building:
   tree depth, and integration-step counters now also live under a dedicated
   batched NUTS control state, separating control/bookkeeping from numeric
   subtree scratch buffers
+- that control state now also lowers to a small control-IR snapshot
+  (`IdleIR`, `ExpandIR`, `MergeIR`, `DoneIR`), and the subtree scheduler step
+  dispatches through that IR shape instead of branching directly on the raw
+  phase enum
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

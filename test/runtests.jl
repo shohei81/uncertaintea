@@ -1664,6 +1664,8 @@ using UncertainTea
     @test gaussian_cohort_scheduler_workspace.control isa UncertainTea.BatchedNUTSControlState
     @test gaussian_cohort_scheduler_workspace.control.scheduler isa
         UncertainTea.BatchedNUTSSchedulerState
+    idle_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
+    @test idle_ir isa UncertainTea.BatchedNUTSIdleIR
     @test UncertainTea._begin_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         4,
@@ -1676,6 +1678,12 @@ using UncertainTea
     @test gaussian_cohort_scheduler_workspace.control.scheduler.remaining_steps == 2
     @test gaussian_cohort_scheduler_workspace.control.scheduler.continuation_active ==
         BitVector([true, true, true])
+    expand_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
+    @test expand_ir isa UncertainTea.BatchedNUTSExpandIR
+    @test expand_ir.active_depth == 1
+    @test expand_ir.active_depth_count == 3
+    @test expand_ir.remaining_steps == 2
+    @test expand_ir.active_chains == BitVector([true, true, true])
     while gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1689,6 +1697,12 @@ using UncertainTea
             cohort_rng,
         )
     end
+    merge_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
+    @test merge_ir isa UncertainTea.BatchedNUTSMergeIR
+    @test merge_ir.active_depth == 1
+    @test merge_ir.active_depth_count == 3
+    @test merge_ir.started_chains == BitVector([true, true, true])
+    @test merge_ir.merge_active == BitVector([true, true, true])
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1706,6 +1720,8 @@ using UncertainTea
     @test gaussian_cohort_scheduler_workspace.control.scheduler.remaining_steps == 0
     @test gaussian_cohort_scheduler_workspace.control.scheduler.subtree_started ==
         BitVector([true, true, true])
+    done_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
+    @test done_ir isa UncertainTea.BatchedNUTSDoneIR
     @test gaussian_cohort_scheduler_workspace.control.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
         BitVector([true, true, true])
