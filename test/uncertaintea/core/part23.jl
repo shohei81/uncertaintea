@@ -54,8 +54,8 @@
     @test mvnormal_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(mvnormal_latent_model, mvnormal_batch_params[:, index], (), choicemap()) for index in 1:3
     ]...) atol=1e-8
-    @test isnothing(mvnormal_batch_cache.backend_cache)
-    @test !isnothing(mvnormal_batch_cache.flat_cache)
+    @test !isnothing(mvnormal_batch_cache.backend_cache)
+    @test isnothing(mvnormal_batch_cache.flat_cache)
     @test isempty(mvnormal_batch_cache.column_caches)
 
     mvnormal_chain = hmc(

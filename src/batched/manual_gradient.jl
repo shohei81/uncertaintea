@@ -110,7 +110,8 @@ function _backend_gradient_supported_step(step::BackendStudentTChoicePlanStep)
 end
 
 function _backend_gradient_supported_step(step::BackendMvNormalChoicePlanStep)
-    return false
+    return all(_backend_gradient_supported_expr, step.mu) &&
+           all(_backend_gradient_supported_expr, step.sigma)
 end
 
 function _backend_gradient_supported_step(step::BackendDeterministicPlanStep, numeric_slots::BitVector)
@@ -195,6 +196,20 @@ function _fill_choice_gradient!(
     isnothing(parameter_slot) && return destination
     for batch_index in axes(destination, 2)
         destination[parameter_slot, batch_index] = 1.0
+    end
+    return destination
+end
+
+function _fill_choice_vector_gradient!(
+    destination::AbstractMatrix{Float64},
+    value_index::Union{Nothing,Int},
+    component_index::Int,
+)
+    fill!(destination, 0.0)
+    isnothing(value_index) && return destination
+    parameter_index = value_index + component_index - 1
+    for batch_index in axes(destination, 2)
+        destination[parameter_index, batch_index] = 1.0
     end
     return destination
 end

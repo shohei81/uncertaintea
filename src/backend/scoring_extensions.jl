@@ -160,6 +160,64 @@ function _batched_choice_vector_values!(
 end
 
 function _batched_choice_vector_values!(
+    destinations::AbstractVector{<:AbstractVector},
+    value_index::Union{Nothing,Int},
+    value_length::Int,
+    params::AbstractMatrix,
+    constraints::ChoiceMap,
+    address_parts::Tuple,
+)
+    length(destinations) == value_length ||
+        throw(DimensionMismatch("expected $value_length mvnormal component buffers, got $(length(destinations))"))
+    if !isnothing(value_index)
+        for component_index in 1:value_length
+            copyto!(destinations[component_index], view(params, value_index + component_index - 1, :))
+        end
+        return destinations
+    end
+    for batch_index in 1:size(params, 2)
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, constrained_value = _choice_tryget_normalized(constraints, address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(first(destinations)))
+        for component_index in 1:value_length
+            destinations[component_index][batch_index] = values[component_index]
+        end
+    end
+    return destinations
+end
+
+function _batched_choice_vector_values!(
+    destinations::AbstractVector{<:AbstractVector},
+    value_index::Union{Nothing,Int},
+    value_length::Int,
+    params::AbstractMatrix,
+    constraints::AbstractVector,
+    address_parts::Tuple,
+)
+    length(destinations) == value_length ||
+        throw(DimensionMismatch("expected $value_length mvnormal component buffers, got $(length(destinations))"))
+    length(constraints) == size(params, 2) ||
+        throw(DimensionMismatch("expected $(size(params, 2)) batched constraints, got $(length(constraints))"))
+    if !isnothing(value_index)
+        for component_index in 1:value_length
+            copyto!(destinations[component_index], view(params, value_index + component_index - 1, :))
+        end
+        return destinations
+    end
+    for batch_index in 1:size(params, 2)
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(first(destinations)))
+        for component_index in 1:value_length
+            destinations[component_index][batch_index] = values[component_index]
+        end
+    end
+    return destinations
+end
+
+function _batched_choice_vector_values!(
     destination::AbstractMatrix,
     value_index::Union{Nothing,Int},
     value_length::Int,
@@ -196,6 +254,20 @@ function _assign_backend_choice_vector_value!(
     storage = env.generic_values[slot]
     for batch_index in 1:env.batch_size
         storage[batch_index] = collect(view(values, :, batch_index))
+    end
+    env.assigned[slot] = true
+    return env
+end
+
+function _assign_backend_choice_vector_value!(
+    env::BatchedPlanEnvironment,
+    slot::Int,
+    values::AbstractVector{<:AbstractVector},
+)
+    env.generic_slots[slot] || throw(BatchedBackendFallback("mvnormal backend binding slot $slot must be generic"))
+    storage = env.generic_values[slot]
+    for batch_index in 1:env.batch_size
+        storage[batch_index] = [component_values[batch_index] for component_values in values]
     end
     env.assigned[slot] = true
     return env
@@ -373,20 +445,20 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
-    choice_values = Matrix{eltype(params)}(undef, step.value_length, env.batch_size)
+    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
 
-    mu_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
-    sigma_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
+    mu_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
+    sigma_values = [_batched_numeric_scratch!(env, 2 * step.value_length + index) for index in 1:step.value_length]
     for component_index in 1:step.value_length
-        _eval_backend_numeric_expr!(mu_values[component_index], env, step.mu[component_index], 2 * step.value_length + 1)
-        _eval_backend_numeric_expr!(sigma_values[component_index], env, step.sigma[component_index], 2 * step.value_length + 2)
+        _eval_backend_numeric_expr!(mu_values[component_index], env, step.mu[component_index], 3 * step.value_length + 1)
+        _eval_backend_numeric_expr!(sigma_values[component_index], env, step.sigma[component_index], 3 * step.value_length + 2)
         for batch_index in 1:env.batch_size
             totals[batch_index] += _backend_normal_logpdf(
                 mu_values[component_index][batch_index],
                 sigma_values[component_index][batch_index],
-                choice_values[component_index, batch_index],
+                choice_values[component_index][batch_index],
             )
         end
     end

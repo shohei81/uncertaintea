@@ -321,8 +321,8 @@ The next lowering layer is now explicit:
   `mvnormal` latents can use batched `logjoint`, unconstrained gradients, HMC,
   and NUTS regardless of whether they take the backend-native path
 - restricted diagonal `mvnormal` now also lowers to the backend-native batched
-  scoring path, but its batched gradients still use the flat backend
-  `ForwardDiff` fallback rather than the manual backend gradient evaluator
+  scoring path, and its batched gradients now use the manual backend
+  gradient evaluator instead of the flat backend `ForwardDiff` fallback
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
 - batched HMC now also keeps the current unconstrained gradient for each chain

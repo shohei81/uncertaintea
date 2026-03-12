@@ -149,8 +149,8 @@ This is now the first implemented end-to-end vector target because:
 Current limitation inside Phase 3:
 
 - backend-native batched scoring supports diagonal `mvnormal`
-- batched gradients for that family still use the flat backend
-  `ForwardDiff` fallback instead of the manual backend gradient path
+- batched gradients for that family now use the manual backend gradient path
+- richer vector families such as `dirichlet` still remain CPU/fallback only
 
 ### Phase 4: Latent `dirichlet`
 

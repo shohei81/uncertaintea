@@ -118,9 +118,8 @@ Current backend-lowering subset:
   diagonal `mvnormal` latents with equal-dimensional constrained and
   unconstrained storage
 - backend-native vector support has now started with restricted diagonal
-  `mvnormal`; the scoring path is native, while batched gradients for that
-  family still use the flat backend `ForwardDiff` fallback rather than the
-  manual backend gradient path
+  `mvnormal`; both the scoring path and the batched manual backend gradient
+  path are native for the current diagonal family
 - the differentiable backend primitive subset now includes `abs`, `min`,
   `max`, `clamp`, `%` with a literal divisor, and `^` with a literal exponent
   in addition to the earlier arithmetic and log/exp primitives
