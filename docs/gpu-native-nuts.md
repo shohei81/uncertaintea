@@ -117,7 +117,8 @@ The current CPU NUTS path is intentionally narrow:
   descriptor with explicit logical read/write buffer sets, alias classes, and
   a fixed intra-program dependency table, derives a phase-local schedule and
   buffer lifecycle metadata, resource groups, and barrier placements from
-  those descriptors, plus a small
+  those descriptors, lowers that metadata into a backend execution block with
+  concrete buffer bindings and barrier hints, plus a small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through
   phase-specialized program handlers instead of a single generic op loop, with

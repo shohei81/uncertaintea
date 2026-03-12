@@ -173,6 +173,35 @@
         )
     @test UncertainTea._batched_nuts_kernel_barriers_after(merge_plan, 2) ==
         UncertainTea._batched_nuts_kernel_barriers(merge_plan)
+    merge_backend_block = UncertainTea._batched_nuts_backend_execution_block(merge_program)
+    merge_control_binding = UncertainTea._batched_nuts_backend_buffer_binding(
+        merge_backend_block,
+        UncertainTea.NUTSKernelBufferControlBlock,
+    )
+    @test merge_control_binding ==
+        UncertainTea.BatchedNUTSKernelBufferBinding(
+            1,
+            UncertainTea.NUTSKernelBufferControlBlock,
+            UncertainTea.NUTSKernelAliasControlBlock,
+            UncertainTea.NUTSKernelStorageUniform,
+            1,
+            merge_lifecycles[1],
+        )
+    merge_step_binding = UncertainTea._batched_nuts_backend_steps(merge_backend_block)[3]
+    @test UncertainTea._batched_nuts_kernel_step(
+        UncertainTea._batched_nuts_kernel_stage_dataflow(
+            UncertainTea._batched_nuts_backend_stage(merge_step_binding),
+        ),
+    ) isa UncertainTea.BatchedNUTSMergeStep
+    @test UncertainTea._batched_nuts_backend_step_read_buffers(
+        merge_backend_block,
+        merge_step_binding,
+    ) == UncertainTea._batched_nuts_kernel_reads(merge_dataflows[3])
+    @test UncertainTea._batched_nuts_backend_step_write_buffers(
+        merge_backend_block,
+        merge_step_binding,
+    ) == UncertainTea._batched_nuts_kernel_writes(merge_dataflows[3])
+    @test UncertainTea._batched_nuts_backend_barriers_after(merge_step_binding) == ()
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -240,6 +269,16 @@
             1,
             1,
         )
+    done_backend_block = UncertainTea._batched_nuts_backend_execution_block(done_program)
+    @test UncertainTea._batched_nuts_backend_buffer_binding(
+        done_backend_block,
+        UncertainTea.NUTSKernelBufferControlState,
+    ).storage_class == UncertainTea.NUTSKernelStoragePersistent
+    @test isempty(
+        UncertainTea._batched_nuts_backend_barriers_after(
+            UncertainTea._batched_nuts_backend_steps(done_backend_block)[1],
+        ),
+    )
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,
@@ -506,6 +545,41 @@
             ),
         )
     @test UncertainTea._batched_nuts_kernel_barriers_after(expand_plan, 2) ==
+        (
+            UncertainTea.BatchedNUTSKernelBarrierPlacement(
+                2,
+                UncertainTea.NUTSKernelDependencyBarrier,
+                (
+                    UncertainTea.NUTSKernelAliasTreeState,
+                    UncertainTea.NUTSKernelAliasControlState,
+                ),
+                (
+                    UncertainTea.NUTSKernelBufferTreeNextState,
+                    UncertainTea.NUTSKernelBufferControlState,
+                ),
+            ),
+        )
+    expand_backend_block = UncertainTea._batched_nuts_backend_execution_block(expand_direct_program)
+    expand_next_binding = UncertainTea._batched_nuts_backend_buffer_binding(
+        expand_backend_block,
+        UncertainTea.NUTSKernelBufferTreeNextState,
+    )
+    @test expand_next_binding.storage_class == UncertainTea.NUTSKernelStorageScratch
+    @test expand_next_binding.resource_group ==
+        UncertainTea._batched_nuts_backend_buffer_binding(
+            expand_backend_block,
+            UncertainTea.NUTSKernelBufferTreeCurrentState,
+        ).resource_group
+    expand_step_binding = UncertainTea._batched_nuts_backend_steps(expand_backend_block)[2]
+    @test UncertainTea._batched_nuts_backend_step_read_buffers(
+        expand_backend_block,
+        expand_step_binding,
+    ) == UncertainTea._batched_nuts_kernel_reads(expand_dataflows[2])
+    @test UncertainTea._batched_nuts_backend_step_write_buffers(
+        expand_backend_block,
+        expand_step_binding,
+    ) == UncertainTea._batched_nuts_kernel_writes(expand_dataflows[2])
+    @test UncertainTea._batched_nuts_backend_barriers_after(expand_step_binding) ==
         (
             UncertainTea.BatchedNUTSKernelBarrierPlacement(
                 2,

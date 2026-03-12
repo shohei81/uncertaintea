@@ -1,4 +1,5 @@
 include("control.jl")
 include("access.jl")
 include("dataflow.jl")
+include("backend_block.jl")
 include("kernel.jl")

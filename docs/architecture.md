@@ -183,7 +183,8 @@ Current backend-lowering subset:
   dataflow descriptor with explicit logical read/write buffer sets, alias
   classes, and a fixed intra-program dependency table, and derives a
   phase-local schedule plus buffer lifecycle metadata, resource groups, and
-  barrier placements from those steps, and
+  barrier placements from those steps, and then lowers that metadata into a
+  backend execution block with concrete buffer bindings and barrier hints, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control

@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    plan = _batched_nuts_kernel_resource_plan(program)
-    schedule = plan.schedule
-    for stage in _batched_nuts_kernel_schedule_stages(schedule)
-        _execute_batched_nuts_kernel_dataflow!(
+    block = _batched_nuts_backend_execution_block(program)
+    for step_binding in _batched_nuts_backend_steps(block)
+        _execute_batched_nuts_backend_step_binding!(
             workspace,
-            _batched_nuts_kernel_stage_dataflow(stage),
+            block,
+            step_binding,
             execution,
             model,
             inverse_mass_matrix,
@@ -457,13 +457,37 @@ function _execute_batched_nuts_kernel_program!(
             max_delta_energy,
             rng,
         )
-        for barrier in _batched_nuts_kernel_barriers_after(plan, stage.index)
-            _execute_batched_nuts_kernel_barrier!(
-                workspace,
-                barrier,
-                execution,
-            )
-        end
+    end
+    return nothing
+end
+
+function _execute_batched_nuts_backend_step_binding!(
+    workspace::BatchedNUTSWorkspace,
+    block::BatchedNUTSKernelBackendExecutionBlock,
+    step_binding::BatchedNUTSKernelBackendStepBinding,
+    execution::BatchedNUTSKernelExecutionState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _execute_batched_nuts_kernel_dataflow!(
+        workspace,
+        _batched_nuts_kernel_stage_dataflow(_batched_nuts_backend_stage(step_binding)),
+        execution,
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+    for barrier in _batched_nuts_backend_barriers_after(step_binding)
+        _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
     return nothing
 end
