@@ -273,6 +273,9 @@ The next lowering layer is now explicit:
   bundle/package substrate used by the NUTS lowering stack and be emitted as
   stub packages on disk; both paths now also share a generic codegen-bundle
   contract for stage source blobs, entry symbols, and manifest generation
+- the static backend package emitter can now target `:gpu`, `:metal`, and
+  `:cuda` stub source/module policies even though the symbolic lowering itself
+  still comes from the current `:gpu` backend plan
 - unsupported models keep working through the compiled CPU fallback path
 - batched backend execution currently requires synchronized loop iterables across
   the batch; divergent loop shapes fall back to the compiled CPU path

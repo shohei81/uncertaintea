@@ -25,6 +25,17 @@
     @test occursin("const STEP_COUNT = 4", deterministic_backend_stage.contents)
     @test occursin("# 3. deterministic slot=", deterministic_backend_stage.contents)
 
+    gaussian_metal_backend_layout = backend_package_layout(gaussian_mean; target=:metal)
+    gaussian_cuda_backend_layout = backend_package_layout(gaussian_mean; target=:cuda)
+    @test gaussian_metal_backend_layout.backend_symbol ==
+        :UncertainTeaMetalBackendPackage__gaussian_mean
+    @test gaussian_cuda_backend_layout.backend_symbol ==
+        :UncertainTeaCUDABackendPackage__gaussian_mean
+    @test endswith(gpu_backend_files(gaussian_metal_backend_layout)[2].relative_path, ".metal")
+    @test endswith(gpu_backend_files(gaussian_cuda_backend_layout)[2].relative_path, ".cu")
+    @test occursin("const TARGET = :metal", gpu_backend_files(gaussian_metal_backend_layout)[2].contents)
+    @test occursin("const TARGET = :cuda", gpu_backend_files(gaussian_cuda_backend_layout)[2].contents)
+
     mktempdir() do temp_dir
         emission = emit_backend_package(gaussian_mean, temp_dir)
         @test emission.package.backend_symbol == gaussian_backend_layout.backend_symbol
@@ -52,3 +63,4 @@
         unsupported_backend_model,
         mktempdir(),
     )
+    @test_throws ArgumentError backend_package_layout(gaussian_mean; target=:bogus)

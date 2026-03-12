@@ -48,32 +48,17 @@ _batched_nuts_module_symbol(::Val{:metal}) = :UncertainTeaMetalModules
 _batched_nuts_module_symbol(::Val{:cuda}) = :UncertainTeaCUDAModules
 
 function _batched_nuts_module_symbol(target::Symbol)
-    target in (:gpu, :metal, :cuda) ||
-        throw(ArgumentError("unsupported NUTS module target $(target)"))
-    return _batched_nuts_module_symbol(Val(target))
+    return _batched_nuts_module_symbol(Val(_gpu_backend_require_target(target)))
 end
 
-_batched_nuts_module_extension(::Val{:gpu}) = ".jl"
-_batched_nuts_module_extension(::Val{:metal}) = ".metal"
-_batched_nuts_module_extension(::Val{:cuda}) = ".cu"
-
-function _batched_nuts_module_extension(target::Symbol)
-    target in (:gpu, :metal, :cuda) ||
-        throw(ArgumentError("unsupported NUTS module target $(target)"))
-    return _batched_nuts_module_extension(Val(target))
-end
+_batched_nuts_module_extension(target::Symbol) = gpu_backend_module_extension(target)
 
 function _batched_nuts_module_filename(
     module_symbol::Symbol,
     entry_symbol::Symbol,
     target::Symbol,
 )
-    return string(
-        lowercase(String(module_symbol)),
-        "__",
-        entry_symbol,
-        _batched_nuts_module_extension(target),
-    )
+    return gpu_backend_module_filename(module_symbol, entry_symbol, target)
 end
 
 function _batched_nuts_module_source_blob(source_stage::BatchedNUTSKernelSourceStage)

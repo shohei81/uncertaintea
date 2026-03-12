@@ -1,14 +1,7 @@
-_backend_package_target_name(::Val{:gpu}) = "GPU"
-
-function _backend_package_target_name(target::Symbol)
-    target === :gpu || throw(ArgumentError("unsupported backend package target $(target)"))
-    return _backend_package_target_name(Val(target))
-end
-
 function _backend_package_symbol(model::TeaModel, target::Symbol)
     return Symbol(
         "UncertainTea",
-        _backend_package_target_name(target),
+        gpu_backend_target_name(target),
         "BackendPackage__",
         model.name,
     )
@@ -17,7 +10,7 @@ end
 function _backend_bundle_symbol(model::TeaModel, target::Symbol)
     return Symbol(
         "UncertainTea",
-        _backend_package_target_name(target),
+        gpu_backend_target_name(target),
         "BackendBundle__",
         model.name,
     )
@@ -26,15 +19,14 @@ end
 function _backend_module_symbol(model::TeaModel, target::Symbol)
     return Symbol(
         "UncertainTea",
-        _backend_package_target_name(target),
+        gpu_backend_target_name(target),
         "BackendModule__",
         model.name,
     )
 end
 
 function _backend_module_filename(model::TeaModel, target::Symbol)
-    target === :gpu || throw(ArgumentError("unsupported backend module target $(target)"))
-    return string(lowercase(String(_backend_module_symbol(model, target))), ".jl")
+    return gpu_backend_module_filename(_backend_module_symbol(model, target), nothing, target)
 end
 
 _backend_bool_literal(value::Bool) = value ? "true" : "false"
@@ -128,12 +120,13 @@ end
 function _backend_module_source_lines(
     model::TeaModel,
     plan::BackendExecutionPlan,
+    target::Symbol,
     module_symbol::Symbol,
     entry_symbol::Symbol,
 )
     lines = String[
         string("module ", module_symbol),
-        string("const TARGET = :", plan.target),
+        string("const TARGET = :", target),
         string("const MODEL = :", model.name),
         string("const STEP_COUNT = ", length(plan.steps)),
         string("const NUMERIC_SLOTS = ", _backend_bool_vector_literal(plan.numeric_slots)),
@@ -175,6 +168,7 @@ function _backend_bundle_layout(
                     _backend_module_source_lines(
                         model,
                         plan,
+                        target,
                         module_symbol,
                         entry_symbol,
                     ),
@@ -187,7 +181,8 @@ function _backend_bundle_layout(
 end
 
 function backend_package_layout(model::TeaModel; target::Symbol=:gpu)
-    plan = backend_execution_plan(model; target=target)
+    _gpu_backend_require_target(target)
+    plan = backend_execution_plan(model; target=:gpu)
     package_symbol = _backend_package_symbol(model, target)
     root_dir = lowercase(String(package_symbol))
     return gpu_backend_codegen_package_layout(

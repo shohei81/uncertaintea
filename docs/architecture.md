@@ -235,6 +235,9 @@ Current backend-lowering subset:
   to disk, so that substrate is now shared between model lowering and NUTS
   lowering; both now pass through the same codegen-bundle contract for stage
   source blobs, entry symbols, and generated manifest structure
+- that shared emit layer now also owns the target-specific source/module policy
+  (`.jl`, `.metal`, `.cu` and matching buffer-argument declarations), so both
+  NUTS and static model backend packages consume the same target helpers
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

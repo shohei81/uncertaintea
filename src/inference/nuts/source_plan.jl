@@ -54,9 +54,7 @@ _batched_nuts_source_backend(::Val{:metal}) = NUTSKernelMetalSource
 _batched_nuts_source_backend(::Val{:cuda}) = NUTSKernelCUDASource
 
 function _batched_nuts_source_backend(target::Symbol)
-    target in (:gpu, :metal, :cuda) ||
-        throw(ArgumentError("unsupported NUTS source target $(target)"))
-    return _batched_nuts_source_backend(Val(target))
+    return _batched_nuts_source_backend(Val(_gpu_backend_require_target(target)))
 end
 
 _batched_nuts_source_module(::Val{:gpu}) = :UncertainTeaCPUSources
@@ -64,39 +62,17 @@ _batched_nuts_source_module(::Val{:metal}) = :UncertainTeaMetalSources
 _batched_nuts_source_module(::Val{:cuda}) = :UncertainTeaCUDASources
 
 function _batched_nuts_source_module(target::Symbol)
-    target in (:gpu, :metal, :cuda) ||
-        throw(ArgumentError("unsupported NUTS source target $(target)"))
-    return _batched_nuts_source_module(Val(target))
-end
-
-function _batched_nuts_source_argument_declaration(
-    ::Val{:gpu},
-    argument::BatchedNUTSKernelArtifactArgument,
-)
-    return string(_batched_nuts_artifact_argument_symbol(argument), "::AbstractBuffer")
-end
-
-function _batched_nuts_source_argument_declaration(
-    ::Val{:metal},
-    argument::BatchedNUTSKernelArtifactArgument,
-)
-    return string(_batched_nuts_artifact_argument_symbol(argument), "::MetalBuffer")
-end
-
-function _batched_nuts_source_argument_declaration(
-    ::Val{:cuda},
-    argument::BatchedNUTSKernelArtifactArgument,
-)
-    return string(_batched_nuts_artifact_argument_symbol(argument), "::CUDABuffer")
+    return _batched_nuts_source_module(Val(_gpu_backend_require_target(target)))
 end
 
 function _batched_nuts_source_argument_declaration(
     target::Symbol,
     argument::BatchedNUTSKernelArtifactArgument,
 )
-    target in (:gpu, :metal, :cuda) ||
-        throw(ArgumentError("unsupported NUTS source target $(target)"))
-    return _batched_nuts_source_argument_declaration(Val(target), argument)
+    return gpu_backend_buffer_argument_declaration(
+        target,
+        _batched_nuts_artifact_argument_symbol(argument),
+    )
 end
 
 function _batched_nuts_source_arguments(target::Symbol, arguments::Tuple)
