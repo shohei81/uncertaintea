@@ -135,7 +135,9 @@ Current backend-lowering subset:
   `ForwardDiff` objective/config when batch inputs are homogeneous; continuation
   subtrees now also run through the batched leapfrog and batched value+gradient
   path in same-depth cohorts before falling back, with subtree energy,
-  acceptance, and log-weight bookkeeping now stored in batch-owned scratch; the
+  acceptance, and log-weight bookkeeping now stored in batch-owned scratch, and
+  the continuation merge path now keeps proposal-selection/log-weight scratch
+  there as well; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

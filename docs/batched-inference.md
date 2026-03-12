@@ -129,6 +129,9 @@ for dynamic trajectory building:
 - subtree energy, acceptance probability, and log-weight bookkeeping for those
   cohort steps now also live in batch-owned scratch vectors rather than local
   scalar temporaries
+- the continuation merge step now uses batch-owned scratch for candidate and
+  combined log weights plus proposal-selection decisions, leaving only the
+  actual proposal-state copies as column-wise work
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

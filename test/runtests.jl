@@ -1180,6 +1180,12 @@ using UncertainTea
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) === gaussian_nuts_workspace.proposal_position
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.momentum) === gaussian_nuts_workspace.proposal_momentum
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.gradient) === gaussian_nuts_workspace.proposal_gradient
+    @test length(gaussian_nuts_workspace.continuation_proposed_energy) == 3
+    @test length(gaussian_nuts_workspace.continuation_delta_energy) == 3
+    @test length(gaussian_nuts_workspace.continuation_accept_prob) == 3
+    @test length(gaussian_nuts_workspace.continuation_candidate_log_weight) == 3
+    @test length(gaussian_nuts_workspace.continuation_combined_log_weight) == 3
+    @test length(gaussian_nuts_workspace.continuation_select_proposal) == 3
     @test length(gaussian_nuts_workspace.subtree_proposed_energy) == 3
     @test length(gaussian_nuts_workspace.subtree_delta_energy) == 3
     @test length(gaussian_nuts_workspace.subtree_accept_prob) == 3
@@ -1213,6 +1219,11 @@ using UncertainTea
     @test gaussian_nuts_workspace.tree_depths[1] == 1
     @test gaussian_nuts_workspace.integration_steps[1] in 0:1
     @test isfinite(gaussian_nuts_workspace.continuation_log_weight[1])
+    @test isfinite(gaussian_nuts_workspace.continuation_proposed_energy[1])
+    @test isfinite(gaussian_nuts_workspace.continuation_delta_energy[1])
+    @test 0.0 <= gaussian_nuts_workspace.continuation_accept_prob[1] <= 1.0
+    @test isfinite(gaussian_nuts_workspace.continuation_candidate_log_weight[1])
+    @test isfinite(gaussian_nuts_workspace.continuation_combined_log_weight[1])
     @test gaussian_nuts_workspace.continuation_accept_stat_count[1] in 0:1
     UncertainTea._initialize_batched_nuts_continuations!(
         gaussian_shared_nuts_workspace,
@@ -1242,6 +1253,9 @@ using UncertainTea
     @test all(depth == 2 for depth in gaussian_shared_nuts_workspace.tree_depths)
     @test all(steps >= 2 for steps in gaussian_shared_nuts_workspace.integration_steps)
     @test all(isfinite, gaussian_shared_nuts_workspace.continuation_log_weight)
+    @test all(isfinite, gaussian_shared_nuts_workspace.continuation_candidate_log_weight)
+    @test all(isfinite, gaussian_shared_nuts_workspace.continuation_combined_log_weight)
+    @test all(0.0 .<= gaussian_shared_nuts_workspace.continuation_accept_prob .<= 1.0)
     @test all(count >= 1 for count in gaussian_shared_nuts_workspace.continuation_accept_stat_count)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_proposed_energy)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_delta_energy)
