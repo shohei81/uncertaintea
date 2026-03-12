@@ -6,17 +6,19 @@ function _batched_nuts_backend_manifest_file(plan::BatchedNUTSKernelPackagePlan)
     )
 end
 
-function _batched_nuts_backend_stage_files(plan::BatchedNUTSKernelPackagePlan)
-    return Tuple(
-        GPUBackendStageFile(
-            _batched_nuts_module_entry_symbol(
-                _batched_nuts_bundle_module_stage(
-                    _batched_nuts_package_bundle_stage(stage_file),
+function _batched_nuts_backend_stage_kind(stage_file::BatchedNUTSKernelPackageStageFile)
+    return _batched_nuts_executor_kernel_symbol(
+        _batched_nuts_codegen_executor_stage(
+            _batched_nuts_artifact_codegen_stage(
+                _batched_nuts_source_artifact_stage(
+                    _batched_nuts_module_source_stage(
+                        _batched_nuts_bundle_module_stage(
+                            _batched_nuts_package_bundle_stage(stage_file),
+                        ),
+                    ),
                 ),
             ),
-            _batched_nuts_package_relative_path(stage_file),
-            _batched_nuts_package_contents(stage_file),
-        ) for stage_file in _batched_nuts_package_stage_files(plan)
+        ),
     )
 end
 
@@ -24,11 +26,20 @@ function _batched_nuts_backend_bundle_layout(plan::BatchedNUTSKernelPackagePlan)
     bundle_symbol = _batched_nuts_bundle_symbol(_batched_nuts_package_bundle_plan(plan))
     stages = Tuple(
         GPUBackendCodegenStage(
-            stage_file.stage_name,
-            stage_file.stage_name,
-            basename(stage_file.relative_path),
-            stage_file.contents,
-        ) for stage_file in _batched_nuts_backend_stage_files(plan)
+            _batched_nuts_module_entry_symbol(
+                _batched_nuts_bundle_module_stage(
+                    _batched_nuts_package_bundle_stage(stage_file),
+                ),
+            ),
+            _batched_nuts_backend_stage_kind(stage_file),
+            _batched_nuts_module_entry_symbol(
+                _batched_nuts_bundle_module_stage(
+                    _batched_nuts_package_bundle_stage(stage_file),
+                ),
+            ),
+            basename(_batched_nuts_package_relative_path(stage_file)),
+            _batched_nuts_package_contents(stage_file),
+        ) for stage_file in _batched_nuts_package_stage_files(plan)
     )
     return gpu_backend_codegen_bundle(
         plan.target,

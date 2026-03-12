@@ -241,6 +241,8 @@ Current backend-lowering subset:
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering
+- stage kind now flows through that same shared template/emitter path, so
+  generated manifests and stub modules expose a common stage taxonomy
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

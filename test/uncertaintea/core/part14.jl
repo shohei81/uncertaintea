@@ -35,6 +35,7 @@
     @test endswith(gpu_backend_files(gaussian_cuda_backend_layout)[2].relative_path, ".cu")
     @test occursin("const TARGET = :metal", gpu_backend_files(gaussian_metal_backend_layout)[2].contents)
     @test occursin("const TARGET = :cuda", gpu_backend_files(gaussian_cuda_backend_layout)[2].contents)
+    @test occursin("const STAGE_KIND = :backend_execute", gpu_backend_files(gaussian_backend_layout)[2].contents)
 
     mktempdir() do temp_dir
         emission = emit_backend_package(gaussian_mean, temp_dir)

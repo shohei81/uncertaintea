@@ -16,8 +16,9 @@ struct GPUBackendBundleLayout{M,S}
     stages::S
 end
 
-struct GPUBackendCodegenStage{N,E}
+struct GPUBackendCodegenStage{N,K,E}
     stage_name::N
+    stage_kind::K
     entry_symbol::E
     filename::String
     source_blob::String
@@ -55,6 +56,16 @@ gpu_backend_bundles(layout::GPUBackendPackageLayout) = layout.bundles
 gpu_backend_files(layout::GPUBackendPackageLayout) = layout.files
 gpu_backend_codegen_manifest_lines(bundle::GPUBackendCodegenBundle) = bundle.manifest_lines
 gpu_backend_codegen_stages(bundle::GPUBackendCodegenBundle) = bundle.stages
+gpu_backend_stage_kind(stage::GPUBackendCodegenStage) = stage.stage_kind
+
+function GPUBackendCodegenStage(
+    stage_name,
+    entry_symbol,
+    filename::String,
+    source_blob::String,
+)
+    return GPUBackendCodegenStage(stage_name, stage_name, entry_symbol, filename, source_blob)
+end
 
 function GPUBackendPackageLayout(
     target::Symbol,

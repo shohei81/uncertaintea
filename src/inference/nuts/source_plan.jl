@@ -49,6 +49,16 @@ function _batched_nuts_source_argument_symbol(argument::BatchedNUTSKernelSourceA
     return _batched_nuts_artifact_argument_symbol(argument.argument)
 end
 
+function _batched_nuts_source_stage_kind(
+    artifact_stage::BatchedNUTSKernelArtifactStage,
+)
+    return _batched_nuts_executor_kernel_symbol(
+        _batched_nuts_codegen_executor_stage(
+            _batched_nuts_artifact_codegen_stage(artifact_stage),
+        ),
+    )
+end
+
 _batched_nuts_source_backend(::Val{:gpu}) = NUTSKernelCPUSource
 _batched_nuts_source_backend(::Val{:metal}) = NUTSKernelMetalSource
 _batched_nuts_source_backend(::Val{:cuda}) = NUTSKernelCUDASource
@@ -87,17 +97,26 @@ end
 function _batched_nuts_source_lines(
     source_module::Symbol,
     source_entry::Symbol,
+    stage_kind::Symbol,
+    target::Symbol,
     constant_arguments::Tuple,
     device_arguments::Tuple,
     shared_arguments::Tuple,
 )
-    return gpu_backend_stub_source_lines(
+    return gpu_backend_stage_source_lines(
         source_module,
         source_entry,
         (
             map(argument -> argument.declaration, constant_arguments)...,
             map(argument -> argument.declaration, device_arguments)...,
             map(argument -> argument.declaration, shared_arguments)...,
+        ),
+        stage_kind,
+        target;
+        metadata_lines=(
+            string("# constant_args = ", length(constant_arguments)),
+            string("# device_args = ", length(device_arguments)),
+            string("# shared_args = ", length(shared_arguments)),
         ),
     )
 end
@@ -125,6 +144,7 @@ function _batched_nuts_source_stage(
         :__,
         :stub,
     )
+    stage_kind = _batched_nuts_source_stage_kind(artifact_stage)
     return BatchedNUTSKernelSourceStage(
         artifact_stage,
         plan.backend,
@@ -136,6 +156,8 @@ function _batched_nuts_source_stage(
         _batched_nuts_source_lines(
             plan.source_module,
             source_entry,
+            stage_kind,
+            plan.target,
             constant_arguments,
             device_arguments,
             shared_arguments,

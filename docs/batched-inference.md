@@ -279,6 +279,8 @@ The next lowering layer is now explicit:
 - the shared GPU backend substrate now also owns a generic stub-source
   template layer, so NUTS and static backend packages generate module bodies
   through the same source helper instead of separate string builders
+- that source helper now carries explicit stage-kind metadata as well, so both
+  emitted manifests and generated stub modules expose the same stage taxonomy
 - unsupported models keep working through the compiled CPU fallback path
 - batched backend execution currently requires synchronized loop iterables across
   the batch; divergent loop shapes fall back to the compiled CPU path

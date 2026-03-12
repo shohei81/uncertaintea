@@ -27,6 +27,7 @@ function _gpu_backend_codegen_manifest_contents(bundle::GPUBackendCodegenBundle)
         push!(lines, "[[stage]]")
         push!(lines, string("index = ", index))
         push!(lines, string("name = \"", stage.stage_name, "\""))
+        push!(lines, string("kind = \"", gpu_backend_stage_kind(stage), "\""))
         push!(lines, string("entry = \"", stage.entry_symbol, "\""))
         push!(lines, string("file = \"", stage.filename, "\""))
     end

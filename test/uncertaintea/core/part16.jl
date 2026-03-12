@@ -47,6 +47,34 @@
         ),
         "\n",
     )
+    @test gpu_backend_stage_preamble_lines(
+        :manual_stage,
+        :gpu;
+        metadata_lines=("# meta",),
+        preamble_lines=("const TARGET = :gpu",),
+    ) == (
+        "const STAGE_KIND = :manual_stage",
+        "const TARGET_POLICY = :gpu",
+        "# meta",
+        "const TARGET = :gpu",
+    )
+    @test gpu_backend_stage_source_lines(
+        :ManualModule,
+        :manual_entry,
+        ("buf::AbstractBuffer",),
+        :manual_stage,
+        :gpu;
+        metadata_lines=("# meta",),
+    ) == (
+        "module ManualModule",
+        "const STAGE_KIND = :manual_stage",
+        "const TARGET_POLICY = :gpu",
+        "# meta",
+        "function manual_entry(buf::AbstractBuffer)",
+        "    return nothing",
+        "end",
+        "end",
+    )
     @test_throws ArgumentError gpu_backend_target_name(:bogus)
     @test_throws ArgumentError gpu_backend_module_extension(:bogus)
     @test_throws ArgumentError gpu_backend_buffer_argument_type(:bogus)
