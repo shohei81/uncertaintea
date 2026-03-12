@@ -96,7 +96,7 @@ function BatchedLogjointGradientCache(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_params(model, params)
+    batch_size = _validate_batched_unconstrained_params(model, params)
     batch_args = _validate_batched_args(args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     parameter_count = size(params, 1)
@@ -244,7 +244,7 @@ function batched_logjoint(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_params(model, params)
+    batch_size = _validate_batched_constrained_params(model, params)
     batch_args = _validate_batched_args(args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return Float64[]
@@ -268,7 +268,7 @@ function batched_logjoint_unconstrained(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_params(model, params)
+    batch_size = _validate_batched_unconstrained_params(model, params)
     batch_args = _validate_batched_args(args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return Float64[]

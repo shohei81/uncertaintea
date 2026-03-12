@@ -18,6 +18,7 @@ function batched_nuts(
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_batched_nuts_arguments(
         num_chains,
         num_params,
@@ -42,6 +43,7 @@ function batched_nuts(
         initial_params,
         rng,
         num_params,
+        constrained_num_params,
         num_chains,
     )
     workspace = BatchedNUTSWorkspace(model, position, batch_args, batch_constraints)
@@ -59,7 +61,7 @@ function batched_nuts(
         throw(ArgumentError("initial batched NUTS parameters produced a non-finite unconstrained gradient"))
 
     unconstrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
-    constrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
+    constrained_samples = Array{Float64}(undef, constrained_num_params, num_samples, num_chains)
     logjoint_values = Matrix{Float64}(undef, num_samples, num_chains)
     acceptance_stats = Matrix{Float64}(undef, num_samples, num_chains)
     energies = Matrix{Float64}(undef, num_samples, num_chains)
@@ -279,6 +281,7 @@ function batched_hmc(
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_batched_hmc_arguments(
         num_chains,
         num_params,
@@ -303,6 +306,7 @@ function batched_hmc(
         initial_params,
         rng,
         num_params,
+        constrained_num_params,
         num_chains,
     )
     inverse_mass_matrix = ones(num_params)
@@ -321,7 +325,7 @@ function batched_hmc(
         throw(ArgumentError("initial batched HMC parameters produced a non-finite unconstrained gradient"))
 
     unconstrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
-    constrained_samples = Array{Float64}(undef, num_params, num_samples, num_chains)
+    constrained_samples = Array{Float64}(undef, constrained_num_params, num_samples, num_chains)
     logjoint_values = Matrix{Float64}(undef, num_samples, num_chains)
     acceptance_stats = Matrix{Float64}(undef, num_samples, num_chains)
     energies = Matrix{Float64}(undef, num_samples, num_chains)

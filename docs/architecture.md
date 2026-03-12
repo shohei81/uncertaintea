@@ -80,6 +80,9 @@ Current backend-lowering subset:
  - distribution families: `normal`, `lognormal`, `laplace`, `exponential`,
   `gamma`, `inversegamma`, `weibull`, `beta`, `bernoulli`, `binomial`,
   `geometric`, `negativebinomial`, `poisson`, `studentt`, `categorical`
+- built-in CPU/reference distributions also include `dirichlet`, which now
+  uses a vector-valued simplex transform and flattened constrained/unconstrained
+  parameter spans, but remains outside the backend-lowered GPU subset for now
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
   `log1p`, `sqrt`, `abs`, `min`, `max`, `clamp`
 - batched backend execution assumes synchronized loop iterables across the batch
@@ -108,6 +111,9 @@ Current backend-lowering subset:
   `studentt`, observed `bernoulli`, observed `binomial`, observed
   `geometric`, observed `negativebinomial`, observed `categorical`,
   observed `poisson`, and numeric deterministic assignments
+- vector-valued latent slots are now supported in the CPU reference path,
+  including simplex-valued `dirichlet` latents with flattened constrained
+  sample storage and lower-dimensional unconstrained inference state
 - the differentiable backend primitive subset now includes `abs`, `min`,
   `max`, `clamp`, `%` with a literal divisor, and `^` with a literal exponent
   in addition to the earlier arithmetic and log/exp primitives

@@ -428,26 +428,26 @@ function _find_reasonable_step_size(
     return clamp(reasonable_step_size, min_step_size, max_step_size)
 end
 
-function _chain_initial_params(initial_params, chain_index::Int, num_params::Int, num_chains::Int)
+function _chain_initial_params(initial_params, chain_index::Int, num_params::Int, constrained_num_params::Int, num_chains::Int)
     if isnothing(initial_params)
         return nothing
     elseif initial_params isa AbstractMatrix
-        size(initial_params) == (num_params, num_chains) ||
-            throw(DimensionMismatch("expected initial_params matrix of size ($num_params, $num_chains), got $(size(initial_params))"))
+        (size(initial_params) == (num_params, num_chains) ||
+         size(initial_params) == (constrained_num_params, num_chains)) ||
+            throw(DimensionMismatch("expected initial_params matrix of size ($num_params, $num_chains) or ($constrained_num_params, $num_chains), got $(size(initial_params))"))
         return collect(Float64, view(initial_params, :, chain_index))
     elseif initial_params isa AbstractVector && !isempty(initial_params) && first(initial_params) isa AbstractVector
         length(initial_params) == num_chains ||
             throw(DimensionMismatch("expected $num_chains initial parameter vectors, got $(length(initial_params))"))
         chain_params = initial_params[chain_index]
-        length(chain_params) == num_params ||
-            throw(DimensionMismatch("expected $num_params initial parameters for chain $chain_index, got $(length(chain_params))"))
+        (length(chain_params) == num_params || length(chain_params) == constrained_num_params) ||
+            throw(DimensionMismatch("expected $num_params unconstrained or $constrained_num_params constrained initial parameters for chain $chain_index, got $(length(chain_params))"))
         return Float64[value for value in chain_params]
     elseif initial_params isa AbstractVector
-        length(initial_params) == num_params ||
-            throw(DimensionMismatch("expected $num_params initial parameters, got $(length(initial_params))"))
+        (length(initial_params) == num_params || length(initial_params) == constrained_num_params) ||
+            throw(DimensionMismatch("expected $num_params unconstrained or $constrained_num_params constrained initial parameters, got $(length(initial_params))"))
         return Float64[value for value in initial_params]
     end
 
     throw(ArgumentError("unsupported initial_params container for multi-chain HMC"))
 end
-

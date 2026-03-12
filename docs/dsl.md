@@ -187,6 +187,7 @@ The initial GPU-targeted distribution set should stay small:
 - `inversegamma`
 - `weibull`
 - `beta`
+- `dirichlet`
 - `bernoulli`
 - `binomial`
 - `geometric`
@@ -205,6 +206,9 @@ Requirements:
 - `binomial` is treated as a built-in distribution inside `@tea`, but direct
   constructor calls outside the DSL should use `UncertainTea.binomial(...)`
   because `Base` already defines a different `binomial`
+- `dirichlet` currently supports static simplex sizes in the CPU reference
+  path and unconstrained HMC/NUTS through a simplex transform, but it does not
+  yet lower to the GPU-native backend subset
 
 ## Inference-Oriented Consequences
 
@@ -232,8 +236,8 @@ The first real subset should include:
 6. `generate`
 7. a small distribution set starting with `normal`, `lognormal`,
    `laplace`, `exponential`, `gamma`, `inversegamma`, `weibull`, `beta`,
-   `bernoulli`, `binomial`, `geometric`, `negativebinomial`, `poisson`,
-   `studentt`, and `categorical`
+   `dirichlet`, `bernoulli`, `binomial`, `geometric`, `negativebinomial`,
+   `poisson`, `studentt`, and `categorical`
 
 That is enough to build a CPU reference backend and a GPU-oriented static lowering path
 without committing to full Gen compatibility.

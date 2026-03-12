@@ -3,6 +3,7 @@ mutable struct BatchedLogjointWorkspace{BP,CP,E}
     compiled_plan::CP
     environment::E
     parameter_count::Int
+    constrained_parameter_count::Int
     argument_count::Int
     argument_slots::Vector{Int}
     constrained_buffer::Base.RefValue{Any}
@@ -95,6 +96,7 @@ function BatchedLogjointWorkspace(model::TeaModel)
         _compiled_execution_plan(model),
         PlanEnvironment(plan.environment_layout),
         parametercount(plan.parameter_layout),
+        parametervaluecount(plan.parameter_layout),
         length(modelspec(model).arguments),
         copy(plan.environment_layout.argument_slots),
         Ref{Any}(nothing),
@@ -106,8 +108,14 @@ function BatchedLogjointWorkspace(model::TeaModel)
     )
 end
 
-function _validate_batched_params(model::TeaModel, params::AbstractMatrix)
+function _validate_batched_unconstrained_params(model::TeaModel, params::AbstractMatrix)
     expected = parametercount(parameterlayout(model))
+    size(params, 1) == expected || throw(DimensionMismatch("expected $expected parameters, got $(size(params, 1))"))
+    return size(params, 2)
+end
+
+function _validate_batched_constrained_params(model::TeaModel, params::AbstractMatrix)
+    expected = parametervaluecount(parameterlayout(model))
     size(params, 1) == expected || throw(DimensionMismatch("expected $expected parameters, got $(size(params, 1))"))
     return size(params, 2)
 end
@@ -220,8 +228,8 @@ end
 
 function _constrained_buffer!(workspace::BatchedLogjointWorkspace, params::AbstractVector)
     buffer = workspace.constrained_buffer[]
-    if !(buffer isa AbstractVector) || length(buffer) != workspace.parameter_count || eltype(buffer) != eltype(params)
-        buffer = similar(params, workspace.parameter_count)
+    if !(buffer isa AbstractVector) || length(buffer) != workspace.constrained_parameter_count || eltype(buffer) != eltype(params)
+        buffer = similar(params, workspace.constrained_parameter_count)
         workspace.constrained_buffer[] = buffer
     end
     return buffer
@@ -242,19 +250,19 @@ function _batched_totals_buffer!(workspace::BatchedLogjointWorkspace, batch_size
     return buffer
 end
 
-function _batched_constrained_buffer!(workspace::BatchedLogjointWorkspace, parameter_count::Int, batch_size::Int)
-    return _batched_constrained_buffer!(workspace, parameter_count, batch_size, Float64)
+function _batched_constrained_buffer!(workspace::BatchedLogjointWorkspace, batch_size::Int)
+    return _batched_constrained_buffer!(workspace, workspace.constrained_parameter_count, batch_size, Float64)
 end
 
 function _batched_constrained_buffer!(
     workspace::BatchedLogjointWorkspace,
-    parameter_count::Int,
+    constrained_parameter_count::Int,
     batch_size::Int,
     ::Type{T},
 ) where {T<:Real}
     buffer = workspace.batched_constrained_buffer[]
-    if !(buffer isa Matrix{T}) || size(buffer) != (parameter_count, batch_size)
-        buffer = Matrix{T}(undef, parameter_count, batch_size)
+    if !(buffer isa Matrix{T}) || size(buffer) != (constrained_parameter_count, batch_size)
+        buffer = Matrix{T}(undef, constrained_parameter_count, batch_size)
         workspace.batched_constrained_buffer[] = buffer
     end
     return buffer
@@ -281,8 +289,8 @@ function _logjoint_with_workspace!(
     args::Tuple,
     constraints::ChoiceMap,
 )
-    length(params) == workspace.parameter_count ||
-        throw(DimensionMismatch("expected $(workspace.parameter_count) parameters, got $(length(params))"))
+    length(params) == workspace.constrained_parameter_count ||
+        throw(DimensionMismatch("expected $(workspace.constrained_parameter_count) parameters, got $(length(params))"))
     env = _prepare_environment!(workspace, args)
     if !isnothing(workspace.backend_plan)
         return _score_backend_steps(workspace.backend_plan.steps, env, params, constraints)
@@ -336,9 +344,7 @@ function _logjoint_unconstrained_with_workspace!(
     constrained = _constrained_buffer!(workspace, params)
     logabsdet = workspace.parameter_count == 0 ? 0.0 : zero(params[firstindex(params)])
     for slot in layout.slots
-        unconstrained_value = params[slot.index]
-        constrained[slot.index] = to_constrained(slot.transform, unconstrained_value)
-        logabsdet += logabsdetjac(slot.transform, unconstrained_value)
+        logabsdet += _transform_slot_to_constrained!(constrained, slot, params)
     end
     return _logjoint_with_workspace!(workspace, constrained, args, constraints) + logabsdet
 end
@@ -356,14 +362,35 @@ function _logjoint_unconstrained_batched_backend!(
         throw(DimensionMismatch("expected unconstrained batched destination of length $batch_size, got $(length(destination))"))
     layout = parameterlayout(model)
     value_type = eltype(destination)
-    constrained = _batched_constrained_buffer!(workspace, parameter_count, batch_size, value_type)
+    constrained = _batched_constrained_buffer!(workspace, workspace.constrained_parameter_count, batch_size, value_type)
     logabsdet = _batched_logabsdet_buffer!(workspace, batch_size, value_type)
     for slot in layout.slots
-        slot_index = slot.index
-        for batch_index in 1:batch_size
-            unconstrained_value = params[slot_index, batch_index]
-            constrained[slot_index, batch_index] = to_constrained(slot.transform, unconstrained_value)
-            logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
+        source_indices = parameterindices(slot)
+        destination_indices = parametervalueindices(slot)
+        if slot.transform isa IdentityTransform
+            copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
+        elseif slot.transform isa LogTransform
+            for batch_index in 1:batch_size
+                unconstrained_value = params[first(source_indices), batch_index]
+                constrained[first(destination_indices), batch_index] = exp(unconstrained_value)
+                logabsdet[batch_index] += unconstrained_value
+            end
+        elseif slot.transform isa LogitTransform
+            for batch_index in 1:batch_size
+                unconstrained_value = params[first(source_indices), batch_index]
+                constrained_value = to_constrained(slot.transform, unconstrained_value)
+                constrained[first(destination_indices), batch_index] = constrained_value
+                logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
+            end
+        elseif slot.transform isa SimplexTransform
+            for batch_index in 1:batch_size
+                constrained_view = view(constrained, destination_indices, batch_index)
+                unconstrained_view = view(params, source_indices, batch_index)
+                _to_constrained_simplex!(constrained_view, slot.transform, unconstrained_view)
+                logabsdet[batch_index] += _simplex_logabsdet(constrained_view)
+            end
+        else
+            throw(ArgumentError("unsupported parameter transform $(typeof(slot.transform))"))
         end
     end
     totals = _logjoint_with_batched_backend!(workspace, constrained, args, constraints)
@@ -448,4 +475,3 @@ function _batched_logjoint_unconstrained_with_workspace!(
     values = Vector{eltype(params)}(undef, size(params, 2))
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, args, constraints)
 end
-

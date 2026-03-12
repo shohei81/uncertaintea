@@ -19,12 +19,13 @@ function hmc_chains(
 )
     _validate_hmc_chains_arguments(num_chains)
     num_params = parametercount(parameterlayout(model))
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     seeds = rand(rng, UInt, num_chains)
     chains = Vector{HMCChain}(undef, num_chains)
 
     for chain_index in 1:num_chains
         chain_rng = MersenneTwister(seeds[chain_index])
-        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, num_chains)
+        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
         chains[chain_index] = hmc(
             model,
             args,
@@ -69,12 +70,13 @@ function nuts_chains(
 )
     _validate_hmc_chains_arguments(num_chains, "NUTS")
     num_params = parametercount(parameterlayout(model))
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     seeds = rand(rng, UInt, num_chains)
     chains = Vector{HMCChain}(undef, num_chains)
 
     for chain_index in 1:num_chains
         chain_rng = MersenneTwister(seeds[chain_index])
-        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, num_chains)
+        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
         chains[chain_index] = nuts(
             model,
             args,
@@ -97,4 +99,3 @@ function nuts_chains(
 
     return HMCChains(model, args, constraints, chains)
 end
-

@@ -39,6 +39,14 @@ abstract type AbstractParameterTransform end
 struct IdentityTransform <: AbstractParameterTransform end
 struct LogTransform <: AbstractParameterTransform end
 struct LogitTransform <: AbstractParameterTransform end
+struct SimplexTransform <: AbstractParameterTransform
+    size::Int
+
+    function SimplexTransform(size::Int)
+        size >= 2 || throw(ArgumentError("simplex transform requires size >= 2"))
+        return new(size)
+    end
+end
 
 struct ChoiceSpec
     binding::Union{Nothing,Symbol}
@@ -52,11 +60,16 @@ struct ParameterSlotSpec
     binding::Symbol
     address::AddressSpec
     index::Int
+    dimension::Int
+    value_index::Int
+    value_length::Int
     transform::AbstractParameterTransform
 end
 
 struct ParameterLayout
     slots::Vector{ParameterSlotSpec}
+    parameter_count::Int
+    value_count::Int
 end
 
 struct EnvironmentLayout
@@ -167,12 +180,17 @@ isstaticaddress(address::AddressSpec) = all(part -> part isa AddressLiteralPart,
 isaddresstemplate(address::AddressSpec) = !isstaticaddress(address)
 isrepeatedchoice(choice::ChoiceSpec) = !isempty(choice.scopes)
 hasrepeatedchoices(spec::ModelSpec) = any(isrepeatedchoice, spec.choices)
-parametercount(layout::ParameterLayout) = length(layout.slots)
+parametercount(layout::ParameterLayout) = layout.parameter_count
+parametervaluecount(layout::ParameterLayout) = layout.value_count
+
+parameterindices(slot::ParameterSlotSpec) = slot.index:(slot.index + slot.dimension - 1)
+parametervalueindices(slot::ParameterSlotSpec) = slot.value_index:(slot.value_index + slot.value_length - 1)
+isscalarparameterslot(slot::ParameterSlotSpec) = slot.dimension == 1 && slot.value_length == 1
 
 function _parameter_slot_index(layout::ParameterLayout, choice_index::Int)
-    for slot in layout.slots
+    for (slot_index, slot) in enumerate(layout.slots)
         if slot.choice_index == choice_index
-            return slot.index
+            return slot_index
         end
     end
     return nothing
@@ -362,17 +380,51 @@ function _parameter_transform(rhs::DistributionSpec)
         return LogTransform()
     elseif rhs.family === :beta
         return LogitTransform()
+    elseif rhs.family === :dirichlet
+        size = _dirichlet_static_size(rhs.arguments)
+        isnothing(size) || return SimplexTransform(size)
     end
     return nothing
 end
 
 _parameter_transform(::AbstractChoiceRhsSpec) = nothing
 
+_parameter_dimensions(::IdentityTransform) = (1, 1)
+_parameter_dimensions(::LogTransform) = (1, 1)
+_parameter_dimensions(::LogitTransform) = (1, 1)
+_parameter_dimensions(transform::SimplexTransform) = (transform.size - 1, transform.size)
+
+function _static_length(expr)
+    if expr isa Expr
+        if expr.head == :vect || expr.head == :tuple
+            return length(expr.args)
+        end
+    elseif expr isa QuoteNode
+        value = expr.value
+        if value isa Tuple || value isa AbstractVector
+            return length(value)
+        end
+    elseif expr isa Tuple || expr isa AbstractVector
+        return length(expr)
+    end
+    return nothing
+end
+
+function _dirichlet_static_size(arguments::Vector)
+    isempty(arguments) && return nothing
+    if length(arguments) == 1
+        return _static_length(arguments[1])
+    end
+    return length(arguments)
+end
+
 function _parameterize_step(
     step::ChoicePlanStep,
     slots::Vector{ParameterSlotSpec},
     step_counter::Base.RefValue{Int},
     slot_counter::Base.RefValue{Int},
+    parameter_counter::Base.RefValue{Int},
+    value_counter::Base.RefValue{Int},
 )
     step_index = step_counter[]
     step_counter[] += 1
@@ -384,7 +436,24 @@ function _parameterize_step(
 
     slot_index = slot_counter[]
     slot_counter[] += 1
-    push!(slots, ParameterSlotSpec(step_index, step.binding, step.address, slot_index, transform))
+    dimension, value_length = _parameter_dimensions(transform)
+    parameter_index = parameter_counter[]
+    value_index = value_counter[]
+    parameter_counter[] += dimension
+    value_counter[] += value_length
+    push!(
+        slots,
+        ParameterSlotSpec(
+            step_index,
+            step.binding,
+            step.address,
+            parameter_index,
+            dimension,
+            value_index,
+            value_length,
+            transform,
+        ),
+    )
     return ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, step.scopes, slot_index)
 end
 
@@ -393,15 +462,34 @@ function _parameterize_plan_steps(
     slots::Vector{ParameterSlotSpec},
     step_counter::Base.RefValue{Int},
     slot_counter::Base.RefValue{Int},
+    parameter_counter::Base.RefValue{Int},
+    value_counter::Base.RefValue{Int},
 )
     parameterized = AbstractPlanStep[]
     for step in steps
         if step isa ChoicePlanStep
-            push!(parameterized, _parameterize_step(step, slots, step_counter, slot_counter))
+            push!(
+                parameterized,
+                _parameterize_step(
+                    step,
+                    slots,
+                    step_counter,
+                    slot_counter,
+                    parameter_counter,
+                    value_counter,
+                ),
+            )
         elseif step isa DeterministicPlanStep
             push!(parameterized, step)
         elseif step isa LoopPlanStep
-            body = _parameterize_plan_steps(step.body, slots, step_counter, slot_counter)
+            body = _parameterize_plan_steps(
+                step.body,
+                slots,
+                step_counter,
+                slot_counter,
+                parameter_counter,
+                value_counter,
+            )
             push!(parameterized, LoopPlanStep(step.iterator, step.iterable, body))
         else
             throw(ArgumentError("unsupported plan step in parameterization: $(typeof(step))"))
@@ -414,8 +502,17 @@ function _assign_parameter_layout(steps::Vector{AbstractPlanStep})
     slots = ParameterSlotSpec[]
     step_counter = Ref(1)
     slot_counter = Ref(1)
-    parameterized = _parameterize_plan_steps(steps, slots, step_counter, slot_counter)
-    return parameterized, ParameterLayout(slots)
+    parameter_counter = Ref(1)
+    value_counter = Ref(1)
+    parameterized = _parameterize_plan_steps(
+        steps,
+        slots,
+        step_counter,
+        slot_counter,
+        parameter_counter,
+        value_counter,
+    )
+    return parameterized, ParameterLayout(slots, parameter_counter[] - 1, value_counter[] - 1)
 end
 
 function _inline_plan_steps(steps::Vector{AbstractPlanStep})
@@ -517,6 +614,12 @@ function Base.show(io::IO, spec::ParameterSlotSpec)
         io,
         "ParameterSlotSpec(index=",
         spec.index,
+        ", dimension=",
+        spec.dimension,
+        ", value_index=",
+        spec.value_index,
+        ", value_length=",
+        spec.value_length,
         ", binding=",
         spec.binding,
         ", choice=",
@@ -528,7 +631,16 @@ function Base.show(io::IO, spec::ParameterSlotSpec)
 end
 
 function Base.show(io::IO, layout::ParameterLayout)
-    print(io, "ParameterLayout(", length(layout.slots), " slots)")
+    print(
+        io,
+        "ParameterLayout(",
+        length(layout.slots),
+        " slots, parameters=",
+        layout.parameter_count,
+        ", values=",
+        layout.value_count,
+        ")",
+    )
 end
 
 function Base.show(io::IO, step::ChoicePlanStep)

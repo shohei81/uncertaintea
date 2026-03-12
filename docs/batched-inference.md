@@ -316,6 +316,10 @@ The next lowering layer is now explicit:
 - backend-lowered models outside that differentiable subset fall back to the
   flat `ForwardDiff` objective over the whole `num_params x batch` state, and
   fully unsupported models still fall back to the older column-wise cache
+- vector-valued latent slots are now supported in the CPU/fallback batched
+  path, so models with built-in `dirichlet` latents can use batched
+  `logjoint`, unconstrained gradients, HMC, and NUTS even though they do not
+  yet lower to the backend-native GPU subset
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
 - batched HMC now also keeps the current unconstrained gradient for each chain

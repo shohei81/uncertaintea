@@ -34,6 +34,7 @@ function _qualify_builtin_distribution(name)
         :inversegamma,
         :weibull,
         :beta,
+        :dirichlet,
         :bernoulli,
         :binomial,
         :geometric,
@@ -146,6 +147,7 @@ function _rhs_spec_expr(rhs)
             :inversegamma,
             :weibull,
             :beta,
+            :dirichlet,
             :bernoulli,
             :binomial,
             :geometric,
@@ -177,6 +179,8 @@ function _parameter_layout_expr(choice_nodes)
     slot_exprs = Expr[]
     slot_lookup = Dict{Int,Int}()
     slot_index = 1
+    parameter_index = 1
+    value_index = 1
 
     for (choice_index, node) in enumerate(choice_nodes)
         choice_expr, loop_scopes, binding_override = node
@@ -187,31 +191,75 @@ function _parameter_layout_expr(choice_nodes)
         if !isnothing(binding_symbol) && isempty(loop_scopes) && _supports_parameter_slot(rhs)
             address = _address_spec_expr(lhs)
             transform = _parameter_transform_expr(rhs)
+            parameter_dimension, value_length = _parameter_layout_sizes(rhs)
             push!(slot_exprs, :($(_qualify(:ParameterSlotSpec))(
                 $choice_index,
                 $(QuoteNode(binding_symbol)),
                 $address,
-                $slot_index,
+                $parameter_index,
+                $parameter_dimension,
+                $value_index,
+                $value_length,
                 $transform,
             )))
             slot_lookup[choice_index] = slot_index
             slot_index += 1
+            parameter_index += parameter_dimension
+            value_index += value_length
         end
     end
 
-    return :($(_qualify(:ParameterLayout))($(Expr(:vect, slot_exprs...)))), slot_lookup
+    return :($(_qualify(:ParameterLayout))($(Expr(:vect, slot_exprs...)), $(parameter_index - 1), $(value_index - 1))), slot_lookup
 end
 
 function _supported_distribution_family(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
     family = rhs.args[1]
-    family in (:normal, :lognormal, :laplace, :exponential, :gamma, :inversegamma, :weibull, :beta, :studentt) ||
-        return nothing
-    return family
+    family in (:normal, :lognormal, :laplace, :exponential, :gamma, :inversegamma, :weibull, :beta, :studentt) &&
+        return family
+    if family === :dirichlet && !isnothing(_dirichlet_static_size(rhs))
+        return family
+    end
+    return nothing
 end
 
 function _supports_parameter_slot(rhs)
     return !isnothing(_supported_distribution_family(rhs))
+end
+
+function _static_length_expr(expr)
+    if expr isa Expr
+        if expr.head == :vect || expr.head == :tuple
+            return length(expr.args)
+        end
+    elseif expr isa QuoteNode
+        value = expr.value
+        if value isa Tuple || value isa AbstractVector
+            return length(value)
+        end
+    elseif expr isa Tuple || expr isa AbstractVector
+        return length(expr)
+    end
+    return nothing
+end
+
+function _dirichlet_static_size(rhs)
+    rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :dirichlet || return nothing
+    if length(rhs.args) == 2
+        return _static_length_expr(rhs.args[2])
+    end
+    return length(rhs.args) - 1
+end
+
+function _parameter_layout_sizes(rhs)
+    family = _supported_distribution_family(rhs)
+    isnothing(family) && throw(ArgumentError("unsupported parameter layout size for $rhs"))
+    if family === :dirichlet
+        size = _dirichlet_static_size(rhs)
+        isnothing(size) && throw(ArgumentError("dirichlet parameter slots require a statically known simplex size"))
+        return size - 1, size
+    end
+    return 1, 1
 end
 
 function _parameter_transform_expr(rhs)
@@ -225,6 +273,10 @@ function _parameter_transform_expr(rhs)
         return :($(_qualify(:LogTransform))())
     elseif family === :beta
         return :($(_qualify(:LogitTransform))())
+    elseif family === :dirichlet
+        size = _dirichlet_static_size(rhs)
+        isnothing(size) && throw(ArgumentError("dirichlet parameter slots require a statically known simplex size"))
+        return :($(_qualify(:SimplexTransform))($size))
     elseif family === :studentt
         return :($(_qualify(:IdentityTransform))())
     end

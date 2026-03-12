@@ -330,6 +330,34 @@ function _summary_address(address::AddressSpec)
     return length(parts) == 1 ? first(parts) : Tuple(parts)
 end
 
+function _summary_parameter_address(address::AddressSpec, component::Union{Nothing,Int})
+    base = _summary_address(address)
+    isnothing(component) && return base
+    if base isa Tuple
+        return (base..., component)
+    end
+    return (base, component)
+end
+
+function _summary_parameter_entries(layout::ParameterLayout, space::Symbol)
+    entries = Tuple{Int,Symbol,Any}[]
+    for slot in layout.slots
+        indices = if space === :constrained
+            parametervalueindices(slot)
+        elseif space === :unconstrained
+            parameterindices(slot)
+        else
+            throw(ArgumentError("diagnostic space must be :constrained or :unconstrained"))
+        end
+        component_count = length(indices)
+        for (offset, parameter_index) in enumerate(indices)
+            component = component_count == 1 ? nothing : offset
+            push!(entries, (parameter_index, slot.binding, _summary_parameter_address(slot.address, component)))
+        end
+    end
+    return entries
+end
+
 function _validate_hmc_diagnostics(chains::HMCChains, space::Symbol)
     length(chains) >= 2 || throw(ArgumentError("multi-chain diagnostics require at least 2 chains"))
     num_samples = numsamples(chains)
@@ -559,25 +587,25 @@ function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.0
     ess_values = ess(chains; space=space)
     diagnostics = _diagnostics_summary(chains)
     layout = parameterlayout(chains.model)
-    parametercount(layout) == num_params ||
-        throw(DimensionMismatch("summary expected $num_params parameters in layout, got $(parametercount(layout))"))
+    summary_entries = _summary_parameter_entries(layout, space)
+    length(summary_entries) == num_params ||
+        throw(DimensionMismatch("summary expected $num_params parameters in layout, got $(length(summary_entries))"))
 
     parameters = Vector{HMCParameterSummary}(undef, num_params)
-    for slot in layout.slots
-        draws = _pooled_parameter_draws(chains, slot.index, space)
+    for (parameter_index, binding, address) in summary_entries
+        draws = _pooled_parameter_draws(chains, parameter_index, space)
         mean_value = _sample_mean(draws)
-        parameters[slot.index] = HMCParameterSummary(
-            slot.index,
-            slot.binding,
-            _summary_address(slot.address),
+        parameters[parameter_index] = HMCParameterSummary(
+            parameter_index,
+            binding,
+            address,
             mean_value,
             _sample_sd(draws, mean_value),
             _quantiles(draws, quantile_probs),
-            rhats[slot.index],
-            ess_values[slot.index],
+            rhats[parameter_index],
+            ess_values[parameter_index],
         )
     end
 
     return HMCSummary(chains.model, space, quantile_probs, diagnostics, parameters)
 end
-

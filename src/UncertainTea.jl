@@ -13,11 +13,11 @@ export LoopScopeSpec
 export ParameterLayout, ParameterSlotSpec
 export ExecutionPlan, ChoicePlanStep
 export DeterministicPlanStep, LoopPlanStep
-export IdentityTransform, LogTransform, LogitTransform
+export IdentityTransform, LogTransform, LogitTransform, SimplexTransform
 export ChoiceMap, TeaModel, TeaTrace
 export StaticMode, DynamicMode
 export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepeatedchoices
-export parameterlayout, parametercount
+export parameterlayout, parametercount, parametervaluecount
 export executionplan
 export choicemap, generate, assess, logjoint, logjoint_unconstrained, logjoint_gradient_unconstrained
 export BackendExecutionPlan, BackendLoweringReport, backend_report, backend_execution_plan
@@ -41,7 +41,7 @@ export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSum
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts
 export batched_nuts_package_layout, emit_batched_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, rhat, ess, summarize
-export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
+export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
 
 include("ir.jl")
 include("core.jl")

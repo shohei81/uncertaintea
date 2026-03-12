@@ -123,9 +123,15 @@ function _initial_hmc_position(
         return transform_to_unconstrained(trace)
     end
 
-    expected = parametercount(parameterlayout(model))
-    length(initial_params) == expected || throw(DimensionMismatch("expected $expected initial parameters, got $(length(initial_params))"))
-    return Float64[value for value in initial_params]
+    layout = parameterlayout(model)
+    expected = parametercount(layout)
+    constrained_expected = parametervaluecount(layout)
+    if length(initial_params) == expected
+        return Float64[value for value in initial_params]
+    elseif length(initial_params) == constrained_expected
+        return transform_to_unconstrained(model, Float64[value for value in initial_params])
+    end
+    throw(DimensionMismatch("expected $expected unconstrained or $constrained_expected constrained initial parameters, got $(length(initial_params))"))
 end
 
 function _sample_momentum(rng::AbstractRNG, inverse_mass_matrix::AbstractVector)
@@ -139,6 +145,7 @@ function _initial_batched_hmc_positions(
     initial_params,
     rng::AbstractRNG,
     num_params::Int,
+    constrained_num_params::Int,
     num_chains::Int,
 )
     batch_args = _validate_batched_args(args, num_chains)
@@ -147,7 +154,7 @@ function _initial_batched_hmc_positions(
     seeds = rand(rng, UInt, num_chains)
 
     for chain_index in 1:num_chains
-        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, num_chains)
+        chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
         chain_rng = MersenneTwister(seeds[chain_index])
         positions[:, chain_index] = _initial_hmc_position(
             model,
@@ -545,4 +552,3 @@ end
 function _hamiltonian(logjoint_value::Float64, momentum::AbstractVector, inverse_mass_matrix::AbstractVector)
     return -logjoint_value + _kinetic_energy(momentum, inverse_mass_matrix)
 end
-

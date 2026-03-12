@@ -73,6 +73,18 @@ struct BetaDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct DirichletDist{T<:Real} <: AbstractTeaDistribution
+    alpha::Vector{T}
+
+    function DirichletDist(alpha::Vector{T}) where {T<:Real}
+        length(alpha) >= 2 || throw(ArgumentError("dirichlet requires at least 2 concentration parameters"))
+        for value in alpha
+            value > zero(T) || throw(ArgumentError("dirichlet requires alpha > 0"))
+        end
+        return new{T}(alpha)
+    end
+end
+
 struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     p::T
 
@@ -194,6 +206,15 @@ function beta(alpha, beta_parameter)
     return BetaDist(promoted_alpha, promoted_beta)
 end
 
+function dirichlet(alpha::AbstractVector)
+    promoted = map(float, collect(alpha))
+    return DirichletDist(promoted)
+end
+
+function dirichlet(alpha::Vararg{Real})
+    return DirichletDist(collect(promote(alpha...)))
+end
+
 function lognormal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return LogNormalDist(promoted_mu, promoted_sigma)
@@ -297,6 +318,20 @@ function Random.rand(rng::AbstractRNG, dist::BetaDist)
     x = _rand_gamma_marsaglia(rng, alpha, one(alpha))
     y = _rand_gamma_marsaglia(rng, beta_parameter, one(beta_parameter))
     return x / (x + y)
+end
+
+function Random.rand(rng::AbstractRNG, dist::DirichletDist)
+    draws = Vector{eltype(dist.alpha)}(undef, length(dist.alpha))
+    total = zero(eltype(dist.alpha))
+    for index in eachindex(dist.alpha)
+        draw = _rand_gamma_marsaglia(rng, float(dist.alpha[index]), one(float(dist.alpha[index])))
+        draws[index] = draw
+        total += draw
+    end
+    for index in eachindex(draws)
+        draws[index] /= total
+    end
+    return draws
 end
 
 function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
@@ -411,6 +446,23 @@ function logpdf(dist::BetaDist, x)
     return loggamma(alpha + beta_parameter) - loggamma(alpha) - loggamma(beta_parameter) +
            (alpha - one(alpha)) * log(xx) +
            (beta_parameter - one(beta_parameter)) * log1p(-xx)
+end
+
+function logpdf(dist::DirichletDist, x)
+    values = x isa Tuple ? collect(x) : x
+    values isa AbstractVector || throw(ArgumentError("dirichlet logpdf expects a vector or tuple value"))
+    length(values) == length(dist.alpha) || return -Inf
+
+    promoted_values = map(float, collect(values))
+    total = zero(eltype(promoted_values))
+    accumulator = loggamma(sum(dist.alpha)) - sum(loggamma, dist.alpha)
+    for (value, alpha) in zip(promoted_values, dist.alpha)
+        value > zero(value) || return oftype(value, -Inf)
+        total += value
+        accumulator += (alpha - one(alpha)) * log(value)
+    end
+    abs(total - one(total)) <= sqrt(eps(float(total))) * length(promoted_values) * 16 || return oftype(total, -Inf)
+    return accumulator
 end
 
 function logpdf(dist::BernoulliDist, x)

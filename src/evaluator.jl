@@ -73,6 +73,10 @@ struct CompiledTupleExpr{A<:Tuple} <: AbstractCompiledExpr
     arguments::A
 end
 
+struct CompiledVectorExpr{A<:Tuple} <: AbstractCompiledExpr
+    arguments::A
+end
+
 struct CompiledBlockExpr{A<:Tuple} <: AbstractCompiledExpr
     arguments::A
 end
@@ -94,7 +98,7 @@ struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCom
     address::AD
     constructor::C
     arguments::A
-    parameter_slot::Union{Nothing,Int}
+    parameter_value_indices::Union{Nothing,UnitRange{Int}}
 end
 
 struct CompiledDeterministicPlanStep{E<:AbstractCompiledExpr} <: AbstractCompiledPlanStep
@@ -154,6 +158,9 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
         elseif expr.head == :tuple
             arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args)...)
             return CompiledTupleExpr(arguments)
+        elseif expr.head == :vect
+            arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args)...)
+            return CompiledVectorExpr(arguments)
         end
 
         throw(ArgumentError("unsupported expression in lower-level logjoint compilation: $expr"))
@@ -173,26 +180,32 @@ function _compile_address(layout::EnvironmentLayout, model::TeaModel, address::A
     return CompiledAddressSpec(parts)
 end
 
-function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep)
+function _compile_plan_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    step::ChoicePlanStep,
+)
     step.rhs isa DistributionSpec ||
         throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
     arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments)...)
     constructor = getfield(@__MODULE__, step.rhs.family)
-    return CompiledChoicePlanStep(step.binding_slot, _compile_address(layout, model, step.address), constructor, arguments, step.parameter_slot)
+    parameter_value_indices = isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
+    return CompiledChoicePlanStep(step.binding_slot, _compile_address(layout, model, step.address), constructor, arguments, parameter_value_indices)
 end
 
-function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::DeterministicPlanStep)
+function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, parameter_layout::ParameterLayout, step::DeterministicPlanStep)
     return CompiledDeterministicPlanStep(step.binding_slot, _compile_plan_expr(model, layout, step.expr))
 end
 
-function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, step::LoopPlanStep)
-    body = tuple((_compile_plan_step(model, layout, inner) for inner in step.body)...)
+function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, parameter_layout::ParameterLayout, step::LoopPlanStep)
+    body = tuple((_compile_plan_step(model, layout, parameter_layout, inner) for inner in step.body)...)
     return CompiledLoopPlanStep(step.iterator_slot, _compile_plan_expr(model, layout, step.iterable), body)
 end
 
 function _compile_execution_plan(model::TeaModel)
     raw_plan = executionplan(model)
-    compiled_steps = tuple((_compile_plan_step(model, raw_plan.environment_layout, step) for step in raw_plan.steps)...)
+    compiled_steps = tuple((_compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step) for step in raw_plan.steps)...)
     return CompiledExecutionPlan(compiled_steps)
 end
 
@@ -253,6 +266,8 @@ function _eval_plan_expr(model::TeaModel, env::PlanEnvironment, expr)
             return value
         elseif expr.head == :tuple
             return tuple((_eval_plan_expr(model, env, arg) for arg in expr.args)...)
+        elseif expr.head == :vect
+            return Any[_eval_plan_expr(model, env, arg) for arg in expr.args]
         end
 
         throw(ArgumentError("unsupported expression in lower-level logjoint: $expr"))
@@ -277,6 +292,10 @@ end
 
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledTupleExpr)
     return tuple((_eval_compiled_expr(env, arg) for arg in expr.arguments)...)
+end
+
+function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledVectorExpr)
+    return Any[_eval_compiled_expr(env, arg) for arg in expr.arguments]
 end
 
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledBlockExpr)
@@ -330,6 +349,18 @@ function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironme
     return step.constructor(arguments...)
 end
 
+function _parameter_slot_value(layout::ParameterLayout, slot_index::Int, params::AbstractVector)
+    slot = layout.slots[slot_index]
+    indices = parametervalueindices(slot)
+    length(indices) == 1 && return params[first(indices)]
+    return collect(view(params, indices))
+end
+
+function _parameter_slot_value(indices::UnitRange{Int}, params::AbstractVector)
+    length(indices) == 1 && return params[first(indices)]
+    return collect(view(params, indices))
+end
+
 _score_compiled_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
 
 function _score_compiled_steps(steps::Tuple, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap)
@@ -346,7 +377,7 @@ function _score_distribution_instance!(
 )
     address = _concrete_address(model, env, step.address)
     value = if !isnothing(step.parameter_slot)
-        params[step.parameter_slot]
+        _parameter_slot_value(executionplan(model).parameter_layout, step.parameter_slot, params)
     else
         found, constrained_value = _choice_tryget_normalized(constraints, address)
         found || throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
@@ -365,8 +396,8 @@ function _score_plan_step!(
     constraints::ChoiceMap,
 )
     address = _concrete_address(env, step.address)
-    value = if !isnothing(step.parameter_slot)
-        params[step.parameter_slot]
+    value = if !isnothing(step.parameter_value_indices)
+        _parameter_slot_value(step.parameter_value_indices, params)
     else
         found, constrained_value = _choice_tryget_normalized(constraints, address)
         found || throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
@@ -468,7 +499,7 @@ function logjoint(
 )
     plan = executionplan(model)
     compiled_plan = _compiled_execution_plan(model)
-    expected = parametercount(plan.parameter_layout)
+    expected = parametervaluecount(plan.parameter_layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
     length(args) == length(modelspec(model).arguments) ||
         throw(DimensionMismatch("expected $(length(modelspec(model).arguments)) model arguments, got $(length(args))"))

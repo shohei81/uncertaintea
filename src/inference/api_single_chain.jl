@@ -17,6 +17,7 @@ function hmc(
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_hmc_arguments(
         num_params,
         num_samples,
@@ -36,7 +37,7 @@ function hmc(
     gradient_cache = _logjoint_gradient_cache(model, position, args, constraints)
 
     unconstrained_samples = Matrix{Float64}(undef, num_params, num_samples)
-    constrained_samples = Matrix{Float64}(undef, num_params, num_samples)
+    constrained_samples = Matrix{Float64}(undef, constrained_num_params, num_samples)
     logjoint_values = Vector{Float64}(undef, num_samples)
     acceptance_stats = Vector{Float64}(undef, num_samples)
     energies = Vector{Float64}(undef, num_samples)
@@ -230,6 +231,7 @@ function nuts(
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
+    constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_nuts_arguments(
         num_params,
         num_samples,
@@ -252,7 +254,7 @@ function nuts(
         throw(ArgumentError("initial NUTS parameters produced a non-finite unconstrained gradient"))
 
     unconstrained_samples = Matrix{Float64}(undef, num_params, num_samples)
-    constrained_samples = Matrix{Float64}(undef, num_params, num_samples)
+    constrained_samples = Matrix{Float64}(undef, constrained_num_params, num_samples)
     logjoint_values = Vector{Float64}(undef, num_samples)
     acceptance_stats = Vector{Float64}(undef, num_samples)
     energies = Vector{Float64}(undef, num_samples)
@@ -414,4 +416,3 @@ function nuts(
         mass_adaptation_windows,
     )
 end
-

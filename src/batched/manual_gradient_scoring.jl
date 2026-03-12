@@ -864,7 +864,7 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
     fill!(cache.slot_gradients, 0.0)
 
     layout = parameterlayout(model)
-    constrained = _batched_constrained_buffer!(workspace, size(params, 1), size(params, 2), Float64)
+    constrained = _batched_constrained_buffer!(workspace, workspace.constrained_parameter_count, size(params, 2), Float64)
     logabsdet = _batched_logabsdet_buffer!(workspace, size(params, 2), Float64)
     for slot in layout.slots
         slot_index = slot.index
