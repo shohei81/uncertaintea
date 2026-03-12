@@ -10,6 +10,16 @@ struct NormalDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct LaplaceDist{T<:Real} <: AbstractTeaDistribution
+    mu::T
+    scale::T
+
+    function LaplaceDist(mu::T, scale::T) where {T<:Real}
+        scale > zero(T) || throw(ArgumentError("laplace requires scale > 0"))
+        new{T}(mu, scale)
+    end
+end
+
 struct ExponentialDist{T<:Real} <: AbstractTeaDistribution
     rate::T
 
@@ -72,6 +82,15 @@ struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct GeometricDist{T<:Real} <: AbstractTeaDistribution
+    p::T
+
+    function GeometricDist(p::T) where {T<:Real}
+        zero(T) < p <= one(T) || throw(ArgumentError("geometric requires 0 < p <= 1"))
+        new{T}(p)
+    end
+end
+
 struct BinomialDist{T<:Real} <: AbstractTeaDistribution
     trials::Int
     p::T
@@ -80,6 +99,17 @@ struct BinomialDist{T<:Real} <: AbstractTeaDistribution
         trials >= 0 || throw(ArgumentError("binomial requires trials >= 0"))
         zero(T) <= p <= one(T) || throw(ArgumentError("binomial requires 0 <= p <= 1"))
         new{T}(trials, p)
+    end
+end
+
+struct NegativeBinomialDist{T<:Real} <: AbstractTeaDistribution
+    successes::T
+    p::T
+
+    function NegativeBinomialDist(successes::T, p::T) where {T<:Real}
+        successes > zero(T) || throw(ArgumentError("negativebinomial requires successes > 0"))
+        zero(T) < p <= one(T) || throw(ArgumentError("negativebinomial requires 0 < p <= 1"))
+        new{T}(successes, p)
     end
 end
 
@@ -135,6 +165,11 @@ function normal(mu, sigma)
     return NormalDist(promoted_mu, promoted_sigma)
 end
 
+function laplace(mu, scale)
+    promoted_mu, promoted_scale = promote(mu, scale)
+    return LaplaceDist(promoted_mu, promoted_scale)
+end
+
 function exponential(rate)
     return ExponentialDist(rate)
 end
@@ -168,10 +203,19 @@ function bernoulli(p)
     return BernoulliDist(p)
 end
 
+function geometric(p)
+    return GeometricDist(p)
+end
+
 function binomial(trials, p)
     count = _binomial_trials(trials)
     isnothing(count) && throw(ArgumentError("binomial requires integer trials >= 0"))
     return BinomialDist(count, p)
+end
+
+function negativebinomial(successes, p)
+    promoted_successes, promoted_probability = promote(successes, p)
+    return NegativeBinomialDist(promoted_successes, promoted_probability)
 end
 
 function categorical(probabilities::AbstractVector)
@@ -195,6 +239,13 @@ end
 
 function Random.rand(rng::AbstractRNG, dist::NormalDist{T}) where {T<:AbstractFloat}
     return dist.mu + dist.sigma * randn(rng, T)
+end
+
+function Random.rand(rng::AbstractRNG, dist::LaplaceDist)
+    scale = float(dist.scale)
+    threshold = rand(rng, typeof(scale)) - oftype(scale, 0.5)
+    noise = threshold < 0 ? log1p(2 * threshold) : -log1p(-2 * threshold)
+    return float(dist.mu) + scale * noise
 end
 
 function Random.rand(rng::AbstractRNG, dist::ExponentialDist)
@@ -252,12 +303,27 @@ function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
     return rand(rng) < dist.p
 end
 
+function Random.rand(rng::AbstractRNG, dist::GeometricDist)
+    probability = float(dist.p)
+    probability == one(probability) && return 0
+    threshold = max(rand(rng, typeof(probability)), floatmin(typeof(probability)))
+    return floor(Int, log(threshold) / log1p(-probability))
+end
+
 function Random.rand(rng::AbstractRNG, dist::BinomialDist)
     successes = 0
     for _ in 1:dist.trials
         successes += rand(rng) < dist.p
     end
     return successes
+end
+
+function Random.rand(rng::AbstractRNG, dist::NegativeBinomialDist)
+    probability = float(dist.p)
+    probability == one(probability) && return 0
+    rate = probability / (1 - probability)
+    lambda = _rand_gamma_marsaglia(rng, float(dist.successes), rate)
+    return rand(rng, poisson(lambda))
 end
 
 function Random.rand(rng::AbstractRNG, dist::CategoricalDist)
@@ -299,6 +365,11 @@ function logpdf(dist::NormalDist, x)
     xx, mu, sigma = promote(x, dist.mu, dist.sigma)
     z = (xx - mu) / sigma
     return -log(sigma) - log(2 * pi) / 2 - z * z / 2
+end
+
+function logpdf(dist::LaplaceDist, x)
+    xx, mu, scale = promote(x, dist.mu, dist.scale)
+    return -log(2 * scale) - abs(xx - mu) / scale
 end
 
 function logpdf(dist::ExponentialDist, x)
@@ -345,6 +416,17 @@ end
 function logpdf(dist::BernoulliDist, x)
     value = x isa Bool ? x : x != 0
     return value ? log(dist.p) : log1p(-dist.p)
+end
+
+function logpdf(dist::GeometricDist, x)
+    count = _poisson_count(x)
+    isnothing(count) && return oftype(float(dist.p), -Inf)
+    if count == 0
+        return log(dist.p)
+    elseif dist.p == one(dist.p)
+        return oftype(float(dist.p), -Inf)
+    end
+    return log(dist.p) + count * log1p(-dist.p)
 end
 
 function _poisson_count(x)
@@ -406,6 +488,19 @@ function logpdf(dist::BinomialDist, x)
     return log_combination +
            count * log(probability) +
            (dist.trials - count) * log1p(-probability)
+end
+
+function logpdf(dist::NegativeBinomialDist, x)
+    count = _poisson_count(x)
+    isnothing(count) && return oftype(float(dist.p), -Inf)
+    successes, probability = promote(dist.successes, dist.p)
+    if count == 0 && probability == one(probability)
+        return zero(probability)
+    elseif probability == one(probability)
+        return oftype(probability, -Inf)
+    end
+    return loggamma(count + successes) - loggamma(successes) - _logfactorial_like(probability, count) +
+           successes * log(probability) + count * log1p(-probability)
 end
 
 function logpdf(dist::PoissonDist, x)

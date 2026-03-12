@@ -355,7 +355,7 @@ function _merge_loop_steps(steps::Vector{AbstractPlanStep})
 end
 
 function _parameter_transform(rhs::DistributionSpec)
-    if rhs.family === :normal || rhs.family === :studentt
+    if rhs.family === :normal || rhs.family === :laplace || rhs.family === :studentt
         return IdentityTransform()
     elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma ||
            rhs.family === :inversegamma || rhs.family === :weibull

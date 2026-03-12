@@ -20,6 +20,7 @@ const GPU_BACKEND_SUPPORTED_PRIMITIVES = Symbol[
 const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :normal,
     :lognormal,
+    :laplace,
     :exponential,
     :gamma,
     :inversegamma,
@@ -27,6 +28,8 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :beta,
     :bernoulli,
     :binomial,
+    :geometric,
+    :negativebinomial,
     :poisson,
     :studentt,
     :categorical,
@@ -365,6 +368,12 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendNormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+    elseif step.rhs.family === :laplace
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "laplace expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendLaplaceChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
     elseif step.rhs.family === :lognormal
         length(arguments) == 2 || begin
             _backend_issue!(issues, "lognormal expects exactly 2 backend arguments")
@@ -419,6 +428,18 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+    elseif step.rhs.family === :geometric
+        length(arguments) == 1 || begin
+            _backend_issue!(issues, "geometric expects exactly 1 backend argument")
+            return nothing
+        end
+        return BackendGeometricChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+    elseif step.rhs.family === :negativebinomial
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "negativebinomial expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendNegativeBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
     elseif step.rhs.family === :categorical
         isempty(arguments) && begin
             _backend_issue!(issues, "categorical expects at least 1 backend argument")

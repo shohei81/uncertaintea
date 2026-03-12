@@ -25,7 +25,23 @@ function _tea_mode(mode_expr)
 end
 
 function _qualify_builtin_distribution(name)
-    if name in (:normal, :lognormal, :exponential, :gamma, :inversegamma, :weibull, :beta, :bernoulli, :binomial, :poisson, :studentt, :categorical)
+    if name in (
+        :normal,
+        :lognormal,
+        :laplace,
+        :exponential,
+        :gamma,
+        :inversegamma,
+        :weibull,
+        :beta,
+        :bernoulli,
+        :binomial,
+        :geometric,
+        :negativebinomial,
+        :poisson,
+        :studentt,
+        :categorical,
+    )
         return _qualify(name)
     end
     return name
@@ -124,6 +140,7 @@ function _rhs_spec_expr(rhs)
            callee in (
             :normal,
             :lognormal,
+            :laplace,
             :exponential,
             :gamma,
             :inversegamma,
@@ -131,6 +148,8 @@ function _rhs_spec_expr(rhs)
             :beta,
             :bernoulli,
             :binomial,
+            :geometric,
+            :negativebinomial,
             :poisson,
             :studentt,
             :categorical,
@@ -186,7 +205,7 @@ end
 function _supported_distribution_family(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
     family = rhs.args[1]
-    family in (:normal, :lognormal, :exponential, :gamma, :inversegamma, :weibull, :beta, :studentt) ||
+    family in (:normal, :lognormal, :laplace, :exponential, :gamma, :inversegamma, :weibull, :beta, :studentt) ||
         return nothing
     return family
 end
@@ -199,7 +218,7 @@ function _parameter_transform_expr(rhs)
     family = _supported_distribution_family(rhs)
     isnothing(family) && throw(ArgumentError("unsupported parameter transform for $rhs"))
 
-    if family === :normal
+    if family === :normal || family === :laplace
         return :($(_qualify(:IdentityTransform))())
     elseif family === :lognormal || family === :exponential || family === :gamma ||
            family === :inversegamma || family === :weibull

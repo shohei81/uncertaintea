@@ -306,10 +306,11 @@ The next lowering layer is now explicit:
   unconstrained temporary buffers when the batch shape stays fixed
 - batched gradient caches now first try a backend-plan-aware gradient evaluator
   for a differentiable subset of the lowered GPU plan
-- that manual path currently covers `normal` / `lognormal` / `exponential` /
-  `gamma` / `inversegamma` / `weibull` / `beta` / `studentt` choices,
-  observed `bernoulli` / `binomial` / `categorical` / `poisson`, numeric
-  deterministic assignments, and the primitive subset
+- that manual path currently covers `normal` / `lognormal` / `laplace` /
+  `exponential` / `gamma` / `inversegamma` / `weibull` / `beta` /
+  `studentt` choices, observed `bernoulli` / `binomial` / `geometric` /
+  `negativebinomial` / `categorical` / `poisson`, numeric deterministic
+  assignments, and the primitive subset
   `+`, `-`, `*`, `/`, `exp`, `log`, `log1p`, `sqrt`, `abs`, `min`, `max`,
   `clamp`, `%` with a literal divisor, and `^` with a literal exponent
 - backend-lowered models outside that differentiable subset fall back to the
@@ -333,9 +334,10 @@ The next lowering layer is now explicit:
   synchronized address and reuses a shared observed-value buffer across items
 - batched supported choice scoring now fills a shared numeric choice-value
   buffer before scoring, removing per-column choice lookup calls from the hot
-  scoring loop for `normal`, `lognormal`, `exponential`, `gamma`,
-  `inversegamma`, `weibull`, `beta`, `bernoulli`, `binomial`,
-  `categorical`, `poisson`, and `studentt`
+  scoring loop for `normal`, `lognormal`, `laplace`, `exponential`,
+  `gamma`, `inversegamma`, `weibull`, `beta`, `bernoulli`, `binomial`,
+  `geometric`, `negativebinomial`, `categorical`, `poisson`, and
+  `studentt`
 
 ## Phase 2 Execution Strategy
 

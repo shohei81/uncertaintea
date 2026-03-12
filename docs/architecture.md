@@ -77,9 +77,9 @@ GPU backend:
 
 Current backend-lowering subset:
 
-- distribution families: `normal`, `lognormal`, `exponential`, `gamma`,
-  `inversegamma`, `weibull`, `beta`, `bernoulli`, `binomial`, `poisson`,
-  `studentt`, `categorical`
+ - distribution families: `normal`, `lognormal`, `laplace`, `exponential`,
+  `gamma`, `inversegamma`, `weibull`, `beta`, `bernoulli`, `binomial`,
+  `geometric`, `negativebinomial`, `poisson`, `studentt`, `categorical`
 - primitive calls: `:`, `=>`, `+`, `-`, `*`, `/`, `^`, `%`, `exp`, `log`,
   `log1p`, `sqrt`, `abs`, `min`, `max`, `clamp`
 - batched backend execution assumes synchronized loop iterables across the batch
@@ -103,9 +103,10 @@ Current backend-lowering subset:
   for the differentiable backend subset and only fall back to the flat
   `ForwardDiff` objective or the older column-wise cache when that subset does
   not apply
-- the differentiable backend path now covers `normal`, `lognormal`,
-  `exponential`, `gamma`, `inversegamma`, `weibull`, `beta`, `studentt`,
-  observed `bernoulli`, observed `binomial`, observed `categorical`,
+ - the differentiable backend path now covers `normal`, `lognormal`,
+  `laplace`, `exponential`, `gamma`, `inversegamma`, `weibull`, `beta`,
+  `studentt`, observed `bernoulli`, observed `binomial`, observed
+  `geometric`, observed `negativebinomial`, observed `categorical`,
   observed `poisson`, and numeric deterministic assignments
 - the differentiable backend primitive subset now includes `abs`, `min`,
   `max`, `clamp`, `%` with a literal divisor, and `^` with a literal exponent

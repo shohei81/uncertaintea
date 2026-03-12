@@ -73,6 +73,19 @@ function _backend_step_stub(step::BackendNormalChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendLaplaceChoicePlanStep)
+    return string(
+        "choice laplace address=",
+        _backend_address_stub(step.address),
+        " mu=",
+        _backend_expr_stub(step.mu),
+        " scale=",
+        _backend_expr_stub(step.scale),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
 function _backend_step_stub(step::BackendLognormalChoicePlanStep)
     return string(
         "choice lognormal address=",
@@ -166,6 +179,30 @@ function _backend_step_stub(step::BackendBinomialChoicePlanStep)
         _backend_address_stub(step.address),
         " trials=",
         _backend_expr_stub(step.trials),
+        " probability=",
+        _backend_expr_stub(step.probability),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
+function _backend_step_stub(step::BackendGeometricChoicePlanStep)
+    return string(
+        "choice geometric address=",
+        _backend_address_stub(step.address),
+        " probability=",
+        _backend_expr_stub(step.probability),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
+function _backend_step_stub(step::BackendNegativeBinomialChoicePlanStep)
+    return string(
+        "choice negativebinomial address=",
+        _backend_address_stub(step.address),
+        " successes=",
+        _backend_expr_stub(step.successes),
         " probability=",
         _backend_expr_stub(step.probability),
         " parameter_slot=",
