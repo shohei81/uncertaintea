@@ -1306,6 +1306,10 @@ using UncertainTea
     scalar_tree_workspace.proposal.momentum .= 8.0
     scalar_tree_workspace.proposal.gradient .= 9.0
     scalar_tree_workspace.proposal.logjoint = 0.25
+    scalar_tree_workspace.left.position .= 3.0
+    scalar_tree_workspace.left.momentum .= 4.0
+    scalar_tree_workspace.left.gradient .= 5.0
+    scalar_tree_workspace.left.logjoint = -0.5
     scalar_tree_workspace.summary.log_weight = -0.5
     scalar_tree_workspace.summary.accept_stat_sum = 0.75
     scalar_tree_workspace.summary.accept_stat_count = 2
@@ -1314,12 +1318,26 @@ using UncertainTea
     scalar_tree_workspace.summary.proposal_energy_error = 0.25
     scalar_tree_workspace.summary.turning = false
     scalar_tree_workspace.summary.divergent = false
+    UncertainTea._copy_nuts_continuation_frontier_from_tree!(
+        scalar_continuation,
+        scalar_tree_workspace,
+        -1,
+    )
+    @test scalar_continuation.left.logjoint == -0.5
+    @test scalar_continuation.left.position == [3.0]
+    UncertainTea._copy_nuts_continuation_proposal_from_tree!(
+        scalar_continuation,
+        scalar_tree_workspace,
+    )
+    @test scalar_continuation.proposal.logjoint == 0.25
+    @test scalar_continuation.proposal_energy == 1.25
+    @test scalar_continuation.proposal_energy_error == 0.25
     UncertainTea._merge_nuts_subtree_summary!(
         scalar_continuation,
         scalar_tree_workspace,
-        true,
-        MersenneTwister(104),
+        -0.5,
     )
+    UncertainTea._merge_nuts_continuation_turning!(scalar_continuation, true)
     @test scalar_continuation.integration_steps == 3
     @test scalar_continuation.accept_stat_sum == 0.75
     @test scalar_continuation.accept_stat_count == 2

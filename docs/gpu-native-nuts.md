@@ -92,7 +92,9 @@ The current CPU NUTS path is intentionally narrow:
   turning check now also run through one-chain masked batch helpers; the
   single-chain subtree builder now mirrors that shape by keeping subtree
   metadata in reusable scratch attached to `NUTSSubtreeWorkspace`, and its
-  continuation merge now consumes that scratch through a dedicated helper
+  continuation merge now consumes that scratch through a dedicated helper while
+  frontier/proposal copies and merged-turning updates also run through their
+  own scalar helpers
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

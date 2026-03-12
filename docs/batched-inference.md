@@ -169,6 +169,9 @@ for dynamic trajectory building:
 - single-chain continuation merge now also runs through a dedicated subtree
   merge helper that consumes that scratch metadata, making the scalar and
   batched continuation-merge shapes more directly comparable
+- single-chain continuation frontier/proposal copies and merged-turning update
+  now also run through dedicated helpers, so its expansion loop follows the
+  same step-copy-merge structure as the batched fallback path
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

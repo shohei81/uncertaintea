@@ -2365,28 +2365,57 @@ function _merge_batched_subtree_summary!(
     return workspace
 end
 
+function _copy_nuts_continuation_frontier_from_tree!(
+    continuation::NUTSContinuationState,
+    subtree_workspace::NUTSSubtreeWorkspace,
+    direction::Int,
+)
+    if direction < 0
+        _copyto_nuts_state!(continuation.left, subtree_workspace.left)
+    else
+        _copyto_nuts_state!(continuation.right, subtree_workspace.right)
+    end
+    return continuation
+end
+
+function _copy_nuts_continuation_proposal_from_tree!(
+    continuation::NUTSContinuationState,
+    subtree_workspace::NUTSSubtreeWorkspace,
+)
+    _copyto_nuts_state!(continuation.proposal, subtree_workspace.proposal)
+    continuation.proposal_energy = subtree_workspace.summary.proposal_energy
+    continuation.proposal_energy_error = subtree_workspace.summary.proposal_energy_error
+    return continuation
+end
+
+function _merge_nuts_continuation_turning!(
+    continuation::NUTSContinuationState,
+    subtree_turning::Bool,
+)
+    continuation.turning =
+        subtree_turning || _is_turning(
+            continuation.left.position,
+            continuation.right.position,
+            continuation.left.momentum,
+            continuation.right.momentum,
+        )
+    return continuation
+end
+
 function _merge_nuts_subtree_summary!(
     continuation::NUTSContinuationState,
     subtree_workspace::NUTSSubtreeWorkspace,
-    merged_turning::Bool,
-    rng::AbstractRNG,
+    combined_log_weight::Float64,
 )
     summary = subtree_workspace.summary
     continuation.integration_steps += summary.integration_steps
     continuation.accept_stat_sum += summary.accept_stat_sum
     continuation.accept_stat_count += summary.accept_stat_count
     if isfinite(summary.log_weight)
-        combined_log_weight = _logaddexp(continuation.log_weight, summary.log_weight)
-        if log(rand(rng)) < summary.log_weight - combined_log_weight
-            _copyto_nuts_state!(continuation.proposal, subtree_workspace.proposal)
-            continuation.proposal_energy = summary.proposal_energy
-            continuation.proposal_energy_error = summary.proposal_energy_error
-        end
         continuation.log_weight = combined_log_weight
     end
 
     continuation.divergent = summary.divergent
-    continuation.turning = summary.turning || merged_turning
     return continuation
 end
 
@@ -2519,18 +2548,32 @@ function _continue_nuts_proposal!(
             break
         end
 
-        if direction < 0
-            _copyto_nuts_state!(left, tree_workspace.left)
-        else
-            _copyto_nuts_state!(right, tree_workspace.right)
+        _copy_nuts_continuation_frontier_from_tree!(
+            continuation,
+            tree_workspace,
+            direction,
+        )
+
+        combined_log_weight = continuation.log_weight
+        if isfinite(tree_workspace.summary.log_weight)
+            combined_log_weight = _logaddexp(
+                continuation.log_weight,
+                tree_workspace.summary.log_weight,
+            )
+            if log(rand(rng)) < tree_workspace.summary.log_weight - combined_log_weight
+                _copy_nuts_continuation_proposal_from_tree!(
+                    continuation,
+                    tree_workspace,
+                )
+            end
         end
 
         _merge_nuts_subtree_summary!(
             continuation,
             tree_workspace,
-            _is_turning(left.position, right.position, left.momentum, right.momentum),
-            rng,
+            combined_log_weight,
         )
+        _merge_nuts_continuation_turning!(continuation, tree_workspace.summary.turning)
     end
     return continuation
 end
