@@ -215,7 +215,8 @@ for dynamic trajectory building:
   barrier hints, plus a target-plan layer that assigns target-specific
   allocation and barrier strategy for `:gpu`, `:metal`, and `:cuda`, and then
   into a launch-plan layer with concrete constant/device/shared bindings and
-  per-stage executor skeletons,
+  per-stage executor skeletons, and then into a backend executor-plan layer
+  with target-specific argument classes and kernel symbols,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,

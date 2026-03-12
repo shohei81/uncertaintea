@@ -122,7 +122,9 @@ The current CPU NUTS path is intentionally narrow:
   skeleton with segment-local slots and device-stage barrier hints, then into
   a target-plan layer with target-specific allocation and barrier policy for
   `:gpu`, `:metal`, and `:cuda`, then into a launch-plan layer with concrete
-  argument/shared bindings and per-stage executor skeletons, plus a
+  argument/shared bindings and per-stage executor skeletons, then into a
+  backend executor-plan layer with target-specific argument classes and kernel
+  symbols, plus a
   small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through

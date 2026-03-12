@@ -442,11 +442,11 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    launch_plan = _batched_nuts_launch_plan(program)
-    for executor_stage in _batched_nuts_launch_executors(launch_plan)
-        _execute_batched_nuts_launch_stage!(
+    executor_plan = _batched_nuts_executor_plan(program)
+    for executor_stage in _batched_nuts_executor_stages(executor_plan)
+        _execute_batched_nuts_executor_stage!(
             workspace,
-            launch_plan,
+            executor_plan,
             executor_stage,
             execution,
             model,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_launch_stage!(
+function _execute_batched_nuts_executor_stage!(
     workspace::BatchedNUTSWorkspace,
-    launch_plan::BatchedNUTSKernelLaunchPlan,
-    executor_stage::BatchedNUTSKernelLaunchStageExecutor,
+    executor_plan::BatchedNUTSKernelExecutorPlan,
+    executor_stage::BatchedNUTSKernelExecutorStage,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -476,7 +476,9 @@ function _execute_batched_nuts_launch_stage!(
 )
     _execute_batched_nuts_kernel_dataflow!(
         workspace,
-        _batched_nuts_launch_stage_dataflow(executor_stage),
+        _batched_nuts_launch_stage_dataflow(
+            _batched_nuts_executor_launch_stage(executor_stage),
+        ),
         execution,
         model,
         inverse_mass_matrix,
@@ -486,7 +488,7 @@ function _execute_batched_nuts_launch_stage!(
         max_delta_energy,
         rng,
     )
-    for barrier in _batched_nuts_launch_barriers_after(executor_stage)
+    for barrier in _batched_nuts_executor_barriers_after(executor_stage)
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
     return nothing

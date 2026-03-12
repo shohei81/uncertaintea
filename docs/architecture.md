@@ -189,7 +189,9 @@ Current backend-lowering subset:
   barrier hints, and finally into a target-plan layer that can choose
   target-specific allocation and barrier policy for `:gpu`, `:metal`, and
   `:cuda`, and then into a launch-plan layer with concrete argument/shared
-  bindings and per-stage executor skeletons, and
+  bindings and per-stage executor skeletons, and then into a backend
+  executor-plan layer with target-specific argument classes and kernel
+  symbols, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
