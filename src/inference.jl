@@ -303,6 +303,64 @@ struct BatchedNUTSDoneStepState <: AbstractBatchedNUTSStepState
     descriptor::BatchedNUTSDoneStepDescriptor
 end
 
+abstract type AbstractBatchedNUTSKernelFrame end
+
+struct BatchedNUTSIdleKernelFrame <: AbstractBatchedNUTSKernelFrame
+    state::BatchedNUTSIdleStepState
+end
+
+struct BatchedNUTSExpandKernelFrame <: AbstractBatchedNUTSKernelFrame
+    state::BatchedNUTSExpandStepState
+    current_position::Matrix{Float64}
+    current_momentum::Matrix{Float64}
+    current_gradient::Matrix{Float64}
+    current_logjoint::Vector{Float64}
+    next_position::Matrix{Float64}
+    next_momentum::Matrix{Float64}
+    next_gradient::Matrix{Float64}
+    proposed_logjoint::Vector{Float64}
+    left_position::Matrix{Float64}
+    left_momentum::Matrix{Float64}
+    left_gradient::Matrix{Float64}
+    left_logjoint::Vector{Float64}
+    right_position::Matrix{Float64}
+    right_momentum::Matrix{Float64}
+    right_gradient::Matrix{Float64}
+    right_logjoint::Vector{Float64}
+    proposal_position::Matrix{Float64}
+    proposal_momentum::Matrix{Float64}
+    proposal_gradient::Matrix{Float64}
+    proposal_logjoint::Vector{Float64}
+    current_energy::Vector{Float64}
+end
+
+struct BatchedNUTSMergeKernelFrame <: AbstractBatchedNUTSKernelFrame
+    state::BatchedNUTSMergeStepState
+    left_position::Matrix{Float64}
+    left_momentum::Matrix{Float64}
+    left_gradient::Matrix{Float64}
+    left_logjoint::Vector{Float64}
+    right_position::Matrix{Float64}
+    right_momentum::Matrix{Float64}
+    right_gradient::Matrix{Float64}
+    right_logjoint::Vector{Float64}
+    tree_proposal_position::Matrix{Float64}
+    tree_proposal_momentum::Matrix{Float64}
+    tree_proposal_gradient::Matrix{Float64}
+    tree_proposal_logjoint::Vector{Float64}
+    proposal_position::Matrix{Float64}
+    proposal_momentum::Matrix{Float64}
+    proposal_gradient::Matrix{Float64}
+    proposed_logjoint::Vector{Float64}
+    continuation_proposal_logjoint::Vector{Float64}
+    continuation_log_weight::Vector{Float64}
+    current_energy::Vector{Float64}
+end
+
+struct BatchedNUTSDoneKernelFrame <: AbstractBatchedNUTSKernelFrame
+    state::BatchedNUTSDoneStepState
+end
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -2327,6 +2385,87 @@ function _batched_nuts_step_state(
     return BatchedNUTSDoneStepState(descriptor)
 end
 
+function _batched_nuts_kernel_frame(
+    workspace::BatchedNUTSWorkspace,
+)
+    return _batched_nuts_kernel_frame(
+        workspace,
+        _batched_nuts_step_state(workspace),
+    )
+end
+
+function _batched_nuts_kernel_frame(
+    workspace::BatchedNUTSWorkspace,
+    state::BatchedNUTSIdleStepState,
+)
+    return BatchedNUTSIdleKernelFrame(state)
+end
+
+function _batched_nuts_kernel_frame(
+    workspace::BatchedNUTSWorkspace,
+    state::BatchedNUTSExpandStepState,
+)
+    return BatchedNUTSExpandKernelFrame(
+        state,
+        workspace.tree_current_position,
+        workspace.tree_current_momentum,
+        workspace.tree_current_gradient,
+        workspace.tree_current_logjoint,
+        workspace.tree_next_position,
+        workspace.tree_next_momentum,
+        workspace.tree_next_gradient,
+        workspace.proposed_logjoint,
+        workspace.tree_left_position,
+        workspace.tree_left_momentum,
+        workspace.tree_left_gradient,
+        workspace.tree_left_logjoint,
+        workspace.tree_right_position,
+        workspace.tree_right_momentum,
+        workspace.tree_right_gradient,
+        workspace.tree_right_logjoint,
+        workspace.tree_proposal_position,
+        workspace.tree_proposal_momentum,
+        workspace.tree_proposal_gradient,
+        workspace.tree_proposal_logjoint,
+        workspace.current_energy,
+    )
+end
+
+function _batched_nuts_kernel_frame(
+    workspace::BatchedNUTSWorkspace,
+    state::BatchedNUTSMergeStepState,
+)
+    return BatchedNUTSMergeKernelFrame(
+        state,
+        workspace.left_position,
+        workspace.left_momentum,
+        workspace.left_gradient,
+        workspace.left_logjoint,
+        workspace.right_position,
+        workspace.right_momentum,
+        workspace.right_gradient,
+        workspace.right_logjoint,
+        workspace.tree_proposal_position,
+        workspace.tree_proposal_momentum,
+        workspace.tree_proposal_gradient,
+        workspace.tree_proposal_logjoint,
+        workspace.proposal_position,
+        workspace.proposal_momentum,
+        workspace.proposal_gradient,
+        workspace.proposed_logjoint,
+        workspace.continuation_proposal_logjoint,
+        workspace.continuation_log_weight,
+        workspace.current_energy,
+    )
+end
+
+function _batched_nuts_kernel_frame(
+    workspace::BatchedNUTSWorkspace,
+    state::BatchedNUTSDoneStepState,
+)
+    return BatchedNUTSDoneKernelFrame(state)
+end
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ::BatchedNUTSIdleIR,
@@ -2405,11 +2544,12 @@ end
 
 function _advance_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
-    state::BatchedNUTSExpandStepState,
+    frame::BatchedNUTSExpandKernelFrame,
     inverse_mass_matrix::Vector{Float64},
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    state = frame.state
     descriptor = state.descriptor
     any_active = false
     fill!(descriptor.copy_left, false)
@@ -2425,20 +2565,20 @@ function _advance_batched_nuts_subtree_cohort!(
             continue
         end
 
-        workspace.tree_current_logjoint[chain_index] = workspace.proposed_logjoint[chain_index]
-        tree_workspace.next.logjoint = workspace.proposed_logjoint[chain_index]
+        frame.current_logjoint[chain_index] = frame.proposed_logjoint[chain_index]
+        tree_workspace.next.logjoint = frame.proposed_logjoint[chain_index]
         _copyto_nuts_state!(tree_workspace.current, tree_workspace.next)
         workspace.subtree_integration_steps[chain_index] += 1
 
         if workspace.control.step_direction[chain_index] < 0
             descriptor.copy_left[chain_index] = true
-            workspace.tree_left_logjoint[chain_index] = workspace.tree_current_logjoint[chain_index]
+            frame.left_logjoint[chain_index] = frame.current_logjoint[chain_index]
         else
             descriptor.copy_right[chain_index] = true
-            workspace.tree_right_logjoint[chain_index] = workspace.tree_current_logjoint[chain_index]
+            frame.right_logjoint[chain_index] = frame.current_logjoint[chain_index]
         end
 
-        delta_energy = state.proposed_energy[chain_index] - workspace.current_energy[chain_index]
+        delta_energy = state.proposed_energy[chain_index] - frame.current_energy[chain_index]
         state.delta_energy[chain_index] = delta_energy
         if !isfinite(delta_energy) || delta_energy > max_delta_energy
             workspace.subtree_divergent[chain_index] = true
@@ -2458,7 +2598,7 @@ function _advance_batched_nuts_subtree_cohort!(
             state.candidate_log_weight[chain_index] -
             state.combined_log_weight[chain_index]
             descriptor.select_proposal[chain_index] = true
-            workspace.tree_proposal_logjoint[chain_index] = workspace.tree_current_logjoint[chain_index]
+            frame.proposal_logjoint[chain_index] = frame.current_logjoint[chain_index]
             state.proposal_energy[chain_index] = state.proposed_energy[chain_index]
             state.proposal_energy_error[chain_index] = delta_energy
         end
@@ -2466,33 +2606,33 @@ function _advance_batched_nuts_subtree_cohort!(
     end
 
     _copy_masked_nuts_buffers!(
-        workspace.tree_left_position,
-        workspace.tree_left_momentum,
-        workspace.tree_left_gradient,
-        workspace.tree_current_position,
-        workspace.tree_current_momentum,
-        workspace.tree_current_gradient,
+        frame.left_position,
+        frame.left_momentum,
+        frame.left_gradient,
+        frame.current_position,
+        frame.current_momentum,
+        frame.current_gradient,
         descriptor.copy_left,
     )
     _copy_masked_nuts_buffers!(
-        workspace.tree_right_position,
-        workspace.tree_right_momentum,
-        workspace.tree_right_gradient,
-        workspace.tree_current_position,
-        workspace.tree_current_momentum,
-        workspace.tree_current_gradient,
+        frame.right_position,
+        frame.right_momentum,
+        frame.right_gradient,
+        frame.current_position,
+        frame.current_momentum,
+        frame.current_gradient,
         descriptor.copy_right,
     )
     _copy_masked_nuts_buffers!(
-        workspace.tree_proposal_position,
-        workspace.tree_proposal_momentum,
-        workspace.tree_proposal_gradient,
-        workspace.tree_current_position,
-        workspace.tree_current_momentum,
-        workspace.tree_current_gradient,
+        frame.proposal_position,
+        frame.proposal_momentum,
+        frame.proposal_gradient,
+        frame.current_position,
+        frame.current_momentum,
+        frame.current_gradient,
         descriptor.select_proposal,
     )
-    _copy_masked_values!(workspace.tree_proposal_logjoint, workspace.tree_current_logjoint, descriptor.select_proposal)
+    _copy_masked_values!(frame.proposal_logjoint, frame.current_logjoint, descriptor.select_proposal)
     _sync_batched_tree_logjoint!(
         workspace,
         workspace.subtree_active .|
@@ -2503,10 +2643,10 @@ function _advance_batched_nuts_subtree_cohort!(
 
     _batched_is_turning!(
         descriptor.turning,
-        workspace.tree_left_position,
-        workspace.tree_right_position,
-        workspace.tree_left_momentum,
-        workspace.tree_right_momentum,
+        frame.left_position,
+        frame.right_position,
+        frame.left_momentum,
+        frame.right_momentum,
         workspace.subtree_active,
     )
     for chain_index in eachindex(workspace.subtree_active)
@@ -2571,18 +2711,19 @@ end
 
 function _merge_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
-    state::BatchedNUTSMergeStepState,
+    frame::BatchedNUTSMergeKernelFrame,
     inverse_mass_matrix::Vector{Float64},
     rng::AbstractRNG,
 )
+    state = frame.state
     descriptor = state.descriptor
     _merge_batched_nuts_continuation_frontiers!(workspace, workspace.subtree_active)
     _batched_is_turning!(
         descriptor.merged_turning,
-        workspace.left_position,
-        workspace.right_position,
-        workspace.left_momentum,
-        workspace.right_momentum,
+        frame.left_position,
+        frame.right_position,
+        frame.left_momentum,
+        frame.right_momentum,
         workspace.subtree_active,
     )
 
@@ -2591,12 +2732,12 @@ function _merge_batched_nuts_subtree_cohort!(
         descriptor.select_proposal[chain_index] = false
         state.candidate_log_weight[chain_index] = -Inf
         state.combined_log_weight[chain_index] =
-            workspace.continuation_log_weight[chain_index]
+            frame.continuation_log_weight[chain_index]
         if isfinite(workspace.subtree_log_weight[chain_index])
             state.candidate_log_weight[chain_index] =
                 workspace.subtree_log_weight[chain_index]
             state.combined_log_weight[chain_index] = _logaddexp(
-                workspace.continuation_log_weight[chain_index],
+                frame.continuation_log_weight[chain_index],
                 state.candidate_log_weight[chain_index],
             )
             descriptor.select_proposal[chain_index] =
@@ -2604,30 +2745,30 @@ function _merge_batched_nuts_subtree_cohort!(
                 state.combined_log_weight[chain_index]
             if descriptor.select_proposal[chain_index]
                 state.proposal_energy[chain_index] = _hamiltonian(
-                    workspace.tree_proposal_logjoint[chain_index],
-                    view(workspace.tree_proposal_momentum, :, chain_index),
+                    frame.tree_proposal_logjoint[chain_index],
+                    view(frame.tree_proposal_momentum, :, chain_index),
                     inverse_mass_matrix,
                 )
                 state.proposal_energy_error[chain_index] =
                     state.proposal_energy[chain_index] -
-                    workspace.current_energy[chain_index]
+                    frame.current_energy[chain_index]
             end
         end
         _merge_batched_subtree_summary!(workspace, chain_index)
     end
 
     _copy_masked_nuts_buffers!(
-        workspace.proposal_position,
-        workspace.proposal_momentum,
-        workspace.proposal_gradient,
-        workspace.tree_proposal_position,
-        workspace.tree_proposal_momentum,
-        workspace.tree_proposal_gradient,
+        frame.proposal_position,
+        frame.proposal_momentum,
+        frame.proposal_gradient,
+        frame.tree_proposal_position,
+        frame.tree_proposal_momentum,
+        frame.tree_proposal_gradient,
         descriptor.select_proposal,
     )
     _copy_masked_values!(
-        workspace.proposed_logjoint,
-        workspace.continuation_proposal_logjoint,
+        frame.proposed_logjoint,
+        frame.continuation_proposal_logjoint,
         descriptor.select_proposal,
     )
     _sync_batched_continuation_logjoint!(
@@ -2738,7 +2879,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    state::BatchedNUTSIdleStepState,
+    state::AbstractBatchedNUTSStepState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2747,13 +2888,37 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_block!(workspace, state.descriptor.block)
+    return _step_batched_nuts_subtree_scheduler!(
+        workspace,
+        _batched_nuts_kernel_frame(workspace, state),
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSIdleKernelFrame,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _load_batched_nuts_control_block!(workspace, frame.state.descriptor.block)
     return false
 end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    state::BatchedNUTSExpandStepState,
+    frame::BatchedNUTSExpandKernelFrame,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2762,18 +2927,19 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    state = frame.state
     descriptor = state.descriptor
     _load_batched_nuts_control_block!(workspace, descriptor.block)
     _batched_nuts_leapfrog_step_to!(
         workspace,
         model,
-        workspace.tree_next_position,
-        workspace.tree_next_momentum,
-        workspace.tree_next_gradient,
-        workspace.proposed_logjoint,
-        workspace.tree_current_position,
-        workspace.tree_current_momentum,
-        workspace.tree_current_gradient,
+        frame.next_position,
+        frame.next_momentum,
+        frame.next_gradient,
+        frame.proposed_logjoint,
+        frame.current_position,
+        frame.current_momentum,
+        frame.current_gradient,
         inverse_mass_matrix,
         args,
         constraints,
@@ -2783,13 +2949,13 @@ function _step_batched_nuts_subtree_scheduler!(
     )
     _batched_hamiltonian!(
         state.proposed_energy,
-        workspace.proposed_logjoint,
-        workspace.tree_next_momentum,
+        frame.proposed_logjoint,
+        frame.next_momentum,
         inverse_mass_matrix,
     )
     any_active = _advance_batched_nuts_subtree_cohort!(
         workspace,
-        state,
+        frame,
         inverse_mass_matrix,
         max_delta_energy,
         rng,
@@ -2803,7 +2969,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    state::BatchedNUTSMergeStepState,
+    frame::BatchedNUTSMergeKernelFrame,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2812,13 +2978,14 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    state = frame.state
     descriptor = state.descriptor
     _load_batched_nuts_control_block!(workspace, descriptor.block)
     any_active = _activate_batched_nuts_subtree_merge_cohort!(workspace, descriptor.block)
     if any_active
         _merge_batched_nuts_subtree_cohort!(
             workspace,
-            state,
+            frame,
             inverse_mass_matrix,
             rng,
         )
@@ -2830,7 +2997,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    state::BatchedNUTSDoneStepState,
+    frame::BatchedNUTSDoneKernelFrame,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2839,7 +3006,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _load_batched_nuts_control_block!(workspace, state.descriptor.block)
+    _load_batched_nuts_control_block!(workspace, frame.state.descriptor.block)
     return false
 end
 

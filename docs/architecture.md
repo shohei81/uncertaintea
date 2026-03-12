@@ -175,7 +175,9 @@ Current backend-lowering subset:
   executable control-block layer, and then through a 1-step descriptor that
   names the phase-local scratch masks touched by expand/merge; a final
   step-state object then bundles that descriptor with the numeric subtree
-  energy/log-weight scratch for the current batched scheduler step; the
+  energy/log-weight scratch for the current batched scheduler step, and a
+  kernel-frame object then makes the concrete matrix/vector buffers for that
+  step explicit as well; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

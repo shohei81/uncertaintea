@@ -199,7 +199,10 @@ for dynamic trajectory building:
   scheduler now then derives a 1-step descriptor from that block so the
   phase-local scratch masks used by expand/merge are explicit as well, and a
   final step-state layer now bundles those descriptors with the numeric
-  energy/log-weight scratch touched by the batched subtree step itself
+  energy/log-weight scratch touched by the batched subtree step itself; the
+  current CPU path now also derives a kernel-frame object from that step state
+  so the numeric matrix/vector buffers consumed by one batched subtree step are
+  explicit too
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

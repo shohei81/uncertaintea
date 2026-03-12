@@ -1715,6 +1715,20 @@ using UncertainTea
         gaussian_cohort_scheduler_workspace.subtree_candidate_log_weight
     @test expand_state.combined_log_weight ===
         gaussian_cohort_scheduler_workspace.subtree_combined_log_weight
+    expand_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
+    @test expand_frame isa UncertainTea.BatchedNUTSExpandKernelFrame
+    @test expand_frame.state.log_weight === gaussian_cohort_scheduler_workspace.subtree_log_weight
+    @test expand_frame.current_position === gaussian_cohort_scheduler_workspace.tree_current_position
+    @test expand_frame.next_position === gaussian_cohort_scheduler_workspace.tree_next_position
+    @test expand_frame.proposed_logjoint === gaussian_cohort_scheduler_workspace.proposed_logjoint
+    @test expand_frame.left_position === gaussian_cohort_scheduler_workspace.tree_left_position
+    @test expand_frame.right_position === gaussian_cohort_scheduler_workspace.tree_right_position
+    @test expand_frame.proposal_position === gaussian_cohort_scheduler_workspace.tree_proposal_position
+    @test expand_frame.current_energy === gaussian_cohort_scheduler_workspace.current_energy
+    @test UncertainTea._batched_nuts_kernel_frame(
+        gaussian_cohort_scheduler_workspace,
+        expand_state,
+    ).state === expand_state
     while gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1756,6 +1770,24 @@ using UncertainTea
         gaussian_cohort_scheduler_workspace.continuation_candidate_log_weight
     @test merge_state.combined_log_weight ===
         gaussian_cohort_scheduler_workspace.continuation_combined_log_weight
+    merge_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
+    @test merge_frame isa UncertainTea.BatchedNUTSMergeKernelFrame
+    @test merge_frame.state.candidate_log_weight ===
+        gaussian_cohort_scheduler_workspace.continuation_candidate_log_weight
+    @test merge_frame.left_position === gaussian_cohort_scheduler_workspace.left_position
+    @test merge_frame.right_position === gaussian_cohort_scheduler_workspace.right_position
+    @test merge_frame.tree_proposal_position ===
+        gaussian_cohort_scheduler_workspace.tree_proposal_position
+    @test merge_frame.proposal_position === gaussian_cohort_scheduler_workspace.proposal_position
+    @test merge_frame.proposed_logjoint === gaussian_cohort_scheduler_workspace.proposed_logjoint
+    @test merge_frame.continuation_proposal_logjoint ===
+        gaussian_cohort_scheduler_workspace.continuation_proposal_logjoint
+    @test merge_frame.continuation_log_weight ===
+        gaussian_cohort_scheduler_workspace.continuation_log_weight
+    @test UncertainTea._batched_nuts_kernel_frame(
+        gaussian_cohort_scheduler_workspace,
+        merge_state,
+    ).state === merge_state
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -1781,6 +1813,8 @@ using UncertainTea
     @test done_descriptor isa UncertainTea.BatchedNUTSDoneStepDescriptor
     done_state = UncertainTea._batched_nuts_step_state(gaussian_cohort_scheduler_workspace)
     @test done_state isa UncertainTea.BatchedNUTSDoneStepState
+    done_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
+    @test done_frame isa UncertainTea.BatchedNUTSDoneKernelFrame
     @test gaussian_cohort_scheduler_workspace.control.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
         BitVector([true, true, true])
@@ -1825,12 +1859,17 @@ using UncertainTea
         expand_direct_descriptor,
     )
     @test expand_direct_state isa UncertainTea.BatchedNUTSExpandStepState
+    expand_direct_frame = UncertainTea._batched_nuts_kernel_frame(
+        gaussian_expand_ir_workspace,
+        expand_direct_state,
+    )
+    @test expand_direct_frame isa UncertainTea.BatchedNUTSExpandKernelFrame
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
     fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_expand_ir_workspace,
-        expand_direct_state,
+        expand_direct_frame,
         gaussian_mean,
         [1.0],
         (),
@@ -1895,12 +1934,17 @@ using UncertainTea
         merge_direct_descriptor,
     )
     @test merge_direct_state isa UncertainTea.BatchedNUTSMergeStepState
+    merge_direct_frame = UncertainTea._batched_nuts_kernel_frame(
+        gaussian_merge_ir_workspace,
+        merge_direct_state,
+    )
+    @test merge_direct_frame isa UncertainTea.BatchedNUTSMergeKernelFrame
     merge_tree_depths = copy(gaussian_merge_ir_workspace.control.tree_depths)
     fill!(gaussian_merge_ir_workspace.control.scheduler.subtree_started, false)
     fill!(gaussian_merge_ir_workspace.subtree_active, false)
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_merge_ir_workspace,
-        merge_direct_state,
+        merge_direct_frame,
         gaussian_mean,
         [1.0],
         (),

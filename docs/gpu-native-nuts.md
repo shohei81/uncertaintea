@@ -109,7 +109,9 @@ The current CPU NUTS path is intentionally narrow:
   through an explicit executable control-block layer and then a 1-step
   descriptor for the phase-local scratch masks they touch; the current CPU
   path now also makes the phase-local numeric energy/log-weight scratch
-  explicit as a step-state object layered on top
+  explicit as a step-state object layered on top, and then exposes the
+  concrete numeric matrix/vector buffers for one subtree step as a kernel
+  frame built from that state
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local
