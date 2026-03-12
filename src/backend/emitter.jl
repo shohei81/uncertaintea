@@ -247,6 +247,23 @@ function _backend_step_stub(step::BackendStudentTChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendMvNormalChoicePlanStep)
+    return string(
+        "choice mvnormal address=",
+        _backend_address_stub(step.address),
+        " mu=",
+        _backend_expr_stub(BackendTupleExpr(step.mu)),
+        " sigma=",
+        _backend_expr_stub(BackendTupleExpr(step.sigma)),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+        " value_index=",
+        repr(step.value_index),
+        " value_length=",
+        step.value_length,
+    )
+end
+
 function _backend_step_stub(step::BackendDeterministicPlanStep)
     return string(
         "deterministic slot=",

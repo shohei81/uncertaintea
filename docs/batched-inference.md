@@ -319,7 +319,10 @@ The next lowering layer is now explicit:
 - vector-valued latent slots are now supported in the CPU/fallback batched
   path, so models with built-in `dirichlet` and restricted diagonal
   `mvnormal` latents can use batched `logjoint`, unconstrained gradients, HMC,
-  and NUTS even though they do not yet lower to the backend-native GPU subset
+  and NUTS regardless of whether they take the backend-native path
+- restricted diagonal `mvnormal` now also lowers to the backend-native batched
+  scoring path, but its batched gradients still use the flat backend
+  `ForwardDiff` fallback rather than the manual backend gradient evaluator
 - batched HMC now reuses sampler-local momentum, proposal, diagnostics, and
   constrained-position buffers instead of reallocating them on each iteration
 - batched HMC now also keeps the current unconstrained gradient for each chain

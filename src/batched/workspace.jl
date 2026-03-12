@@ -369,6 +369,8 @@ function _logjoint_unconstrained_batched_backend!(
         destination_indices = parametervalueindices(slot)
         if slot.transform isa IdentityTransform
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
+        elseif slot.transform isa VectorIdentityTransform
+            copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa LogTransform
             for batch_index in 1:batch_size
                 unconstrained_value = params[first(source_indices), batch_index]

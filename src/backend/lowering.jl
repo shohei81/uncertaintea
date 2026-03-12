@@ -33,6 +33,7 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :poisson,
     :studentt,
     :categorical,
+    :mvnormal,
 ]
 
 abstract type AbstractBackendExpr end
@@ -358,6 +359,7 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
         return nothing
     end
+    step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
 
     address = _backend_lower_address(model, layout, step.address, issues)
     arguments = map(arg -> _backend_lower_expr(model, layout, arg, issues, "distribution argument"), step.rhs.arguments)
@@ -914,6 +916,7 @@ function _backend_loop_observed_choice(step::BackendLoopPlanStep)
     length(step.body) == 1 || return nothing
     choice = first(step.body)
     choice isa BackendChoicePlanStep || return nothing
+    choice isa BackendMvNormalChoicePlanStep && return nothing
     isnothing(choice.parameter_slot) || return nothing
     isnothing(choice.binding_slot) || return nothing
     _backend_iterator_only_address(choice.address, step.iterator_slot) || return nothing

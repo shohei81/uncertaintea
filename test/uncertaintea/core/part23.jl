@@ -34,8 +34,10 @@
     @test mvnormal_choicemap[:state] ≈ mvnormal_params atol=1e-8
     @test logjoint(mvnormal_latent_model, mvnormal_params) ≈
         assess(mvnormal_latent_model, (), choicemap((:state, mvnormal_trace[:state]))) atol=1e-6
-    @test !mvnormal_backend_report.supported
-    @test any(issue -> occursin("mvnormal", issue), mvnormal_backend_report.issues)
+    @test mvnormal_backend_report.supported
+    @test isempty(mvnormal_backend_report.issues)
+    @test backend_execution_plan(mvnormal_latent_model).steps[1] isa UncertainTea.BackendMvNormalChoicePlanStep
+    @test any(occursin("choice mvnormal", file.contents) for file in gpu_backend_files(backend_package_layout(mvnormal_latent_model)))
 
     mvnormal_batch_params = hcat(
         mvnormal_unconstrained,
@@ -53,8 +55,8 @@
         logjoint_gradient_unconstrained(mvnormal_latent_model, mvnormal_batch_params[:, index], (), choicemap()) for index in 1:3
     ]...) atol=1e-8
     @test isnothing(mvnormal_batch_cache.backend_cache)
-    @test isnothing(mvnormal_batch_cache.flat_cache)
-    @test length(mvnormal_batch_cache.column_caches) == 3
+    @test !isnothing(mvnormal_batch_cache.flat_cache)
+    @test isempty(mvnormal_batch_cache.column_caches)
 
     mvnormal_chain = hmc(
         mvnormal_latent_model,

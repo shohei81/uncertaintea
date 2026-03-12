@@ -211,7 +211,8 @@ Requirements:
   yet lower to the GPU-native backend subset
 - `mvnormal` currently supports static diagonal vector sizes in the CPU
   reference path and unconstrained HMC/NUTS through a vector-valued identity
-  transform, but it does not yet lower to the GPU-native backend subset
+  transform, and restricted diagonal forms now lower to the backend-native
+  subset as the first vector-valued built-in family
 
 ## Inference-Oriented Consequences
 

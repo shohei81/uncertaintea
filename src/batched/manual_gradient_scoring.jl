@@ -872,6 +872,10 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
             for batch_index in 1:size(params, 2)
                 constrained[slot_index, batch_index] = Float64(params[slot_index, batch_index])
             end
+        elseif slot.transform isa VectorIdentityTransform
+            source_indices = parameterindices(slot)
+            destination_indices = parametervalueindices(slot)
+            copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa LogTransform
             for batch_index in 1:size(params, 2)
                 unconstrained_value = Float64(params[slot_index, batch_index])
@@ -895,6 +899,8 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
 
     for slot in layout.slots
         if slot.transform isa IdentityTransform
+            continue
+        elseif slot.transform isa VectorIdentityTransform
             continue
         elseif slot.transform isa LogTransform
             slot_index = slot.index

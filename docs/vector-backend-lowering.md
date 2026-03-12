@@ -18,7 +18,10 @@ Those families already work with:
 - batched fallback evaluation
 - HMC and NUTS in the CPU path
 
-They do not yet lower into the backend-native GPU subset.
+At this point:
+
+- restricted diagonal `mvnormal` does lower into the backend-native subset
+- `dirichlet` still remains outside that subset
 
 This note records the intended staged design for closing that gap.
 
@@ -137,11 +140,17 @@ without immediately coupling to latent transforms.
 
 Add a backend-native latent vector slot for restricted diagonal `mvnormal`.
 
-That is the first real end-to-end target because:
+This is now the first implemented end-to-end vector target because:
 
 - the parameter transform is a vector-valued identity
 - constrained and unconstrained spans match
 - score and gradient logic are comparatively simple
+
+Current limitation inside Phase 3:
+
+- backend-native batched scoring supports diagonal `mvnormal`
+- batched gradients for that family still use the flat backend
+  `ForwardDiff` fallback instead of the manual backend gradient path
 
 ### Phase 4: Latent `dirichlet`
 

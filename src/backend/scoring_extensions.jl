@@ -110,6 +110,107 @@ function _backend_categorical_logpdf(probabilities::Tuple, x)
     return log(float(probabilities[index]))
 end
 
+function _backend_mvnormal_observed_value(value, expected_length::Int, ::Type{T}=Float64) where {T<:Real}
+    values = value isa Tuple ? collect(value) : value
+    values isa AbstractVector || throw(ArgumentError("mvnormal expects a vector or tuple value"))
+    length(values) == expected_length ||
+        throw(ArgumentError("mvnormal expects a value of length $expected_length, got $(length(values))"))
+    return T[convert(T, float(item)) for item in values]
+end
+
+function _backend_choice_vector_value(
+    value_index::Union{Nothing,Int},
+    value_length::Int,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    address,
+)
+    if !isnothing(value_index)
+        return collect(view(params, value_index:(value_index + value_length - 1)))
+    end
+    found, constrained_value = _choice_tryget_normalized(constraints, address)
+    found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+    return _backend_mvnormal_observed_value(constrained_value, value_length, Float64)
+end
+
+function _batched_choice_vector_values!(
+    destination::AbstractMatrix,
+    value_index::Union{Nothing,Int},
+    value_length::Int,
+    params::AbstractMatrix,
+    constraints::ChoiceMap,
+    address_parts::Tuple,
+)
+    size(destination) == (value_length, size(params, 2)) ||
+        throw(DimensionMismatch("expected mvnormal destination of size ($(value_length), $(size(params, 2))), got $(size(destination))"))
+    if !isnothing(value_index)
+        copyto!(destination, view(params, value_index:(value_index + value_length - 1), :))
+        return destination
+    end
+    for batch_index in 1:size(params, 2)
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, constrained_value = _choice_tryget_normalized(constraints, address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(destination))
+        for component_index in 1:value_length
+            destination[component_index, batch_index] = values[component_index]
+        end
+    end
+    return destination
+end
+
+function _batched_choice_vector_values!(
+    destination::AbstractMatrix,
+    value_index::Union{Nothing,Int},
+    value_length::Int,
+    params::AbstractMatrix,
+    constraints::AbstractVector,
+    address_parts::Tuple,
+)
+    size(destination) == (value_length, size(params, 2)) ||
+        throw(DimensionMismatch("expected mvnormal destination of size ($(value_length), $(size(params, 2))), got $(size(destination))"))
+    length(constraints) == size(params, 2) ||
+        throw(DimensionMismatch("expected $(size(params, 2)) batched constraints, got $(length(constraints))"))
+    if !isnothing(value_index)
+        copyto!(destination, view(params, value_index:(value_index + value_length - 1), :))
+        return destination
+    end
+    for batch_index in 1:size(params, 2)
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(destination))
+        for component_index in 1:value_length
+            destination[component_index, batch_index] = values[component_index]
+        end
+    end
+    return destination
+end
+
+function _assign_backend_choice_vector_value!(
+    env::BatchedPlanEnvironment,
+    slot::Int,
+    values::AbstractMatrix,
+)
+    env.generic_slots[slot] || throw(BatchedBackendFallback("mvnormal backend binding slot $slot must be generic"))
+    storage = env.generic_values[slot]
+    for batch_index in 1:env.batch_size
+        storage[batch_index] = collect(view(values, :, batch_index))
+    end
+    env.assigned[slot] = true
+    return env
+end
+
+function _backend_mvnormal_logpdf(mu::Tuple, sigma::Tuple, x)
+    (length(mu) == length(sigma) && length(mu) == length(x)) ||
+        throw(ArgumentError("mvnormal requires matching mean, scale, and value lengths"))
+    total = _backend_normal_logpdf(mu[1], sigma[1], x[1])
+    for index in 2:length(mu)
+        total += _backend_normal_logpdf(mu[index], sigma[index], x[index])
+    end
+    return total
+end
+
 function _score_backend_step!(
     step::BackendLaplaceChoicePlanStep,
     env::PlanEnvironment,
@@ -122,6 +223,20 @@ function _score_backend_step!(
     scale = _eval_backend_numeric_expr(env, step.scale)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return _backend_laplace_logpdf(mu, scale, value)
+end
+
+function _score_backend_step!(
+    step::BackendMvNormalChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_vector_value(step.value_index, step.value_length, params, constraints, address)
+    mu = tuple((_eval_backend_numeric_expr(env, expr) for expr in step.mu)...)
+    sigma = tuple((_eval_backend_numeric_expr(env, expr) for expr in step.sigma)...)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_mvnormal_logpdf(mu, sigma, value)
 end
 
 function _score_backend_step!(
@@ -248,6 +363,35 @@ function _score_backend_step!(
         end
     end
     isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendMvNormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = Matrix{eltype(params)}(undef, step.value_length, env.batch_size)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
+
+    mu_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
+    sigma_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
+    for component_index in 1:step.value_length
+        _eval_backend_numeric_expr!(mu_values[component_index], env, step.mu[component_index], 2 * step.value_length + 1)
+        _eval_backend_numeric_expr!(sigma_values[component_index], env, step.sigma[component_index], 2 * step.value_length + 2)
+        for batch_index in 1:env.batch_size
+            totals[batch_index] += _backend_normal_logpdf(
+                mu_values[component_index][batch_index],
+                sigma_values[component_index][batch_index],
+                choice_values[component_index, batch_index],
+            )
+        end
+    end
+
+    isnothing(step.binding_slot) || _assign_backend_choice_vector_value!(env, step.binding_slot, choice_values)
     return totals
 end
 
