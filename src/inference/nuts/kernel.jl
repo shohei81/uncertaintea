@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    target_plan = _batched_nuts_target_plan(program)
-    for stage in _batched_nuts_target_stages(target_plan)
-        _execute_batched_nuts_target_stage!(
+    launch_plan = _batched_nuts_launch_plan(program)
+    for executor_stage in _batched_nuts_launch_executors(launch_plan)
+        _execute_batched_nuts_launch_stage!(
             workspace,
-            target_plan,
-            stage,
+            launch_plan,
+            executor_stage,
             execution,
             model,
             inverse_mass_matrix,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_target_stage!(
+function _execute_batched_nuts_launch_stage!(
     workspace::BatchedNUTSWorkspace,
-    target_plan::BatchedNUTSKernelTargetPlan,
-    stage::BatchedNUTSKernelTargetStage,
+    launch_plan::BatchedNUTSKernelLaunchPlan,
+    executor_stage::BatchedNUTSKernelLaunchStageExecutor,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -476,13 +476,7 @@ function _execute_batched_nuts_target_stage!(
 )
     _execute_batched_nuts_kernel_dataflow!(
         workspace,
-        _batched_nuts_kernel_stage_dataflow(
-            _batched_nuts_backend_stage(
-                _batched_nuts_device_step_binding(
-                    _batched_nuts_target_device_stage(stage),
-                ),
-            ),
-        ),
+        _batched_nuts_launch_stage_dataflow(executor_stage),
         execution,
         model,
         inverse_mass_matrix,
@@ -492,7 +486,7 @@ function _execute_batched_nuts_target_stage!(
         max_delta_energy,
         rng,
     )
-    for barrier in _batched_nuts_target_barriers_after(stage)
+    for barrier in _batched_nuts_launch_barriers_after(executor_stage)
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
     return nothing

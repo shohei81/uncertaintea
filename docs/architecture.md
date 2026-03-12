@@ -188,7 +188,8 @@ Current backend-lowering subset:
   then into a device-plan skeleton with segment-local slots and device-stage
   barrier hints, and finally into a target-plan layer that can choose
   target-specific allocation and barrier policy for `:gpu`, `:metal`, and
-  `:cuda`, and
+  `:cuda`, and then into a launch-plan layer with concrete argument/shared
+  bindings and per-stage executor skeletons, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
