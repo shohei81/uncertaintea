@@ -156,7 +156,8 @@ Current backend-lowering subset:
   and its frontier/proposal copies plus turning checks now also go through
   one-chain masked batch helpers; the single-chain subtree builder now also
   carries its metadata through a reusable scratch summary object attached to
-  `NUTSSubtreeWorkspace`; the
+  `NUTSSubtreeWorkspace`, and scalar continuation merge now consumes that
+  scratch through a dedicated subtree-merge helper; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

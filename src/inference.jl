@@ -139,6 +139,8 @@ mutable struct NUTSSubtreeMetadataState
     integration_steps::Int
     proposed_energy::Float64
     delta_energy::Float64
+    proposal_energy::Float64
+    proposal_energy_error::Float64
     accept_prob::Float64
     candidate_log_weight::Float64
     combined_log_weight::Float64
@@ -355,7 +357,7 @@ function BatchedNUTSWorkspace(
             NUTSState(view(tree_left_position, :, chain_index), view(tree_left_momentum, :, chain_index), 0.0, view(tree_left_gradient, :, chain_index)),
             NUTSState(view(tree_right_position, :, chain_index), view(tree_right_momentum, :, chain_index), 0.0, view(tree_right_gradient, :, chain_index)),
             NUTSState(view(tree_proposal_position, :, chain_index), view(tree_proposal_momentum, :, chain_index), 0.0, view(tree_proposal_gradient, :, chain_index)),
-            NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, 0.0, -Inf, -Inf, false, false),
+            NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, Inf, Inf, 0.0, -Inf, -Inf, false, false),
         ) for chain_index in 1:num_chains
     ]
     left_position = Matrix{Float64}(undef, num_params, num_chains)
@@ -1644,6 +1646,8 @@ function _reset_nuts_subtree_summary!(
     summary.integration_steps = 0
     summary.proposed_energy = Inf
     summary.delta_energy = Inf
+    summary.proposal_energy = Inf
+    summary.proposal_energy_error = Inf
     summary.accept_prob = 0.0
     summary.candidate_log_weight = -Inf
     summary.combined_log_weight = -Inf
@@ -2095,7 +2099,7 @@ end
 
 function NUTSSubtreeWorkspace(num_params::Int)
     state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
-    summary = NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, 0.0, -Inf, -Inf, false, false)
+    summary = NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, Inf, Inf, 0.0, -Inf, -Inf, false, false)
     return NUTSSubtreeWorkspace(state(), state(), state(), state(), state(), summary)
 end
 
@@ -2361,6 +2365,31 @@ function _merge_batched_subtree_summary!(
     return workspace
 end
 
+function _merge_nuts_subtree_summary!(
+    continuation::NUTSContinuationState,
+    subtree_workspace::NUTSSubtreeWorkspace,
+    merged_turning::Bool,
+    rng::AbstractRNG,
+)
+    summary = subtree_workspace.summary
+    continuation.integration_steps += summary.integration_steps
+    continuation.accept_stat_sum += summary.accept_stat_sum
+    continuation.accept_stat_count += summary.accept_stat_count
+    if isfinite(summary.log_weight)
+        combined_log_weight = _logaddexp(continuation.log_weight, summary.log_weight)
+        if log(rand(rng)) < summary.log_weight - combined_log_weight
+            _copyto_nuts_state!(continuation.proposal, subtree_workspace.proposal)
+            continuation.proposal_energy = summary.proposal_energy
+            continuation.proposal_energy_error = summary.proposal_energy_error
+        end
+        continuation.log_weight = combined_log_weight
+    end
+
+    continuation.divergent = summary.divergent
+    continuation.turning = summary.turning || merged_turning
+    return continuation
+end
+
 function _build_nuts_subtree(
     subtree_workspace::NUTSSubtreeWorkspace,
     model::TeaModel,
@@ -2432,6 +2461,8 @@ function _build_nuts_subtree(
         if !isfinite(summary.log_weight) || log(rand(rng)) <
             summary.candidate_log_weight - summary.combined_log_weight
             _copyto_nuts_state!(proposal, current)
+            summary.proposal_energy = summary.proposed_energy
+            summary.proposal_energy_error = summary.delta_energy
         end
         summary.log_weight = summary.combined_log_weight
 
@@ -2494,26 +2525,12 @@ function _continue_nuts_proposal!(
             _copyto_nuts_state!(right, tree_workspace.right)
         end
 
-        continuation.integration_steps += subtree.integration_steps
-        continuation.accept_stat_sum += subtree.accept_stat_sum
-        continuation.accept_stat_count += subtree.accept_stat_count
-        if isfinite(subtree.log_weight)
-            combined_log_weight = _logaddexp(continuation.log_weight, subtree.log_weight)
-            if log(rand(rng)) < subtree.log_weight - combined_log_weight
-                _copyto_nuts_state!(proposal, tree_workspace.proposal)
-                continuation.proposal_energy = _hamiltonian(
-                    tree_workspace.proposal.logjoint,
-                    tree_workspace.proposal.momentum,
-                    inverse_mass_matrix,
-                )
-                continuation.proposal_energy_error =
-                    continuation.proposal_energy - initial_hamiltonian
-            end
-            continuation.log_weight = combined_log_weight
-        end
-
-        continuation.divergent = subtree.divergent
-        continuation.turning = subtree.turning || _is_turning(left.position, right.position, left.momentum, right.momentum)
+        _merge_nuts_subtree_summary!(
+            continuation,
+            tree_workspace,
+            _is_turning(left.position, right.position, left.momentum, right.momentum),
+            rng,
+        )
     end
     return continuation
 end

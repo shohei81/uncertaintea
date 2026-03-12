@@ -166,6 +166,9 @@ for dynamic trajectory building:
 - the scalar subtree builder now keeps its own mutable subtree-summary scratch
   object inside `NUTSSubtreeWorkspace`, so even the single-chain reference path
   accumulates subtree metadata in a reusable state object rather than locals
+- single-chain continuation merge now also runs through a dedicated subtree
+  merge helper that consumes that scratch metadata, making the scalar and
+  batched continuation-merge shapes more directly comparable
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

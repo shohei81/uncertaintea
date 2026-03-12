@@ -1272,6 +1272,8 @@ using UncertainTea
     scalar_tree_workspace.summary.accept_stat_sum = 2.0
     scalar_tree_workspace.summary.accept_stat_count = 3
     scalar_tree_workspace.summary.integration_steps = 4
+    scalar_tree_workspace.summary.proposal_energy = 5.0
+    scalar_tree_workspace.summary.proposal_energy_error = 6.0
     scalar_tree_workspace.summary.turning = true
     scalar_tree_workspace.summary.divergent = true
     UncertainTea._reset_nuts_subtree_summary!(scalar_tree_workspace.summary)
@@ -1282,6 +1284,49 @@ using UncertainTea
     @test scalar_tree_summary.integration_steps == 0
     @test !scalar_tree_summary.turning
     @test !scalar_tree_summary.divergent
+    @test !isfinite(scalar_tree_workspace.summary.proposal_energy)
+    @test !isfinite(scalar_tree_workspace.summary.proposal_energy_error)
+    scalar_continuation = UncertainTea.NUTSContinuationState(1)
+    UncertainTea._initialize_nuts_continuation!(
+        scalar_continuation,
+        scalar_tree_workspace.current,
+        scalar_tree_workspace.current,
+        scalar_tree_workspace.current,
+        1.0,
+        0.0,
+        -Inf,
+        0.0,
+        0,
+        0,
+        1,
+        false,
+        false,
+    )
+    scalar_tree_workspace.proposal.position .= 7.0
+    scalar_tree_workspace.proposal.momentum .= 8.0
+    scalar_tree_workspace.proposal.gradient .= 9.0
+    scalar_tree_workspace.proposal.logjoint = 0.25
+    scalar_tree_workspace.summary.log_weight = -0.5
+    scalar_tree_workspace.summary.accept_stat_sum = 0.75
+    scalar_tree_workspace.summary.accept_stat_count = 2
+    scalar_tree_workspace.summary.integration_steps = 3
+    scalar_tree_workspace.summary.proposal_energy = 1.25
+    scalar_tree_workspace.summary.proposal_energy_error = 0.25
+    scalar_tree_workspace.summary.turning = false
+    scalar_tree_workspace.summary.divergent = false
+    UncertainTea._merge_nuts_subtree_summary!(
+        scalar_continuation,
+        scalar_tree_workspace,
+        true,
+        MersenneTwister(104),
+    )
+    @test scalar_continuation.integration_steps == 3
+    @test scalar_continuation.accept_stat_sum == 0.75
+    @test scalar_continuation.accept_stat_count == 2
+    @test scalar_continuation.proposal_energy == 1.25
+    @test scalar_continuation.proposal_energy_error == 0.25
+    @test scalar_continuation.proposal.logjoint == 0.25
+    @test scalar_continuation.turning
     turning_destination = falses(3)
     @test UncertainTea._batched_is_turning!(
         turning_destination,
