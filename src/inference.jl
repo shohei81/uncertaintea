@@ -1368,6 +1368,53 @@ function _mean_acceptance_stats!(
     return destination
 end
 
+function _mean_acceptance_stat(
+    accept_sum::Real,
+    accept_count::Integer,
+)
+    return accept_count == 0 ? 0.0 : Float64(accept_sum) / accept_count
+end
+
+function _energy_errors!(
+    destination::AbstractVector,
+    proposed_energy::AbstractVector,
+    current_energy::AbstractVector,
+)
+    length(destination) == length(proposed_energy) == length(current_energy) ||
+        throw(DimensionMismatch("expected energy-error inputs of matching length, got $(length(destination)), $(length(proposed_energy)), and $(length(current_energy))"))
+    for index in eachindex(destination)
+        destination[index] = proposed_energy[index] - current_energy[index]
+    end
+    return destination
+end
+
+function _position_moved(
+    proposal_position::AbstractVector,
+    current_position::AbstractVector,
+)
+    length(proposal_position) == length(current_position) ||
+        throw(DimensionMismatch("expected moved-position inputs of matching length, got $(length(proposal_position)) and $(length(current_position))"))
+    for index in eachindex(proposal_position, current_position)
+        proposal_position[index] == current_position[index] || return true
+    end
+    return false
+end
+
+function _nuts_proposal_summary(
+    proposal_state::NUTSState,
+    current_position::AbstractVector,
+    current_energy::Float64,
+    accept_stat_sum::Float64,
+    accept_stat_count::Int,
+    inverse_mass_matrix::AbstractVector,
+)
+    proposed_energy = _hamiltonian(proposal_state.logjoint, proposal_state.momentum, inverse_mass_matrix)
+    energy_error = proposed_energy - current_energy
+    accept_stat = _mean_acceptance_stat(accept_stat_sum, accept_stat_count)
+    moved = _position_moved(proposal_state.position, current_position)
+    return accept_stat, proposed_energy, energy_error, moved
+end
+
 function _batched_positions_moved!(
     destination::AbstractVector{Bool},
     proposal_position::AbstractMatrix,
@@ -1397,9 +1444,7 @@ function _finalize_batched_nuts_proposals!(
 )
     copyto!(workspace.proposed_logjoint, workspace.continuation_proposal_logjoint)
     _batched_hamiltonian!(workspace.proposed_energy, workspace.proposed_logjoint, workspace.proposal_momentum, inverse_mass_matrix)
-    for chain_index in eachindex(workspace.energy_error)
-        workspace.energy_error[chain_index] = workspace.proposed_energy[chain_index] - workspace.current_energy[chain_index]
-    end
+    _energy_errors!(workspace.energy_error, workspace.proposed_energy, workspace.current_energy)
     _mean_acceptance_stats!(
         workspace.accept_prob,
         workspace.continuation_accept_stat_sum,
@@ -2659,11 +2704,15 @@ function _nuts_proposal(
         max_delta_energy,
         rng,
     )
-    accept_stat = continuation.accept_stat_count == 0 ? 0.0 : continuation.accept_stat_sum / continuation.accept_stat_count
-    proposed_hamiltonian = _hamiltonian(continuation.proposal.logjoint, continuation.proposal.momentum, inverse_mass_matrix)
-    energy_error = proposed_hamiltonian - initial_hamiltonian
-    moved = any(continuation.proposal.position .!= position)
-    return continuation.proposal, accept_stat, continuation.tree_depth, continuation.integration_steps, proposed_hamiltonian, energy_error, continuation.divergent, moved
+    accept_stat, proposed_energy, energy_error, moved = _nuts_proposal_summary(
+        continuation.proposal,
+        position,
+        initial_hamiltonian,
+        continuation.accept_stat_sum,
+        continuation.accept_stat_count,
+        inverse_mass_matrix,
+    )
+    return continuation.proposal, accept_stat, continuation.tree_depth, continuation.integration_steps, proposed_energy, energy_error, continuation.divergent, moved
 end
 
 function _batched_nuts_proposals!(

@@ -148,7 +148,8 @@ Current backend-lowering subset:
   columns through masked batch copies before the remaining chain-local
   selection logic continues; final batched proposal summary statistics now also
   run through batch helpers over workspace vectors rather than a per-chain
-  epilogue loop; the
+  epilogue loop, and the single-chain NUTS path now uses the same acceptance /
+  energy / moved-summary helper logic; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

@@ -1208,6 +1208,8 @@ using UncertainTea
     @test masked_destination[:, 1] == masked_source[:, 1]
     @test masked_destination[:, 2] == [3.0, 4.0]
     @test masked_destination[:, 3] == masked_source[:, 3]
+    @test UncertainTea._mean_acceptance_stat(3.0, 2) == 1.5
+    @test UncertainTea._mean_acceptance_stat(0.0, 0) == 0.0
     moved_destination = falses(3)
     UncertainTea._batched_positions_moved!(
         moved_destination,
@@ -1215,6 +1217,8 @@ using UncertainTea
         reshape([1.0, 4.0, 3.0], 1, 3),
     )
     @test moved_destination == BitVector([false, true, false])
+    @test UncertainTea._position_moved([1.0, 2.0], [1.0, 3.0])
+    @test !UncertainTea._position_moved([1.0, 2.0], [1.0, 2.0])
     turning_destination = falses(3)
     @test UncertainTea._batched_is_turning!(
         turning_destination,
@@ -1474,6 +1478,12 @@ using UncertainTea
             similar(gaussian_finalized_nuts_workspace.accept_prob),
             gaussian_finalized_nuts_workspace.continuation_accept_stat_sum,
             gaussian_finalized_nuts_workspace.continuation_accept_stat_count,
+        ) atol=1e-8
+    @test gaussian_finalized_nuts_workspace.energy_error ≈
+        UncertainTea._energy_errors!(
+            similar(gaussian_finalized_nuts_workspace.energy_error),
+            gaussian_finalized_nuts_workspace.proposed_energy,
+            gaussian_finalized_nuts_workspace.current_energy,
         ) atol=1e-8
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu

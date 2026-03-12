@@ -150,6 +150,9 @@ for dynamic trajectory building:
 - the final batched NUTS proposal summary now computes acceptance means,
   proposal energies, energy errors, and moved masks through batch helpers over
   the workspace vectors instead of a per-chain epilogue
+- the scalar NUTS proposal return path now uses the same acceptance/energy/move
+  summary helper family, so diagnostics math is aligned between single-chain
+  and batched implementations
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
