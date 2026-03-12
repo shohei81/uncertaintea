@@ -229,7 +229,8 @@ Particle axes map naturally onto the same compiled model structure.
 The current reference implementation exposes `batched_importance_sampling` and
 `batched_sir`, and `batched_smc` now denotes an adaptive tempered multi-stage
 SMC bridge from a Gaussian proposal to the target density, with optional
-batched random-walk rejuvenation moves after resampling stages.
+batched rejuvenation moves after resampling stages. The current move kernels
+are `:random_walk` and fixed-step tempered `:hmc`.
 
 ### HMC
 

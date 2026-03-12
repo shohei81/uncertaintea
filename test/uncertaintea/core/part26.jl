@@ -25,6 +25,7 @@
     @test mvnormal_smc.stages[1].beta_start == 0.0
     @test mvnormal_smc.stages[1].beta_end ≈ 1.0 atol=1e-8
     @test !mvnormal_smc.stages[1].resampled
+    @test mvnormal_smc.stages[1].move_kernel == :random_walk
     @test mvnormal_smc.stages[1].move_steps == 0
     @test mvnormal_smc.stages[1].move_acceptance_rate == 0.0
     @test mvnormal_smc.importance.log_evidence_estimate ≈ 0.0 atol=1e-8
@@ -59,6 +60,7 @@
     end
     for stage in dirichlet_smc.stages[1:end-1]
         @test stage.resampled
+        @test stage.move_kernel == :random_walk
         @test stage.effective_sample_size >= 0.95 * 24 - 1e-4
         @test stage.move_steps == 2
         @test 0.0 <= stage.move_acceptance_rate <= 1.0
@@ -71,5 +73,36 @@
     for particle_index in 1:size(dirichlet_smc.importance.constrained_particles, 2)
         @test all(>(0.0), dirichlet_smc.importance.constrained_particles[:, particle_index])
         @test sum(dirichlet_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
+    end
+
+    dirichlet_hmc_smc = batched_smc(
+        dirichlet_smc_model,
+        (),
+        choicemap();
+        num_particles=16,
+        proposal_loc=Float64[-1.0, 0.6],
+        proposal_log_scale=fill(0.15, 2),
+        target_ess_ratio=0.95,
+        move_kernel=:hmc,
+        move_steps=1,
+        move_step_size=0.02,
+        move_num_leapfrog_steps=2,
+        move_inverse_mass_matrix=fill(1.0, 2),
+        rng=MersenneTwister(212),
+    )
+
+    @test dirichlet_hmc_smc isa SMCResult
+    @test numstages(dirichlet_hmc_smc) >= 2
+    @test last(dirichlet_hmc_smc.stages).beta_end ≈ 1.0 atol=1e-6
+    @test length(dirichlet_hmc_smc.ancestor_history) == count(stage -> stage.resampled, dirichlet_hmc_smc.stages)
+    for stage in dirichlet_hmc_smc.stages[1:end-1]
+        @test stage.move_kernel == :hmc
+        @test stage.move_steps == 1
+        @test 0.0 <= stage.move_acceptance_rate <= 1.0
+    end
+    @test any(stage.move_acceptance_rate > 0.0 for stage in dirichlet_hmc_smc.stages if stage.move_steps > 0)
+    for particle_index in 1:size(dirichlet_hmc_smc.importance.constrained_particles, 2)
+        @test all(>(0.0), dirichlet_hmc_smc.importance.constrained_particles[:, particle_index])
+        @test sum(dirichlet_hmc_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
     end
 end

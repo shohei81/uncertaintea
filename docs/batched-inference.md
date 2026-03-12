@@ -80,6 +80,8 @@ The current reference inference layer now includes:
 - those tempered stages can now optionally run batched random-walk
   rejuvenation moves after resampling, so particle diversity does not depend
   only on the initial proposal
+- the current rejuvenation kernels are a simple symmetric random walk and a
+  fixed-step tempered HMC move that reuses `BatchedLogjointGradientCache`
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

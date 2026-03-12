@@ -28,6 +28,7 @@ struct SMCStageSummary
     effective_sample_size::Float64
     log_normalizer_increment::Float64
     resampled::Bool
+    move_kernel::Symbol
     move_steps::Int
     move_acceptance_rate::Float64
 end
@@ -216,6 +217,31 @@ function _gaussian_logdensity_from_particles!(
     return _gaussian_logdensity!(destination, scratch_noise, log_scale)
 end
 
+function _gaussian_gradient_from_particles!(
+    destination::AbstractMatrix,
+    particles::AbstractMatrix,
+    location::AbstractVector,
+    log_scale::AbstractVector,
+)
+    size(destination) == size(particles) ||
+        throw(DimensionMismatch("expected Gaussian gradient destination and particle matrices to have matching shapes"))
+    size(particles, 1) == length(location) == length(log_scale) ||
+        throw(
+            DimensionMismatch(
+                "expected Gaussian particle matrices with $(length(location)) rows, got $(size(particles, 1))",
+            ),
+        )
+
+    for parameter_index in eachindex(location, log_scale)
+        inverse_variance = exp(-2.0 * log_scale[parameter_index])
+        for particle_index in axes(particles, 2)
+            destination[parameter_index, particle_index] =
+                -(particles[parameter_index, particle_index] - location[parameter_index]) * inverse_variance
+        end
+    end
+    return destination
+end
+
 function _tempered_logdensity!(
     destination::AbstractVector,
     beta::Float64,
@@ -229,6 +255,59 @@ function _tempered_logdensity!(
             beta * logjoint_values[index] + (1.0 - beta) * logproposal_values[index]
     end
     return destination
+end
+
+function _tempered_gradient!(
+    destination::AbstractMatrix,
+    beta::Float64,
+    logjoint_gradient::AbstractMatrix,
+    logproposal_gradient::AbstractMatrix,
+)
+    size(destination) == size(logjoint_gradient) == size(logproposal_gradient) ||
+        throw(DimensionMismatch("expected tempered gradient matrices of matching shape"))
+    one_minus_beta = 1.0 - beta
+    for column_index in axes(destination, 2), row_index in axes(destination, 1)
+        destination[row_index, column_index] =
+            beta * logjoint_gradient[row_index, column_index] +
+            one_minus_beta * logproposal_gradient[row_index, column_index]
+    end
+    return destination
+end
+
+function _batched_tempered_target!(
+    tempered_values::AbstractVector,
+    tempered_gradient::AbstractMatrix,
+    logjoint_values::AbstractVector,
+    logjoint_gradient::AbstractMatrix,
+    logproposal_values::AbstractVector,
+    logproposal_gradient::AbstractMatrix,
+    logproposal_noise::AbstractMatrix,
+    model::TeaModel,
+    cache::BatchedLogjointGradientCache,
+    particles::AbstractMatrix,
+    args::Tuple,
+    constraints::ChoiceMap,
+    proposal_location::AbstractVector,
+    proposal_log_scale::AbstractVector,
+    beta::Float64,
+)
+    _batched_logjoint_and_gradient_unconstrained!(logjoint_values, cache, particles)
+    _gaussian_logdensity_from_particles!(
+        logproposal_values,
+        particles,
+        proposal_location,
+        proposal_log_scale,
+        logproposal_noise,
+    )
+    _gaussian_gradient_from_particles!(
+        logproposal_gradient,
+        particles,
+        proposal_location,
+        proposal_log_scale,
+    )
+    _tempered_logdensity!(tempered_values, beta, logjoint_values, logproposal_values)
+    _tempered_gradient!(tempered_gradient, beta, logjoint_gradient, logproposal_gradient)
+    return tempered_values, tempered_gradient
 end
 
 function _batched_random_walk_move!(
@@ -294,6 +373,152 @@ function _batched_random_walk_move!(
     end
 
     return accepted / total
+end
+
+function _batched_hmc_move!(
+    particles::AbstractMatrix,
+    logjoint_values::AbstractVector,
+    logproposal_values::AbstractVector,
+    log_ratio::AbstractVector,
+    model::TeaModel,
+    args::Tuple,
+    constraints::ChoiceMap,
+    proposal_location::AbstractVector,
+    proposal_log_scale::AbstractVector,
+    beta::Float64,
+    step_size::Float64,
+    num_leapfrog_steps::Int,
+    inverse_mass_matrix::AbstractVector,
+    rng::AbstractRNG,
+)
+    num_leapfrog_steps > 0 || throw(ArgumentError("tempered HMC move requires num_leapfrog_steps > 0"))
+    step_size > 0 || throw(ArgumentError("tempered HMC move requires step_size > 0"))
+    size(particles, 1) == length(inverse_mass_matrix) ||
+        throw(DimensionMismatch("expected inverse mass matrix of length $(size(particles, 1)), got $(length(inverse_mass_matrix))"))
+
+    cache = BatchedLogjointGradientCache(model, particles, args, constraints)
+    num_particles = size(particles, 2)
+    parameter_total = size(particles, 1)
+    momentum = Matrix{Float64}(undef, parameter_total, num_particles)
+    proposal_particles = Matrix{Float64}(undef, parameter_total, num_particles)
+    proposal_momentum = similar(momentum)
+    current_logjoint_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
+    current_logproposal_gradient = similar(current_logjoint_gradient)
+    current_tempered_gradient = similar(current_logjoint_gradient)
+    proposal_logjoint_values = Vector{Float64}(undef, num_particles)
+    proposal_logproposal_values = similar(proposal_logjoint_values)
+    proposal_tempered_values = similar(proposal_logjoint_values)
+    proposal_logjoint_gradient = similar(current_logjoint_gradient)
+    proposal_logproposal_gradient = similar(current_logjoint_gradient)
+    proposal_tempered_gradient = similar(current_logjoint_gradient)
+    proposal_noise = similar(current_logjoint_gradient)
+    current_tempered_values = Vector{Float64}(undef, num_particles)
+    current_hamiltonian = Vector{Float64}(undef, num_particles)
+    proposal_hamiltonian = similar(current_hamiltonian)
+    valid = trues(num_particles)
+    accepted = 0
+
+    _batched_tempered_target!(
+        current_tempered_values,
+        current_tempered_gradient,
+        logjoint_values,
+        current_logjoint_gradient,
+        logproposal_values,
+        current_logproposal_gradient,
+        proposal_noise,
+        model,
+        cache,
+        particles,
+        args,
+        constraints,
+        proposal_location,
+        proposal_log_scale,
+        beta,
+    )
+
+    sqrt_inverse_mass_matrix = sqrt.(Float64.(inverse_mass_matrix))
+    _sample_batched_momentum!(momentum, rng, sqrt_inverse_mass_matrix)
+    copyto!(proposal_particles, particles)
+    copyto!(proposal_momentum, momentum)
+    fill!(valid, true)
+
+    for particle_index in 1:num_particles
+        for parameter_index in 1:parameter_total
+            proposal_momentum[parameter_index, particle_index] +=
+                (step_size / 2) * current_tempered_gradient[parameter_index, particle_index]
+        end
+    end
+
+    for leapfrog_step in 1:num_leapfrog_steps
+        for particle_index in 1:num_particles
+            valid[particle_index] || continue
+            for parameter_index in 1:parameter_total
+                proposal_particles[parameter_index, particle_index] +=
+                    step_size * inverse_mass_matrix[parameter_index] * proposal_momentum[parameter_index, particle_index]
+            end
+        end
+
+        _batched_tempered_target!(
+            proposal_tempered_values,
+            proposal_tempered_gradient,
+            proposal_logjoint_values,
+            proposal_logjoint_gradient,
+            proposal_logproposal_values,
+            proposal_logproposal_gradient,
+            proposal_noise,
+            model,
+            cache,
+            proposal_particles,
+            args,
+            constraints,
+            proposal_location,
+            proposal_log_scale,
+            beta,
+        )
+
+        for particle_index in 1:num_particles
+            valid[particle_index] || continue
+            if !isfinite(proposal_tempered_values[particle_index]) ||
+               !isfinite(proposal_logjoint_values[particle_index]) ||
+               !all(isfinite, view(proposal_tempered_gradient, :, particle_index))
+                valid[particle_index] = false
+                continue
+            end
+
+            if leapfrog_step < num_leapfrog_steps
+                for parameter_index in 1:parameter_total
+                    proposal_momentum[parameter_index, particle_index] +=
+                        step_size * proposal_tempered_gradient[parameter_index, particle_index]
+                end
+            end
+        end
+    end
+
+    for particle_index in 1:num_particles
+        valid[particle_index] || continue
+        for parameter_index in 1:parameter_total
+            proposal_momentum[parameter_index, particle_index] +=
+                (step_size / 2) * proposal_tempered_gradient[parameter_index, particle_index]
+            proposal_momentum[parameter_index, particle_index] *= -1
+        end
+    end
+
+    _batched_hamiltonian!(current_hamiltonian, current_tempered_values, momentum, inverse_mass_matrix)
+    _batched_hamiltonian!(proposal_hamiltonian, proposal_tempered_values, proposal_momentum, inverse_mass_matrix)
+
+    for particle_index in 1:num_particles
+        valid[particle_index] || continue
+        log_accept_ratio = current_hamiltonian[particle_index] - proposal_hamiltonian[particle_index]
+        if log(rand(rng)) < min(0.0, log_accept_ratio)
+            copyto!(view(particles, :, particle_index), view(proposal_particles, :, particle_index))
+            logjoint_values[particle_index] = proposal_logjoint_values[particle_index]
+            logproposal_values[particle_index] = proposal_logproposal_values[particle_index]
+            log_ratio[particle_index] = proposal_logjoint_values[particle_index] - proposal_logproposal_values[particle_index]
+            accepted += 1
+        end
+    end
+
+    return accepted / num_particles
 end
 
 function batched_importance_sampling(
@@ -389,8 +614,12 @@ function batched_smc(
     target_ess_ratio::Real=0.8,
     max_stages::Int=32,
     resample_final::Bool=false,
+    move_kernel::Symbol=:random_walk,
     move_steps::Int=0,
     move_scale=0.1,
+    move_step_size::Real=0.05,
+    move_num_leapfrog_steps::Int=4,
+    move_inverse_mass_matrix=1.0,
     rng::AbstractRNG=Random.default_rng(),
 )
     layout = parameterlayout(model)
@@ -400,10 +629,15 @@ function batched_smc(
     0 < target_ess_ratio <= 1 || throw(ArgumentError("batched_smc requires 0 < target_ess_ratio <= 1"))
     max_stages > 0 || throw(ArgumentError("batched_smc requires max_stages > 0"))
     move_steps >= 0 || throw(ArgumentError("batched_smc requires move_steps >= 0"))
+    move_step_size > 0 || throw(ArgumentError("batched_smc requires move_step_size > 0"))
+    move_num_leapfrog_steps > 0 || throw(ArgumentError("batched_smc requires move_num_leapfrog_steps > 0"))
+    move_kernel in (:random_walk, :hmc) ||
+        throw(ArgumentError("batched_smc move_kernel must be :random_walk or :hmc"))
 
     location = _resolve_unconstrained_point(model, args, constraints, proposal_loc, rng, "proposal_loc")
     log_scale = _resolve_scale_vector("proposal_log_scale", proposal_log_scale, parameter_total)
     move_scale_vector = _resolve_scale_vector("move_scale", move_scale, parameter_total)
+    move_inverse_mass = _resolve_scale_vector("move_inverse_mass_matrix", move_inverse_mass_matrix, parameter_total)
     particles = Matrix{Float64}(undef, parameter_total, num_particles)
     noise = similar(particles)
     logproposal_values = Vector{Float64}(undef, num_particles)
@@ -450,21 +684,44 @@ function batched_smc(
             fill!(logweights, 0.0)
             effective_sample_size = Float64(num_particles)
             if move_steps > 0
-                move_acceptance_rate = _batched_random_walk_move!(
-                    particles,
-                    logjoint_values,
-                    logproposal_values,
-                    log_ratio,
-                    model,
-                    args,
-                    constraints,
-                    location,
-                    log_scale,
-                    beta_next,
-                    move_scale_vector,
-                    move_steps,
-                    rng,
-                )
+                if move_kernel === :random_walk
+                    move_acceptance_rate = _batched_random_walk_move!(
+                        particles,
+                        logjoint_values,
+                        logproposal_values,
+                        log_ratio,
+                        model,
+                        args,
+                        constraints,
+                        location,
+                        log_scale,
+                        beta_next,
+                        move_scale_vector,
+                        move_steps,
+                        rng,
+                    )
+                else
+                    acceptance_sum = 0.0
+                    for _ in 1:move_steps
+                        acceptance_sum += _batched_hmc_move!(
+                            particles,
+                            logjoint_values,
+                            logproposal_values,
+                            log_ratio,
+                            model,
+                            args,
+                            constraints,
+                            location,
+                            log_scale,
+                            beta_next,
+                            move_step_size,
+                            move_num_leapfrog_steps,
+                            move_inverse_mass,
+                            rng,
+                        )
+                    end
+                    move_acceptance_rate = acceptance_sum / move_steps
+                end
                 stage_move_steps = move_steps
             end
         end
@@ -478,6 +735,7 @@ function batched_smc(
                 effective_sample_size,
                 log_increment,
                 resampled,
+                move_kernel,
                 stage_move_steps,
                 move_acceptance_rate,
             ),
