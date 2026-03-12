@@ -176,8 +176,9 @@ for dynamic trajectory building:
   selection are now also helperized across scalar and batched continuation
   loops, so the control skeleton is more obviously shared
 - the batched depth-cohort scheduler now likewise runs through helpers for
-  scratch reset, active-depth selection, cohort activation, and subtree
-  initialization before expansion begins
+  scratch reset, active-depth selection, cohort activation, subtree
+  initialization, cohort advancement, and continuation merge, so the
+  scheduler body is mostly orchestration over explicit state-machine phases
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

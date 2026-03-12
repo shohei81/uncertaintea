@@ -1635,6 +1635,77 @@ using UncertainTea
     )
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[1] == 2
     @test gaussian_mixed_depth_nuts_workspace.tree_depths[2:3] == [4, 4]
+    gaussian_cohort_scheduler_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_cohort_scheduler_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_shared_batch_logjoint,
+        gaussian_shared_batch_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        MersenneTwister(103),
+    )
+    cohort_rng = MersenneTwister(104)
+    cohort_depth = UncertainTea._prepare_batched_nuts_subtree_cohort!(
+        gaussian_cohort_scheduler_workspace,
+        4,
+        cohort_rng,
+    )
+    @test cohort_depth == 1
+    for _ in 1:(1 << cohort_depth)
+        UncertainTea._batched_nuts_leapfrog_step_to!(
+            gaussian_cohort_scheduler_workspace,
+            gaussian_mean,
+            gaussian_cohort_scheduler_workspace.tree_next_position,
+            gaussian_cohort_scheduler_workspace.tree_next_momentum,
+            gaussian_cohort_scheduler_workspace.tree_next_gradient,
+            gaussian_cohort_scheduler_workspace.proposed_logjoint,
+            gaussian_cohort_scheduler_workspace.tree_current_position,
+            gaussian_cohort_scheduler_workspace.tree_current_momentum,
+            gaussian_cohort_scheduler_workspace.tree_current_gradient,
+            [1.0],
+            (),
+            choicemap((:y, 0.4)),
+            0.01,
+            gaussian_cohort_scheduler_workspace.step_direction,
+            gaussian_cohort_scheduler_workspace.subtree_active,
+        )
+        UncertainTea._batched_hamiltonian!(
+            gaussian_cohort_scheduler_workspace.subtree_proposed_energy,
+            gaussian_cohort_scheduler_workspace.proposed_logjoint,
+            gaussian_cohort_scheduler_workspace.tree_next_momentum,
+            [1.0],
+        )
+        UncertainTea._advance_batched_nuts_subtree_cohort!(
+            gaussian_cohort_scheduler_workspace,
+            [1.0],
+            1000.0,
+            cohort_rng,
+        ) || break
+    end
+    @test UncertainTea._activate_batched_nuts_subtree_merge_cohort!(
+        gaussian_cohort_scheduler_workspace,
+        cohort_depth,
+    )
+    @test gaussian_cohort_scheduler_workspace.tree_depths == [2, 2, 2]
+    @test gaussian_cohort_scheduler_workspace.subtree_active ==
+        BitVector([true, true, true])
+    UncertainTea._merge_batched_nuts_subtree_cohort!(
+        gaussian_cohort_scheduler_workspace,
+        [1.0],
+        cohort_rng,
+    )
+    @test all(isfinite, gaussian_cohort_scheduler_workspace.continuation_log_weight)
+    @test all(isfinite, gaussian_cohort_scheduler_workspace.proposed_logjoint)
     gaussian_finalized_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,
         gaussian_batch_params,
