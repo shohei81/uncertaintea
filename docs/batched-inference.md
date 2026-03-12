@@ -202,7 +202,10 @@ for dynamic trajectory building:
   energy/log-weight scratch touched by the batched subtree step itself; the
   current CPU path now also derives a kernel-frame object from that step state
   so the numeric matrix/vector buffers consumed by one batched subtree step are
-  explicit too
+  explicit too, and then stages the step as a small kernel program with a
+  fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
+  `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,
+  `transition_phase` for merge)
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

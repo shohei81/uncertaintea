@@ -361,6 +361,44 @@ struct BatchedNUTSDoneKernelFrame <: AbstractBatchedNUTSKernelFrame
     state::BatchedNUTSDoneStepState
 end
 
+abstract type AbstractBatchedNUTSKernelProgram end
+
+struct BatchedNUTSIdleKernelProgram <: AbstractBatchedNUTSKernelProgram
+    frame::BatchedNUTSIdleKernelFrame
+    ops::NTuple{1,Symbol}
+end
+
+struct BatchedNUTSExpandKernelProgram <: AbstractBatchedNUTSKernelProgram
+    frame::BatchedNUTSExpandKernelFrame
+    ops::NTuple{5,Symbol}
+end
+
+struct BatchedNUTSMergeKernelProgram <: AbstractBatchedNUTSKernelProgram
+    frame::BatchedNUTSMergeKernelFrame
+    ops::NTuple{4,Symbol}
+end
+
+struct BatchedNUTSDoneKernelProgram <: AbstractBatchedNUTSKernelProgram
+    frame::BatchedNUTSDoneKernelFrame
+    ops::NTuple{1,Symbol}
+end
+
+const _BATCHED_NUTS_IDLE_KERNEL_OPS = (:reload_control,)
+const _BATCHED_NUTS_EXPAND_KERNEL_OPS = (
+    :reload_control,
+    :leapfrog,
+    :hamiltonian,
+    :advance,
+    :transition_phase,
+)
+const _BATCHED_NUTS_MERGE_KERNEL_OPS = (
+    :reload_control,
+    :activate_merge,
+    :merge,
+    :transition_phase,
+)
+const _BATCHED_NUTS_DONE_KERNEL_OPS = (:reload_control,)
+
 mutable struct BatchedHMCWorkspace
     logjoint_workspace::BatchedLogjointWorkspace
     gradient_cache::BatchedLogjointGradientCache
@@ -2466,6 +2504,45 @@ function _batched_nuts_kernel_frame(
     return BatchedNUTSDoneKernelFrame(state)
 end
 
+function _batched_nuts_kernel_program(
+    workspace::BatchedNUTSWorkspace,
+)
+    return _batched_nuts_kernel_program(
+        workspace,
+        _batched_nuts_kernel_frame(workspace),
+    )
+end
+
+function _batched_nuts_kernel_program(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSIdleKernelFrame,
+)
+    return BatchedNUTSIdleKernelProgram(frame, _BATCHED_NUTS_IDLE_KERNEL_OPS)
+end
+
+function _batched_nuts_kernel_program(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSExpandKernelFrame,
+)
+    return BatchedNUTSExpandKernelProgram(frame, _BATCHED_NUTS_EXPAND_KERNEL_OPS)
+end
+
+function _batched_nuts_kernel_program(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSMergeKernelFrame,
+)
+    return BatchedNUTSMergeKernelProgram(frame, _BATCHED_NUTS_MERGE_KERNEL_OPS)
+end
+
+function _batched_nuts_kernel_program(
+    workspace::BatchedNUTSWorkspace,
+    frame::BatchedNUTSDoneKernelFrame,
+)
+    return BatchedNUTSDoneKernelProgram(frame, _BATCHED_NUTS_DONE_KERNEL_OPS)
+end
+
+_batched_nuts_kernel_ops(program::AbstractBatchedNUTSKernelProgram) = program.ops
+
 function _load_batched_nuts_control_ir!(
     workspace::BatchedNUTSWorkspace,
     ::BatchedNUTSIdleIR,
@@ -2788,10 +2865,10 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    state = _batched_nuts_step_state(workspace)
+    program = _batched_nuts_kernel_program(workspace)
     return _step_batched_nuts_subtree_scheduler!(
         workspace,
-        state,
+        program,
         model,
         inverse_mass_matrix,
         args,
@@ -2903,7 +2980,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSIdleKernelFrame,
+    frame::AbstractBatchedNUTSKernelFrame,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2912,13 +2989,62 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    return _step_batched_nuts_subtree_scheduler!(
+        workspace,
+        _batched_nuts_kernel_program(workspace, frame),
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    program::AbstractBatchedNUTSKernelProgram,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    return _step_batched_nuts_subtree_scheduler!(
+        workspace,
+        program.frame,
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
+end
+
+function _step_batched_nuts_subtree_scheduler!(
+    workspace::BatchedNUTSWorkspace,
+    program::BatchedNUTSIdleKernelProgram,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    frame = program.frame
     _load_batched_nuts_control_block!(workspace, frame.state.descriptor.block)
     return false
 end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSExpandKernelFrame,
+    program::BatchedNUTSExpandKernelProgram,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2927,6 +3053,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    frame = program.frame
     state = frame.state
     descriptor = state.descriptor
     _load_batched_nuts_control_block!(workspace, descriptor.block)
@@ -2969,7 +3096,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSMergeKernelFrame,
+    program::BatchedNUTSMergeKernelProgram,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2978,6 +3105,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    frame = program.frame
     state = frame.state
     descriptor = state.descriptor
     _load_batched_nuts_control_block!(workspace, descriptor.block)
@@ -2997,7 +3125,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    frame::BatchedNUTSDoneKernelFrame,
+    program::BatchedNUTSDoneKernelProgram,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -3006,6 +3134,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    frame = program.frame
     _load_batched_nuts_control_block!(workspace, frame.state.descriptor.block)
     return false
 end
