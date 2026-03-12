@@ -170,7 +170,8 @@ Current backend-lowering subset:
   also live in a dedicated batched NUTS control object instead of as top-level
   workspace fields, and that control object now lowers to a small
   `IdleIR`/`ExpandIR`/`MergeIR`/`DoneIR` snapshot that the scheduler step can
-  dispatch through directly; the
+  dispatch through directly, with `ExpandIR`/`MergeIR` reloading the active
+  control masks they need from the IR payload itself; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

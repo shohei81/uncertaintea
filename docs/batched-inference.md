@@ -193,7 +193,8 @@ for dynamic trajectory building:
 - that control state now also lowers to a small control-IR snapshot
   (`IdleIR`, `ExpandIR`, `MergeIR`, `DoneIR`), and the subtree scheduler step
   dispatches through that IR shape instead of branching directly on the raw
-  phase enum
+  phase enum; `ExpandIR` and `MergeIR` now also reload the scheduler's active
+  masks and sampled directions from the IR payload before executing
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

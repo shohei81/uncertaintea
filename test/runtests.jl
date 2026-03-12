@@ -1727,6 +1727,112 @@ using UncertainTea
         BitVector([true, true, true])
     @test all(isfinite, gaussian_cohort_scheduler_workspace.continuation_log_weight)
     @test all(isfinite, gaussian_cohort_scheduler_workspace.proposed_logjoint)
+    gaussian_expand_ir_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_expand_ir_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_shared_batch_logjoint,
+        gaussian_shared_batch_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        MersenneTwister(105),
+    )
+    expand_ir_rng = MersenneTwister(106)
+    @test UncertainTea._begin_batched_nuts_subtree_scheduler!(
+        gaussian_expand_ir_workspace,
+        4,
+        expand_ir_rng,
+    )
+    expand_direct_ir = UncertainTea._batched_nuts_control_ir(gaussian_expand_ir_workspace)
+    @test expand_direct_ir isa UncertainTea.BatchedNUTSExpandIR
+    fill!(gaussian_expand_ir_workspace.subtree_active, false)
+    fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
+    fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)
+    @test UncertainTea._step_batched_nuts_subtree_scheduler!(
+        gaussian_expand_ir_workspace,
+        expand_direct_ir,
+        gaussian_mean,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        expand_ir_rng,
+    )
+    @test gaussian_expand_ir_workspace.control.step_direction == expand_direct_ir.step_direction
+    @test gaussian_expand_ir_workspace.control.scheduler.remaining_steps ==
+        expand_direct_ir.remaining_steps - 1
+    @test sum(gaussian_expand_ir_workspace.subtree_integration_steps) > 0
+    gaussian_merge_ir_workspace = UncertainTea.BatchedNUTSWorkspace(
+        gaussian_mean,
+        gaussian_batch_params,
+        (),
+        choicemap((:y, 0.4)),
+    )
+    UncertainTea._initialize_batched_nuts_continuations!(
+        gaussian_merge_ir_workspace,
+        gaussian_mean,
+        gaussian_batch_params,
+        gaussian_shared_batch_logjoint,
+        gaussian_shared_batch_gradient,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        MersenneTwister(107),
+    )
+    merge_ir_rng = MersenneTwister(108)
+    @test UncertainTea._begin_batched_nuts_subtree_scheduler!(
+        gaussian_merge_ir_workspace,
+        4,
+        merge_ir_rng,
+    )
+    while gaussian_merge_ir_workspace.control.scheduler.phase ==
+        UncertainTea.NUTSSchedulerExpand
+        @test UncertainTea._step_batched_nuts_subtree_scheduler!(
+            gaussian_merge_ir_workspace,
+            gaussian_mean,
+            [1.0],
+            (),
+            choicemap((:y, 0.4)),
+            0.01,
+            1000.0,
+            merge_ir_rng,
+        )
+    end
+    merge_direct_ir = UncertainTea._batched_nuts_control_ir(gaussian_merge_ir_workspace)
+    @test merge_direct_ir isa UncertainTea.BatchedNUTSMergeIR
+    merge_tree_depths = copy(gaussian_merge_ir_workspace.control.tree_depths)
+    fill!(gaussian_merge_ir_workspace.control.scheduler.subtree_started, false)
+    fill!(gaussian_merge_ir_workspace.subtree_active, false)
+    @test UncertainTea._step_batched_nuts_subtree_scheduler!(
+        gaussian_merge_ir_workspace,
+        merge_direct_ir,
+        gaussian_mean,
+        [1.0],
+        (),
+        choicemap((:y, 0.4)),
+        0.01,
+        1000.0,
+        merge_ir_rng,
+    )
+    @test gaussian_merge_ir_workspace.control.scheduler.subtree_started ==
+        merge_direct_ir.started_chains
+    @test gaussian_merge_ir_workspace.subtree_active == merge_direct_ir.merge_active
+    @test gaussian_merge_ir_workspace.control.tree_depths ==
+        merge_tree_depths .+ Int.(merge_direct_ir.started_chains)
+    @test gaussian_merge_ir_workspace.control.scheduler.phase ==
+        UncertainTea.NUTSSchedulerDone
     gaussian_finalized_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,
         gaussian_batch_params,

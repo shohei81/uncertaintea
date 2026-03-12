@@ -2031,22 +2031,6 @@ function _activate_batched_nuts_subtree_cohort!(
     return any_active
 end
 
-function _mark_batched_nuts_subtree_started!(
-    workspace::BatchedNUTSWorkspace,
-)
-    any_started = false
-    fill!(workspace.control.scheduler.subtree_started, false)
-    for chain_index in eachindex(workspace.control.tree_depths)
-        workspace.control.tree_depths[chain_index] == workspace.control.scheduler.active_depth || continue
-        started =
-            workspace.subtree_integration_steps[chain_index] > 0 ||
-            workspace.subtree_divergent[chain_index]
-        workspace.control.scheduler.subtree_started[chain_index] = started
-        any_started |= started
-    end
-    return any_started
-end
-
 function _prepare_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
     max_tree_depth::Int,
@@ -2127,6 +2111,49 @@ function _batched_nuts_control_ir(
         )
     end
     return BatchedNUTSDoneIR()
+end
+
+function _load_batched_nuts_control_ir!(
+    workspace::BatchedNUTSWorkspace,
+    ::BatchedNUTSIdleIR,
+)
+    workspace.control.scheduler.phase = NUTSSchedulerIdle
+    workspace.control.scheduler.remaining_steps = 0
+    return workspace
+end
+
+function _load_batched_nuts_control_ir!(
+    workspace::BatchedNUTSWorkspace,
+    ir::BatchedNUTSExpandIR,
+)
+    workspace.control.scheduler.active_depth = ir.active_depth
+    workspace.control.scheduler.active_depth_count = ir.active_depth_count
+    workspace.control.scheduler.phase = NUTSSchedulerExpand
+    workspace.control.scheduler.remaining_steps = ir.remaining_steps
+    copyto!(workspace.subtree_active, ir.active_chains)
+    copyto!(workspace.control.step_direction, ir.step_direction)
+    return workspace
+end
+
+function _load_batched_nuts_control_ir!(
+    workspace::BatchedNUTSWorkspace,
+    ir::BatchedNUTSMergeIR,
+)
+    workspace.control.scheduler.active_depth = ir.active_depth
+    workspace.control.scheduler.active_depth_count = ir.active_depth_count
+    workspace.control.scheduler.phase = NUTSSchedulerMerge
+    workspace.control.scheduler.remaining_steps = 0
+    copyto!(workspace.control.scheduler.subtree_started, ir.started_chains)
+    return workspace
+end
+
+function _load_batched_nuts_control_ir!(
+    workspace::BatchedNUTSWorkspace,
+    ::BatchedNUTSDoneIR,
+)
+    workspace.control.scheduler.phase = NUTSSchedulerDone
+    workspace.control.scheduler.remaining_steps = 0
+    return workspace
 end
 
 function _advance_batched_nuts_subtree_cohort!(
@@ -2245,14 +2272,23 @@ end
 function _activate_batched_nuts_subtree_merge_cohort!(
     workspace::BatchedNUTSWorkspace,
 )
-    _mark_batched_nuts_subtree_started!(workspace)
+    ir = _batched_nuts_control_ir(workspace)
+    ir isa BatchedNUTSMergeIR || return false
+    return _activate_batched_nuts_subtree_merge_cohort!(workspace, ir)
+end
+
+function _activate_batched_nuts_subtree_merge_cohort!(
+    workspace::BatchedNUTSWorkspace,
+    ir::BatchedNUTSMergeIR,
+)
+    copyto!(workspace.control.scheduler.subtree_started, ir.started_chains)
     fill!(workspace.subtree_active, false)
     any_started = false
     for chain_index in eachindex(workspace.control.tree_depths)
-        workspace.control.scheduler.subtree_started[chain_index] || continue
+        ir.started_chains[chain_index] || continue
 
         workspace.control.tree_depths[chain_index] += 1
-        if workspace.subtree_integration_steps[chain_index] == 0
+        if !ir.merge_active[chain_index]
             workspace.control.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
             continue
         end
@@ -2364,12 +2400,13 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    _load_batched_nuts_control_ir!(workspace, BatchedNUTSIdleIR())
     return false
 end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    ::BatchedNUTSExpandIR,
+    ir::BatchedNUTSExpandIR,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2378,6 +2415,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    _load_batched_nuts_control_ir!(workspace, ir)
     _batched_nuts_leapfrog_step_to!(
         workspace,
         model,
@@ -2416,7 +2454,7 @@ end
 
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
-    ::BatchedNUTSMergeIR,
+    ir::BatchedNUTSMergeIR,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
     args,
@@ -2425,7 +2463,8 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    _activate_batched_nuts_subtree_merge_cohort!(workspace)
+    _load_batched_nuts_control_ir!(workspace, ir)
+    _activate_batched_nuts_subtree_merge_cohort!(workspace, ir)
     if any(workspace.subtree_active)
         _merge_batched_nuts_subtree_cohort!(
             workspace,
@@ -2449,6 +2488,7 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
+    _load_batched_nuts_control_ir!(workspace, BatchedNUTSDoneIR())
     return false
 end
 
