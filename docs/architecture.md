@@ -193,6 +193,8 @@ Current backend-lowering subset:
   executor-plan layer with target-specific argument classes and kernel
   symbols, and then into a codegen-plan layer with backend module symbols,
   generated entry symbols, and per-stage generated-argument descriptors, and
+  then into an artifact-plan layer with backend artifact symbols and generated
+  kernel layouts, and
   then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control

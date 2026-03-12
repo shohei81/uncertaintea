@@ -218,7 +218,8 @@ for dynamic trajectory building:
   per-stage executor skeletons, and then into a backend executor-plan layer
   with target-specific argument classes and kernel symbols, and then into a
   codegen-plan layer with backend module symbols, generated entry symbols, and
-  per-stage generated-argument descriptors,
+  per-stage generated-argument descriptors, and then into an artifact-plan
+  layer with backend artifact symbols and generated-kernel artifact layouts,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,

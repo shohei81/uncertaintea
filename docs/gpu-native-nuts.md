@@ -125,8 +125,9 @@ The current CPU NUTS path is intentionally narrow:
   argument/shared bindings and per-stage executor skeletons, then into a
   backend executor-plan layer with target-specific argument classes and kernel
   symbols, then into a codegen-plan layer with backend module symbols,
-  generated entry symbols, and per-stage generated-argument descriptors, plus
-  a
+  generated entry symbols, and per-stage generated-argument descriptors, then
+  into an artifact-plan layer with backend artifact symbols and generated
+  kernel layouts, plus a
   small
   kernel-program wrapper with a fixed per-phase op sequence whose execution
   now runs through

@@ -442,12 +442,12 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    codegen_plan = _batched_nuts_codegen_plan(program)
-    for codegen_stage in _batched_nuts_codegen_stages(codegen_plan)
-        _execute_batched_nuts_codegen_stage!(
+    artifact_plan = _batched_nuts_artifact_plan(program)
+    for artifact_stage in _batched_nuts_artifact_stages(artifact_plan)
+        _execute_batched_nuts_artifact_stage!(
             workspace,
-            codegen_plan,
-            codegen_stage,
+            artifact_plan,
+            artifact_stage,
             execution,
             model,
             inverse_mass_matrix,
@@ -461,10 +461,10 @@ function _execute_batched_nuts_kernel_program!(
     return nothing
 end
 
-function _execute_batched_nuts_codegen_stage!(
+function _execute_batched_nuts_artifact_stage!(
     workspace::BatchedNUTSWorkspace,
-    codegen_plan::BatchedNUTSKernelCodegenPlan,
-    codegen_stage::BatchedNUTSKernelCodegenStage,
+    artifact_plan::BatchedNUTSKernelArtifactPlan,
+    artifact_stage::BatchedNUTSKernelArtifactStage,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
     inverse_mass_matrix::Vector{Float64},
@@ -478,7 +478,9 @@ function _execute_batched_nuts_codegen_stage!(
         workspace,
         _batched_nuts_launch_stage_dataflow(
             _batched_nuts_executor_launch_stage(
-                _batched_nuts_codegen_executor_stage(codegen_stage),
+                _batched_nuts_codegen_executor_stage(
+                    _batched_nuts_artifact_codegen_stage(artifact_stage),
+                ),
             ),
         ),
         execution,
@@ -490,7 +492,7 @@ function _execute_batched_nuts_codegen_stage!(
         max_delta_energy,
         rng,
     )
-    for barrier in _batched_nuts_codegen_barriers_after(codegen_stage)
+    for barrier in _batched_nuts_artifact_barriers_after(artifact_stage)
         _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
     end
     return nothing
