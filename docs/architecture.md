@@ -179,7 +179,9 @@ Current backend-lowering subset:
   kernel-frame object then makes the concrete matrix/vector buffers for that
   step explicit as well; the current CPU path now also flattens that frame
   into a phase-local kernel-access object whose fields directly expose the
-  buffers touched by each step, and then wraps that access layer in a
+  buffers touched by each step, then lowers each primitive step into a typed
+  dataflow descriptor with explicit logical read/write buffer sets, and then
+  wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
   skeleton is increasingly declarative, and those op sequences now feed
   phase-specialized program executors rather than a monolithic kernel-op

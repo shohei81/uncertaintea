@@ -204,14 +204,17 @@ for dynamic trajectory building:
   so the numeric matrix/vector buffers consumed by one batched subtree step are
   explicit too, then flattens that frame into a phase-local kernel-access
   object whose fields name the concrete buffers touched by the current step,
+  and now further lowers each primitive kernel step into a typed dataflow
+  descriptor with explicit logical read/write buffer sets,
   and then stages the step as a small kernel program with a
   fixed op sequence (`reload_control`, `leapfrog`, `hamiltonian`, `advance`,
   `transition_phase` for expand; `reload_control`, `activate_merge`, `merge`,
   `transition_phase` for merge); those op tuples now remain as declarative
   metadata while execution itself dispatches through phase-specialized program
   handlers rather than a generic kernel-op interpreter, with a typed primitive
-  step table under each program and an explicit access layer between frame and
-  execution so per-phase read/write buffers are visible in the IR shape
+  step table under each program plus explicit access and dataflow layers
+  between frame and execution so per-phase read/write buffers are visible in
+  the IR shape
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder

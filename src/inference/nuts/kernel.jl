@@ -442,11 +442,10 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    for step in _batched_nuts_kernel_steps(program)
-        _execute_batched_nuts_kernel_step!(
+    for dataflow in _batched_nuts_kernel_dataflows(program)
+        _execute_batched_nuts_kernel_dataflow!(
             workspace,
-            _batched_nuts_kernel_access(program),
-            step,
+            dataflow,
             execution,
             model,
             inverse_mass_matrix,
@@ -457,6 +456,34 @@ function _execute_batched_nuts_kernel_program!(
             rng,
         )
     end
+    return nothing
+end
+
+function _execute_batched_nuts_kernel_dataflow!(
+    workspace::BatchedNUTSWorkspace,
+    dataflow::AbstractBatchedNUTSKernelDataflow,
+    execution::BatchedNUTSKernelExecutionState,
+    model::TeaModel,
+    inverse_mass_matrix::Vector{Float64},
+    args,
+    constraints,
+    step_size::Float64,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    _execute_batched_nuts_kernel_step!(
+        workspace,
+        _batched_nuts_kernel_access(dataflow),
+        _batched_nuts_kernel_step(dataflow),
+        execution,
+        model,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        step_size,
+        max_delta_energy,
+        rng,
+    )
     return nothing
 end
 

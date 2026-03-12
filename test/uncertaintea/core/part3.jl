@@ -61,6 +61,31 @@
             UncertainTea.BatchedNUTSMergeStep,
             UncertainTea.BatchedNUTSTransitionPhaseStep,
         )
+    merge_dataflows = UncertainTea._batched_nuts_kernel_dataflows(merge_program)
+    @test length(merge_dataflows) == 4
+    @test UncertainTea._batched_nuts_kernel_step(merge_dataflows[3]) isa
+        UncertainTea.BatchedNUTSMergeStep
+    @test UncertainTea._batched_nuts_kernel_access(merge_dataflows[3]).proposal_position ===
+        merge_access.proposal_position
+    @test UncertainTea._batched_nuts_kernel_reads(merge_dataflows[3]) ==
+        (
+            UncertainTea.NUTSKernelBufferDescriptorScratch,
+            UncertainTea.NUTSKernelBufferTreeFrontierState,
+            UncertainTea.NUTSKernelBufferTreeProposalState,
+            UncertainTea.NUTSKernelBufferSubtreeSummary,
+            UncertainTea.NUTSKernelBufferContinuationFrontierState,
+            UncertainTea.NUTSKernelBufferContinuationProposalState,
+            UncertainTea.NUTSKernelBufferContinuationSummary,
+            UncertainTea.NUTSKernelBufferTreeEnergy,
+        )
+    @test UncertainTea._batched_nuts_kernel_writes(merge_dataflows[3]) ==
+        (
+            UncertainTea.NUTSKernelBufferDescriptorScratch,
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelBufferContinuationFrontierState,
+            UncertainTea.NUTSKernelBufferContinuationProposalState,
+            UncertainTea.NUTSKernelBufferContinuationSummary,
+        )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -104,6 +129,15 @@
         (UncertainTea.NUTSKernelReloadControl,)
     @test typeof.(UncertainTea._batched_nuts_kernel_steps(done_program)) ==
         (UncertainTea.BatchedNUTSReloadControlStep,)
+    done_dataflows = UncertainTea._batched_nuts_kernel_dataflows(done_program)
+    @test length(done_dataflows) == 1
+    @test UncertainTea._batched_nuts_kernel_reads(done_dataflows[1]) ==
+        (UncertainTea.NUTSKernelBufferControlBlock,)
+    @test UncertainTea._batched_nuts_kernel_writes(done_dataflows[1]) ==
+        (
+            UncertainTea.NUTSKernelBufferSchedulerState,
+            UncertainTea.NUTSKernelBufferControlState,
+        )
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,
@@ -188,6 +222,40 @@
     @test expand_direct_program isa UncertainTea.BatchedNUTSExpandKernelProgram
     @test UncertainTea._batched_nuts_kernel_access(expand_direct_program).next_position ===
         expand_direct_access.next_position
+    expand_dataflows = UncertainTea._batched_nuts_kernel_dataflows(expand_direct_program)
+    @test length(expand_dataflows) == 5
+    @test UncertainTea._batched_nuts_kernel_step(expand_dataflows[2]) isa
+        UncertainTea.BatchedNUTSLeapfrogStep
+    @test UncertainTea._batched_nuts_kernel_access(expand_dataflows[2]).next_position ===
+        expand_direct_access.next_position
+    @test UncertainTea._batched_nuts_kernel_reads(expand_dataflows[2]) ==
+        (
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelBufferTreeCurrentState,
+        )
+    @test UncertainTea._batched_nuts_kernel_writes(expand_dataflows[2]) ==
+        (
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelBufferTreeNextState,
+        )
+    @test UncertainTea._batched_nuts_kernel_reads(expand_dataflows[4]) ==
+        (
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelBufferDescriptorScratch,
+            UncertainTea.NUTSKernelBufferTreeCurrentState,
+            UncertainTea.NUTSKernelBufferTreeNextState,
+            UncertainTea.NUTSKernelBufferTreeEnergy,
+            UncertainTea.NUTSKernelBufferSubtreeSummary,
+        )
+    @test UncertainTea._batched_nuts_kernel_writes(expand_dataflows[4]) ==
+        (
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelBufferDescriptorScratch,
+            UncertainTea.NUTSKernelBufferTreeCurrentState,
+            UncertainTea.NUTSKernelBufferTreeFrontierState,
+            UncertainTea.NUTSKernelBufferTreeProposalState,
+            UncertainTea.NUTSKernelBufferSubtreeSummary,
+        )
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
     fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)
