@@ -165,7 +165,10 @@ Current backend-lowering subset:
   activate / initialize / advance / merge helpers, with continuation gating
   masks and selected cohort depth/count now stored in a dedicated scheduler
   state object on the batched workspace, and the scheduler itself now advances through explicit
-  `idle/expand/merge/done` phases with a remaining-step counter; the
+  `idle/expand/merge/done` phases with a remaining-step counter; accepted /
+  divergent flags, step directions, tree depths, and integration counters now
+  also live in a dedicated batched NUTS control object instead of as top-level
+  workspace fields; the
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered

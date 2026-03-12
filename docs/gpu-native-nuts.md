@@ -100,7 +100,9 @@ The current CPU NUTS path is intentionally narrow:
   cohort-activate/initialize/advance/merge through explicit helpers, with
   continuation-active and subtree-started masks plus selected depth/count kept
   in a dedicated scheduler state on the batched workspace, and with an explicit
-  `idle/expand/merge/done` scheduler phase plus remaining-step counter
+  `idle/expand/merge/done` scheduler phase plus remaining-step counter; the
+  per-chain accepted/divergent flags, sampled directions, and tree-depth /
+  integration counters now also live in a dedicated control state object
 - per-chain current/next subtree scratch for the remaining CPU reference tree
   expansion, reducing integration-step allocations while the control flow is
   still chain-local

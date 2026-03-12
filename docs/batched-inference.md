@@ -186,6 +186,10 @@ for dynamic trajectory building:
 - the subtree scheduler itself now carries an explicit phase and remaining-step
   counter (`idle -> expand -> merge -> done`), so batched continuation is
   driven by a small state machine rather than a monolithic helper body
+- chain-level control arrays such as accepted/divergent flags, step direction,
+  tree depth, and integration-step counters now also live under a dedicated
+  batched NUTS control state, separating control/bookkeeping from numeric
+  subtree scratch buffers
 - deeper chain-local subtree expansion now also reuses a per-chain
   current/next subtree scratch workspace, reducing per-step allocations inside
   the remaining CPU reference tree builder
