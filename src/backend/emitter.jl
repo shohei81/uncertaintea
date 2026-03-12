@@ -97,6 +97,19 @@ function _backend_step_stub(step::BackendExponentialChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendGammaChoicePlanStep)
+    return string(
+        "choice gamma address=",
+        _backend_address_stub(step.address),
+        " shape=",
+        _backend_expr_stub(step.shape),
+        " rate=",
+        _backend_expr_stub(step.rate),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
 function _backend_step_stub(step::BackendBernoulliChoicePlanStep)
     return string(
         "choice bernoulli address=",
@@ -114,6 +127,21 @@ function _backend_step_stub(step::BackendPoissonChoicePlanStep)
         _backend_address_stub(step.address),
         " lambda=",
         _backend_expr_stub(step.lambda),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
+function _backend_step_stub(step::BackendStudentTChoicePlanStep)
+    return string(
+        "choice studentt address=",
+        _backend_address_stub(step.address),
+        " nu=",
+        _backend_expr_stub(step.nu),
+        " mu=",
+        _backend_expr_stub(step.mu),
+        " sigma=",
+        _backend_expr_stub(step.sigma),
         " parameter_slot=",
         repr(step.parameter_slot),
     )

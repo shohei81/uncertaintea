@@ -111,7 +111,17 @@ function _rhs_spec_expr(rhs)
         arguments = Expr(:vect, map(QuoteNode, rhs.args[2:end])...)
 
         if callee isa Symbol &&
-           callee in (:normal, :lognormal, :exponential, :bernoulli, :poisson, :categorical, :mvnormal)
+           callee in (
+            :normal,
+            :lognormal,
+            :exponential,
+            :gamma,
+            :bernoulli,
+            :poisson,
+            :studentt,
+            :categorical,
+            :mvnormal,
+        )
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
         end
 
@@ -162,7 +172,7 @@ end
 function _supported_distribution_family(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] isa Symbol || return nothing
     family = rhs.args[1]
-    family in (:normal, :lognormal, :exponential) || return nothing
+    family in (:normal, :lognormal, :exponential, :gamma, :studentt) || return nothing
     return family
 end
 
@@ -176,10 +186,10 @@ function _parameter_transform_expr(rhs)
 
     if family === :normal
         return :($(_qualify(:IdentityTransform))())
-    elseif family === :lognormal
+    elseif family === :lognormal || family === :exponential || family === :gamma
         return :($(_qualify(:LogTransform))())
-    elseif family === :exponential
-        return :($(_qualify(:LogTransform))())
+    elseif family === :studentt
+        return :($(_qualify(:IdentityTransform))())
     end
 
     throw(ArgumentError("unsupported parameter transform family $family"))

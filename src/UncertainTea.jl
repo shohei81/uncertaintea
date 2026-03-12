@@ -3,6 +3,7 @@ module UncertainTea
 using ForwardDiff
 using LinearAlgebra
 using Random
+using SpecialFunctions: digamma, loggamma
 
 export @tea
 export AddressSpec, ChoiceSpec, ModelSpec
@@ -40,7 +41,7 @@ export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSum
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts
 export batched_nuts_package_layout, emit_batched_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, rhat, ess, summarize
-export normal, lognormal, exponential, bernoulli, poisson
+export normal, lognormal, exponential, gamma, bernoulli, poisson, studentt
 
 include("ir.jl")
 include("core.jl")

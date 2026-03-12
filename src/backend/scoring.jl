@@ -19,6 +19,14 @@ function _backend_exponential_logpdf(rate, x)
     return log(rate_) - rate_ * xx
 end
 
+function _backend_gamma_logpdf(shape, rate, x)
+    xx, shape_, rate_ = promote(x, shape, rate)
+    shape_ > zero(shape_) || throw(ArgumentError("gamma requires shape > 0"))
+    rate_ > zero(rate_) || throw(ArgumentError("gamma requires rate > 0"))
+    xx > zero(xx) || return oftype(xx, -Inf)
+    return shape_ * log(rate_) - loggamma(shape_) + (shape_ - one(shape_)) * log(xx) - rate_ * xx
+end
+
 function _backend_bernoulli_logpdf(p, x)
     probability = p
     zero(probability) <= probability <= one(probability) ||
@@ -32,6 +40,16 @@ function _backend_poisson_logpdf(lambda, x)
     count = _poisson_count(x)
     isnothing(count) && return oftype(float(lambda), -Inf)
     return count * log(lambda) - lambda - _logfactorial_like(lambda, count)
+end
+
+function _backend_studentt_logpdf(nu, mu, sigma, x)
+    xx, nu_, mu_, sigma_ = promote(x, nu, mu, sigma)
+    nu_ > zero(nu_) || throw(ArgumentError("studentt requires nu > 0"))
+    sigma_ > zero(sigma_) || throw(ArgumentError("studentt requires sigma > 0"))
+    z = (xx - mu_) / sigma_
+    return loggamma((nu_ + one(nu_)) / 2) - loggamma(nu_ / 2) -
+           (log(nu_) + log(pi)) / 2 - log(sigma_) -
+           (nu_ + one(nu_)) * log1p((z * z) / nu_) / 2
 end
 
 function _backend_choice_value(parameter_slot::Union{Nothing,Int}, params::AbstractVector, constraints::ChoiceMap, address)
@@ -211,6 +229,20 @@ function _score_backend_step!(
 end
 
 function _score_backend_step!(
+    step::BackendGammaChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    shape = _eval_backend_numeric_expr(env, step.shape)
+    rate = _eval_backend_numeric_expr(env, step.rate)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_gamma_logpdf(shape, rate, value)
+end
+
+function _score_backend_step!(
     step::BackendBernoulliChoicePlanStep,
     env::PlanEnvironment,
     params::AbstractVector,
@@ -234,6 +266,21 @@ function _score_backend_step!(
     lambda = _eval_backend_numeric_expr(env, step.lambda)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return _backend_poisson_logpdf(lambda, value)
+end
+
+function _score_backend_step!(
+    step::BackendStudentTChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    nu = _eval_backend_numeric_expr(env, step.nu)
+    mu = _eval_backend_numeric_expr(env, step.mu)
+    sigma = _eval_backend_numeric_expr(env, step.sigma)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_studentt_logpdf(nu, mu, sigma, value)
 end
 
 function _score_backend_step!(
@@ -429,6 +476,42 @@ function _score_backend_step!(
 end
 
 function _score_backend_step!(
+    step::BackendGammaChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    shape_values = _batched_numeric_scratch!(env, 1)
+    rate_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
+    _eval_backend_numeric_expr!(rate_values, env, step.rate, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        shape = shape_values[batch_index]
+        rate = rate_values[batch_index]
+        totals[batch_index] += _backend_gamma_logpdf(shape, rate, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
     step::BackendBernoulliChoicePlanStep,
     totals::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -444,6 +527,45 @@ function _score_backend_step!(
         value = choice_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                value isa Integer || throw(
+                    BatchedBackendFallback("index backend slot $(step.binding_slot) received non-integer choice value"),
+                )
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendStudentTChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    nu_values = _batched_numeric_scratch!(env, 1)
+    mu_values = _batched_numeric_scratch!(env, 2)
+    sigma_values = _batched_numeric_scratch!(env, 3)
+    _eval_backend_numeric_expr!(nu_values, env, step.nu, 4)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 5)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 6)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        nu = nu_values[batch_index]
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
+        totals[batch_index] += _backend_studentt_logpdf(nu, mu, sigma, value)
         if !isnothing(step.binding_slot)
             if env.numeric_slots[step.binding_slot]
                 env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
@@ -558,6 +680,29 @@ function _score_backend_observed_loop_choice!(
 end
 
 function _score_backend_observed_loop_choice!(
+    step::BackendGammaChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    shape_values = _batched_numeric_scratch!(env, 1)
+    rate_values = _batched_numeric_scratch!(env, 2)
+    observed_values = env.observed_values
+    _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
+    _eval_backend_numeric_expr!(rate_values, env, step.rate, 4)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        shape = shape_values[batch_index]
+        rate = rate_values[batch_index]
+        totals[batch_index] += _backend_gamma_logpdf(shape, rate, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
     step::BackendBernoulliChoicePlanStep,
     totals::AbstractVector,
     env::BatchedPlanEnvironment,
@@ -573,6 +718,32 @@ function _score_backend_observed_loop_choice!(
         value = observed_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
+    end
+    return totals
+end
+
+function _score_backend_observed_loop_choice!(
+    step::BackendStudentTChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+    address,
+)
+    nu_values = _batched_numeric_scratch!(env, 1)
+    mu_values = _batched_numeric_scratch!(env, 2)
+    sigma_values = _batched_numeric_scratch!(env, 3)
+    observed_values = env.observed_values
+    _eval_backend_numeric_expr!(nu_values, env, step.nu, 4)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 5)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 6)
+    _batched_observed_choice_values!(observed_values, constraints, address)
+    for batch_index in 1:env.batch_size
+        value = observed_values[batch_index]
+        nu = nu_values[batch_index]
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
+        totals[batch_index] += _backend_studentt_logpdf(nu, mu, sigma, value)
     end
     return totals
 end

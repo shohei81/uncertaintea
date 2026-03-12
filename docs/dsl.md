@@ -182,8 +182,10 @@ The initial GPU-targeted distribution set should stay small:
 - `normal`
 - `lognormal`
 - `exponential`
+- `gamma`
 - `bernoulli`
 - `poisson`
+- `studentt`
 - `categorical`
 - a restricted `mvnormal`
 - simple transformed distributions
@@ -219,7 +221,7 @@ The first real subset should include:
 5. `choicemap`
 6. `generate`
 7. a small distribution set starting with `normal`, `lognormal`,
-   `exponential`, `bernoulli`, and `poisson`
+   `exponential`, `gamma`, `bernoulli`, `poisson`, and `studentt`
 
 That is enough to build a CPU reference backend and a GPU-oriented static lowering path
 without committing to full Gen compatibility.

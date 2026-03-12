@@ -354,9 +354,9 @@ function _merge_loop_steps(steps::Vector{AbstractPlanStep})
 end
 
 function _parameter_transform(rhs::DistributionSpec)
-    if rhs.family === :normal
+    if rhs.family === :normal || rhs.family === :studentt
         return IdentityTransform()
-    elseif rhs.family === :lognormal || rhs.family === :exponential
+    elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma
         return LogTransform()
     end
     return nothing

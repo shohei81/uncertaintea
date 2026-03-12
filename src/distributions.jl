@@ -19,6 +19,17 @@ struct ExponentialDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct GammaDist{T<:Real} <: AbstractTeaDistribution
+    shape::T
+    rate::T
+
+    function GammaDist(shape::T, rate::T) where {T<:Real}
+        shape > zero(T) || throw(ArgumentError("gamma requires shape > 0"))
+        rate > zero(T) || throw(ArgumentError("gamma requires rate > 0"))
+        new{T}(shape, rate)
+    end
+end
+
 struct BernoulliDist{T<:Real} <: AbstractTeaDistribution
     p::T
 
@@ -47,6 +58,18 @@ struct LogNormalDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+struct StudentTDist{T<:Real} <: AbstractTeaDistribution
+    nu::T
+    mu::T
+    sigma::T
+
+    function StudentTDist(nu::T, mu::T, sigma::T) where {T<:Real}
+        nu > zero(T) || throw(ArgumentError("studentt requires nu > 0"))
+        sigma > zero(T) || throw(ArgumentError("studentt requires sigma > 0"))
+        new{T}(nu, mu, sigma)
+    end
+end
+
 function normal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return NormalDist(promoted_mu, promoted_sigma)
@@ -54,6 +77,11 @@ end
 
 function exponential(rate)
     return ExponentialDist(rate)
+end
+
+function gamma(shape, rate)
+    promoted_shape, promoted_rate = promote(shape, rate)
+    return GammaDist(promoted_shape, promoted_rate)
 end
 
 function lognormal(mu, sigma)
@@ -69,6 +97,11 @@ function poisson(lambda)
     return PoissonDist(lambda)
 end
 
+function studentt(nu, mu, sigma)
+    promoted_nu, promoted_mu, promoted_sigma = promote(nu, mu, sigma)
+    return StudentTDist(promoted_nu, promoted_mu, promoted_sigma)
+end
+
 function Random.rand(rng::AbstractRNG, dist::NormalDist{T}) where {T<:AbstractFloat}
     return dist.mu + dist.sigma * randn(rng, T)
 end
@@ -76,6 +109,32 @@ end
 function Random.rand(rng::AbstractRNG, dist::ExponentialDist)
     rate = float(dist.rate)
     return randexp(rng, typeof(rate)) / rate
+end
+
+function _rand_gamma_marsaglia(rng::AbstractRNG, shape::T, rate::T) where {T<:AbstractFloat}
+    if shape < one(T)
+        return _rand_gamma_marsaglia(rng, shape + one(T), rate) * (rand(rng, T) ^ (inv(shape)))
+    end
+
+    d = shape - T(1 / 3)
+    c = inv(sqrt(T(9) * d))
+    while true
+        x = randn(rng, T)
+        v = one(T) + c * x
+        v > zero(T) || continue
+        v3 = v * v * v
+        u = rand(rng, T)
+        if u < one(T) - T(0.0331) * (x * x) * (x * x) ||
+           log(u) < T(0.5) * x * x + d * (one(T) - v3 + log(v3))
+            return d * v3 / rate
+        end
+    end
+end
+
+function Random.rand(rng::AbstractRNG, dist::GammaDist)
+    shape = float(dist.shape)
+    rate = float(dist.rate)
+    return _rand_gamma_marsaglia(rng, shape, rate)
 end
 
 function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
@@ -99,6 +158,14 @@ function Random.rand(rng::AbstractRNG, dist::LogNormalDist{T}) where {T<:Abstrac
     return exp(dist.mu + dist.sigma * randn(rng, T))
 end
 
+function Random.rand(rng::AbstractRNG, dist::StudentTDist)
+    nu = float(dist.nu)
+    mu = float(dist.mu)
+    sigma = float(dist.sigma)
+    scale = randn(rng, typeof(mu)) / sqrt(_rand_gamma_marsaglia(rng, nu / 2, nu / 2))
+    return mu + sigma * scale
+end
+
 function logpdf(dist::NormalDist, x)
     xx, mu, sigma = promote(x, dist.mu, dist.sigma)
     z = (xx - mu) / sigma
@@ -109,6 +176,12 @@ function logpdf(dist::ExponentialDist, x)
     xx, rate = promote(x, dist.rate)
     xx >= zero(xx) || return oftype(xx, -Inf)
     return log(rate) - rate * xx
+end
+
+function logpdf(dist::GammaDist, x)
+    xx, shape, rate = promote(x, dist.shape, dist.rate)
+    xx > zero(xx) || return oftype(xx, -Inf)
+    return shape * log(rate) - loggamma(shape) + (shape - one(shape)) * log(xx) - rate * xx
 end
 
 function logpdf(dist::BernoulliDist, x)
@@ -146,4 +219,12 @@ function logpdf(dist::LogNormalDist, x)
     xx, mu, sigma = promote(x, dist.mu, dist.sigma)
     xx > zero(xx) || return oftype(xx, -Inf)
     return logpdf(normal(mu, sigma), log(xx)) - log(xx)
+end
+
+function logpdf(dist::StudentTDist, x)
+    xx, nu, mu, sigma = promote(x, dist.nu, dist.mu, dist.sigma)
+    z = (xx - mu) / sigma
+    return loggamma((nu + one(nu)) / 2) - loggamma(nu / 2) -
+           (log(nu) + log(pi)) / 2 - log(sigma) -
+           (nu + one(nu)) * log1p((z * z) / nu) / 2
 end

@@ -17,7 +17,15 @@ const GPU_BACKEND_SUPPORTED_PRIMITIVES = Symbol[
     :clamp,
 ]
 
-const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[:normal, :lognormal, :exponential, :bernoulli, :poisson]
+const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
+    :normal,
+    :lognormal,
+    :exponential,
+    :gamma,
+    :bernoulli,
+    :poisson,
+    :studentt,
+]
 
 abstract type AbstractBackendExpr end
 abstract type AbstractBackendAddressPart end
@@ -82,6 +90,15 @@ struct BackendExponentialChoicePlanStep{R<:AbstractBackendExpr,AD<:BackendAddres
     parameter_slot::Union{Nothing,Int}
 end
 
+struct BackendGammaChoicePlanStep{SH<:AbstractBackendExpr,R<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
+       BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    shape::SH
+    rate::R
+    parameter_slot::Union{Nothing,Int}
+end
+
 struct BackendBernoulliChoicePlanStep{P<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
     binding_slot::Union{Nothing,Int}
     address::AD
@@ -93,6 +110,20 @@ struct BackendPoissonChoicePlanStep{L<:AbstractBackendExpr,AD<:BackendAddressSpe
     binding_slot::Union{Nothing,Int}
     address::AD
     lambda::L
+    parameter_slot::Union{Nothing,Int}
+end
+
+struct BackendStudentTChoicePlanStep{
+    N<:AbstractBackendExpr,
+    M<:AbstractBackendExpr,
+    S<:AbstractBackendExpr,
+    AD<:BackendAddressSpec,
+} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    nu::N
+    mu::M
+    sigma::S
     parameter_slot::Union{Nothing,Int}
 end
 
@@ -325,6 +356,12 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendExponentialChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+    elseif step.rhs.family === :gamma
+        length(arguments) == 2 || begin
+            _backend_issue!(issues, "gamma expects exactly 2 backend arguments")
+            return nothing
+        end
+        return BackendGammaChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
     elseif step.rhs.family === :bernoulli
         length(arguments) == 1 || begin
             _backend_issue!(issues, "bernoulli expects exactly 1 backend argument")
@@ -337,6 +374,19 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             return nothing
         end
         return BackendPoissonChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+    elseif step.rhs.family === :studentt
+        length(arguments) == 3 || begin
+            _backend_issue!(issues, "studentt expects exactly 3 backend arguments")
+            return nothing
+        end
+        return BackendStudentTChoicePlanStep(
+            step.binding_slot,
+            address,
+            arguments[1],
+            arguments[2],
+            arguments[3],
+            step.parameter_slot,
+        )
     end
 
     _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
@@ -650,6 +700,19 @@ function _collect_backend_slot_kinds!(
 end
 
 function _collect_backend_slot_kinds!(
+    step::BackendGammaChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.shape, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.rate, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
     step::BackendBernoulliChoicePlanStep,
     numeric_slots::BitVector,
     index_slots::BitVector,
@@ -669,6 +732,20 @@ function _collect_backend_slot_kinds!(
 )
     _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
     _mark_backend_numeric_expr_slots!(step.lambda, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendStudentTChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.nu, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
     isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
     return nothing
 end
