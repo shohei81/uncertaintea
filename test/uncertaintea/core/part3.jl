@@ -116,6 +116,37 @@
                 UncertainTea.NUTSKernelAliasSchedulerState,
             ),
         )
+    merge_schedule = UncertainTea._batched_nuts_kernel_schedule(merge_program)
+    @test length(UncertainTea._batched_nuts_kernel_schedule_stages(merge_schedule)) == 4
+    merge_stage3 = UncertainTea._batched_nuts_kernel_stage_dataflow(
+        UncertainTea._batched_nuts_kernel_schedule_stages(merge_schedule)[3],
+    )
+    @test UncertainTea._batched_nuts_kernel_step(merge_stage3) isa
+        UncertainTea.BatchedNUTSMergeStep
+    @test UncertainTea._batched_nuts_kernel_access(merge_stage3).proposal_position ===
+        merge_access.proposal_position
+    @test UncertainTea._batched_nuts_kernel_stage_dependencies(
+        UncertainTea._batched_nuts_kernel_schedule_stages(merge_schedule)[3],
+    ) == (
+        UncertainTea.BatchedNUTSKernelDependency(
+            2,
+            3,
+            UncertainTea.NUTSKernelFlowDependency,
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelAliasControlState,
+        ),
+    )
+    merge_lifecycles = UncertainTea._batched_nuts_kernel_schedule_lifecycles(merge_schedule)
+    @test merge_lifecycles[1] == UncertainTea.BatchedNUTSKernelBufferLifecycle(
+        UncertainTea.NUTSKernelBufferControlBlock,
+        UncertainTea.NUTSKernelAliasControlBlock,
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+    )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
         UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
@@ -171,6 +202,9 @@
             UncertainTea.NUTSKernelBufferControlState,
         )
     @test isempty(UncertainTea._batched_nuts_kernel_dependencies(done_program))
+    done_schedule = UncertainTea._batched_nuts_kernel_schedule(done_program)
+    @test length(UncertainTea._batched_nuts_kernel_schedule_stages(done_schedule)) == 1
+    @test isempty(UncertainTea._batched_nuts_kernel_schedule_lifecycles(done_schedule)) == false
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         done_program,
@@ -339,6 +373,62 @@
                 UncertainTea.NUTSKernelAliasTreeEnergy,
             ),
         )
+    expand_schedule = UncertainTea._batched_nuts_kernel_schedule(expand_direct_program)
+    @test length(UncertainTea._batched_nuts_kernel_schedule_stages(expand_schedule)) == 5
+    expand_stage2 = UncertainTea._batched_nuts_kernel_stage_dataflow(
+        UncertainTea._batched_nuts_kernel_schedule_stages(expand_schedule)[2],
+    )
+    @test UncertainTea._batched_nuts_kernel_step(expand_stage2) isa
+        UncertainTea.BatchedNUTSLeapfrogStep
+    @test UncertainTea._batched_nuts_kernel_access(expand_stage2).next_position ===
+        expand_direct_access.next_position
+    @test UncertainTea._batched_nuts_kernel_stage_dependencies(
+        UncertainTea._batched_nuts_kernel_schedule_stages(expand_schedule)[4],
+    ) == (
+        UncertainTea.BatchedNUTSKernelDependency(
+            2,
+            4,
+            UncertainTea.NUTSKernelFlowDependency,
+            UncertainTea.NUTSKernelBufferControlState,
+            UncertainTea.NUTSKernelAliasControlState,
+        ),
+        UncertainTea.BatchedNUTSKernelDependency(
+            2,
+            4,
+            UncertainTea.NUTSKernelFlowDependency,
+            UncertainTea.NUTSKernelBufferTreeNextState,
+            UncertainTea.NUTSKernelAliasTreeState,
+        ),
+        UncertainTea.BatchedNUTSKernelDependency(
+            3,
+            4,
+            UncertainTea.NUTSKernelFlowDependency,
+            UncertainTea.NUTSKernelBufferTreeEnergy,
+            UncertainTea.NUTSKernelAliasTreeEnergy,
+        ),
+    )
+    expand_lifecycles = UncertainTea._batched_nuts_kernel_schedule_lifecycles(expand_schedule)
+    @test expand_lifecycles[1] == UncertainTea.BatchedNUTSKernelBufferLifecycle(
+        UncertainTea.NUTSKernelBufferControlBlock,
+        UncertainTea.NUTSKernelAliasControlBlock,
+        1,
+        1,
+        1,
+        1,
+        0,
+        0,
+    )
+    @test any(
+        lifecycle ->
+            lifecycle.buffer == UncertainTea.NUTSKernelBufferTreeEnergy &&
+            lifecycle.first_stage == 3 &&
+            lifecycle.last_stage == 4 &&
+            lifecycle.first_read_stage == 4 &&
+            lifecycle.last_read_stage == 4 &&
+            lifecycle.first_write_stage == 3 &&
+            lifecycle.last_write_stage == 3,
+        expand_lifecycles,
+    )
     fill!(gaussian_expand_ir_workspace.subtree_active, false)
     fill!(gaussian_expand_ir_workspace.control.step_direction, 0)
     fill!(gaussian_expand_ir_workspace.subtree_integration_steps, 0)

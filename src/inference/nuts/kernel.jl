@@ -442,10 +442,11 @@ function _execute_batched_nuts_kernel_program!(
     rng::AbstractRNG,
 )
     execution = _batched_nuts_kernel_execution_state()
-    for dataflow in _batched_nuts_kernel_dataflows(program)
+    schedule = _batched_nuts_kernel_schedule(program)
+    for stage in _batched_nuts_kernel_schedule_stages(schedule)
         _execute_batched_nuts_kernel_dataflow!(
             workspace,
-            dataflow,
+            _batched_nuts_kernel_stage_dataflow(stage),
             execution,
             model,
             inverse_mass_matrix,

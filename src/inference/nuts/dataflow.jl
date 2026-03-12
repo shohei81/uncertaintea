@@ -81,6 +81,33 @@ struct BatchedNUTSKernelDependency
     alias_class::BatchedNUTSKernelAliasClass
 end
 
+struct BatchedNUTSKernelBufferLifecycle
+    buffer::BatchedNUTSKernelBuffer
+    alias_class::BatchedNUTSKernelAliasClass
+    first_stage::Int
+    last_stage::Int
+    first_read_stage::Int
+    last_read_stage::Int
+    first_write_stage::Int
+    last_write_stage::Int
+end
+
+struct BatchedNUTSKernelScheduleStage{D<:AbstractBatchedNUTSKernelDataflow,T}
+    index::Int
+    dataflow::D
+    dependencies::T
+end
+
+struct BatchedNUTSKernelSchedule{S,L}
+    stages::S
+    lifecycles::L
+end
+
+_batched_nuts_kernel_stage_dataflow(stage::BatchedNUTSKernelScheduleStage) = stage.dataflow
+_batched_nuts_kernel_stage_dependencies(stage::BatchedNUTSKernelScheduleStage) = stage.dependencies
+_batched_nuts_kernel_schedule_stages(schedule::BatchedNUTSKernelSchedule) = schedule.stages
+_batched_nuts_kernel_schedule_lifecycles(schedule::BatchedNUTSKernelSchedule) = schedule.lifecycles
+
 function _batched_nuts_kernel_dataflow(
     access::BatchedNUTSIdleKernelAccess,
     step::BatchedNUTSReloadControlStep,
@@ -248,6 +275,101 @@ function _batched_nuts_kernel_dataflows(
 )
     access = _batched_nuts_kernel_access(program)
     return map(step -> _batched_nuts_kernel_dataflow(access, step), _batched_nuts_kernel_steps(program))
+end
+
+function _batched_nuts_kernel_stage_dependencies(
+    dependencies::Tuple,
+    stage_index::Int,
+)
+    selected = BatchedNUTSKernelDependency[]
+    for dependency in dependencies
+        dependency.consumer_step == stage_index || continue
+        push!(selected, dependency)
+    end
+    return Tuple(selected)
+end
+
+function _batched_nuts_kernel_buffer_lifecycles(
+    dataflows::Tuple,
+)
+    seen = Set{BatchedNUTSKernelBuffer}()
+    ordered_buffers = BatchedNUTSKernelBuffer[]
+    for dataflow in dataflows
+        for buffer in _batched_nuts_kernel_reads(dataflow)
+            if !(buffer in seen)
+                push!(ordered_buffers, buffer)
+                push!(seen, buffer)
+            end
+        end
+        for buffer in _batched_nuts_kernel_writes(dataflow)
+            if !(buffer in seen)
+                push!(ordered_buffers, buffer)
+                push!(seen, buffer)
+            end
+        end
+    end
+
+    lifecycles = BatchedNUTSKernelBufferLifecycle[]
+    for buffer in ordered_buffers
+        first_stage = 0
+        last_stage = 0
+        first_read_stage = 0
+        last_read_stage = 0
+        first_write_stage = 0
+        last_write_stage = 0
+        for stage_index in eachindex(dataflows)
+            reads = _batched_nuts_kernel_reads(dataflows[stage_index])
+            writes = _batched_nuts_kernel_writes(dataflows[stage_index])
+            touched = false
+            if buffer in reads
+                first_read_stage == 0 && (first_read_stage = stage_index)
+                last_read_stage = stage_index
+                touched = true
+            end
+            if buffer in writes
+                first_write_stage == 0 && (first_write_stage = stage_index)
+                last_write_stage = stage_index
+                touched = true
+            end
+            if touched
+                first_stage == 0 && (first_stage = stage_index)
+                last_stage = stage_index
+            end
+        end
+        push!(
+            lifecycles,
+            BatchedNUTSKernelBufferLifecycle(
+                buffer,
+                _batched_nuts_kernel_alias_class(buffer),
+                first_stage,
+                last_stage,
+                first_read_stage,
+                last_read_stage,
+                first_write_stage,
+                last_write_stage,
+            ),
+        )
+    end
+    return Tuple(lifecycles)
+end
+
+function _batched_nuts_kernel_schedule(
+    program::AbstractBatchedNUTSKernelProgram,
+)
+    dataflows = _batched_nuts_kernel_dataflows(program)
+    dependencies = _batched_nuts_kernel_dependencies(program)
+    stages = ntuple(
+        index -> BatchedNUTSKernelScheduleStage(
+            index,
+            dataflows[index],
+            _batched_nuts_kernel_stage_dependencies(dependencies, index),
+        ),
+        length(dataflows),
+    )
+    return BatchedNUTSKernelSchedule(
+        stages,
+        _batched_nuts_kernel_buffer_lifecycles(dataflows),
+    )
 end
 
 const _BATCHED_NUTS_IDLE_KERNEL_DEPENDENCIES = ()

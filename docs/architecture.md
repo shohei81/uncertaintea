@@ -181,7 +181,9 @@ Current backend-lowering subset:
   into a phase-local kernel-access object whose fields directly expose the
   buffers touched by each step, then lowers each primitive step into a typed
   dataflow descriptor with explicit logical read/write buffer sets, alias
-  classes, and a fixed intra-program dependency table, and then
+  classes, and a fixed intra-program dependency table, and derives a
+  phase-local schedule plus buffer lifecycle metadata from those steps, and
+  then
   wraps that access layer in a
   small kernel program with a fixed per-phase op sequence, so the control
   skeleton is increasingly declarative, and those op sequences now feed
