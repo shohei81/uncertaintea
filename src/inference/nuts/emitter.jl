@@ -21,16 +21,27 @@ function _batched_nuts_backend_stage_files(plan::BatchedNUTSKernelPackagePlan)
 end
 
 function _batched_nuts_backend_bundle_layout(plan::BatchedNUTSKernelPackagePlan)
-    return gpu_backend_bundle_layout(
+    bundle_symbol = _batched_nuts_bundle_symbol(_batched_nuts_package_bundle_plan(plan))
+    stages = Tuple(
+        GPUBackendCodegenStage(
+            stage_file.stage_name,
+            stage_file.stage_name,
+            basename(stage_file.relative_path),
+            stage_file.contents,
+        ) for stage_file in _batched_nuts_backend_stage_files(plan)
+    )
+    return gpu_backend_codegen_bundle(
         plan.target,
-        _batched_nuts_bundle_symbol(_batched_nuts_package_bundle_plan(plan)),
-        _batched_nuts_backend_manifest_file(plan),
-        _batched_nuts_backend_stage_files(plan),
+        bundle_symbol,
+        stages;
+        manifest_lines=(
+            string("source_manifest = \"", basename(_batched_nuts_package_relative_path(_batched_nuts_package_manifest_file(plan))), "\""),
+        ),
     )
 end
 
 function batched_nuts_package_layout(plan::BatchedNUTSKernelPackagePlan)
-    return gpu_backend_package_layout(
+    return gpu_backend_codegen_package_layout(
         plan.target,
         _batched_nuts_package_symbol(plan),
         _batched_nuts_package_root_dir(plan),

@@ -271,7 +271,8 @@ The next lowering layer is now explicit:
 - `backend_report(model)` reports whether a model stays inside that subset
 - backend-lowered models can now also lower into the same generic GPU-backend
   bundle/package substrate used by the NUTS lowering stack and be emitted as
-  stub packages on disk
+  stub packages on disk; both paths now also share a generic codegen-bundle
+  contract for stage source blobs, entry symbols, and manifest generation
 - unsupported models keep working through the compiled CPU fallback path
 - batched backend execution currently requires synchronized loop iterables across
   the batch; divergent loop shapes fall back to the compiled CPU path

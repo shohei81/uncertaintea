@@ -233,7 +233,8 @@ Current backend-lowering subset:
 - backend-lowered static models can now also adapt their lowered execution plan
   into the generic GPU-backend bundle/package substrate and emit a stub package
   to disk, so that substrate is now shared between model lowering and NUTS
-  lowering
+  lowering; both now pass through the same codegen-bundle contract for stage
+  source blobs, entry symbols, and generated manifest structure
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

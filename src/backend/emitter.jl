@@ -153,57 +153,24 @@ function _backend_module_source_lines(
     return Tuple(lines)
 end
 
-function _backend_manifest_contents(
-    model::TeaModel,
-    target::Symbol,
-    bundle_symbol::Symbol,
-    stage_name::Symbol,
-    stage_filename::String,
-)
-    lines = String[
-        string("model = \"", model.name, "\""),
-        string("target = \"", target, "\""),
-        string("bundle = \"", bundle_symbol, "\""),
-        "count = 1",
-        "[[stage]]",
-        "index = 1",
-        string("name = \"", stage_name, "\""),
-        string("file = \"", stage_filename, "\""),
-    ]
-    return join(lines, "\n")
-end
-
 function _backend_bundle_layout(
     model::TeaModel,
     plan::BackendExecutionPlan,
     target::Symbol,
-    root_dir::String,
 )
     bundle_symbol = _backend_bundle_symbol(model, target)
     module_symbol = _backend_module_symbol(model, target)
     stage_name = model.name
     entry_symbol = Symbol("execute_backend__", model.name)
     stage_filename = _backend_module_filename(model, target)
-    return gpu_backend_bundle_layout(
+    return gpu_backend_codegen_bundle(
         target,
         bundle_symbol,
-        GPUBackendManifestFile(
-            joinpath(
-                root_dir,
-                string(lowercase(String(bundle_symbol)), "__manifest.toml"),
-            ),
-            _backend_manifest_contents(
-                model,
-                target,
-                bundle_symbol,
-                stage_name,
-                stage_filename,
-            ),
-        ),
         (
-            GPUBackendStageFile(
+            GPUBackendCodegenStage(
                 stage_name,
-                joinpath(root_dir, stage_filename),
+                entry_symbol,
+                stage_filename,
                 join(
                     _backend_module_source_lines(
                         model,
@@ -214,7 +181,8 @@ function _backend_bundle_layout(
                     "\n",
                 ),
             ),
-        ),
+        );
+        manifest_lines=(string("model = \"", model.name, "\""),),
     )
 end
 
@@ -222,11 +190,11 @@ function backend_package_layout(model::TeaModel; target::Symbol=:gpu)
     plan = backend_execution_plan(model; target=target)
     package_symbol = _backend_package_symbol(model, target)
     root_dir = lowercase(String(package_symbol))
-    return gpu_backend_package_layout(
+    return gpu_backend_codegen_package_layout(
         target,
         package_symbol,
         root_dir,
-        (_backend_bundle_layout(model, plan, target, root_dir),),
+        (_backend_bundle_layout(model, plan, target),),
     )
 end
 
