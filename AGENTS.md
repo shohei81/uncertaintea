@@ -61,3 +61,4 @@ Defer by default:
 - New model-lowering behavior should come with CPU-side tests
 - GPU code should be validated against CPU reference behavior
 - Performance claims should be backed by a reproducible benchmark or a documented measurement plan
+- Keep large test suites split across multiple files instead of regrowing `test/runtests.jl`
