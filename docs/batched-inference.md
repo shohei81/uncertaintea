@@ -97,6 +97,9 @@ The current reference inference layer now includes:
   monolithic helper
 - that scheduler now also passes through explicit control-block and descriptor
   layers before execution, mirroring the staged batched-NUTS control lowering
+- the tempered SMC NUTS scheduler can now also emit a shared GPU-backend
+  package stub through the generic bundle/package substrate, so this control
+  skeleton is no longer isolated from the repository's codegen path
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

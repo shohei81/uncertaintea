@@ -36,6 +36,9 @@ Those families already work with:
 - it now also materializes control blocks and descriptors before execution, so
   target-specific lowering has a more explicit place to attach staged control
   metadata
+- that same tempered scheduler can now emit GPU package stubs through the
+  shared backend substrate, which gives vector-latent SMC control lowering a
+  direct bridge to future Metal/CUDA-specific code generation
 
 At this point:
 

@@ -271,6 +271,9 @@ Current backend-lowering subset:
 - that path now also exposes `IR -> control block -> descriptor -> execution`,
   so the scheduler control surface is no longer coupled directly to the
   numeric expand/merge routines
+- the tempered SMC NUTS scheduler now also adapts those descriptors into the
+  shared GPU backend codegen/package substrate, aligning SMC control lowering
+  with the existing NUTS and static-backend package emitters
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering
