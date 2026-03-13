@@ -95,6 +95,8 @@ The current reference inference layer now includes:
 - the tempered cohort scheduler now also lowers to a small `Expand/Merge/Done`
   control IR, so the rejuvenation control skeleton is no longer a single
   monolithic helper
+- that scheduler now also passes through explicit control-block and descriptor
+  layers before execution, mirroring the staged batched-NUTS control lowering
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

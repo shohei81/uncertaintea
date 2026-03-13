@@ -1,4 +1,6 @@
 abstract type AbstractTemperedNUTSSchedulerIR end
+abstract type AbstractTemperedNUTSSchedulerBlock end
+abstract type AbstractTemperedNUTSSchedulerDescriptor end
 
 struct TemperedNUTSIdleIR <: AbstractTemperedNUTSSchedulerIR end
 
@@ -17,6 +19,45 @@ struct TemperedNUTSMergeIR <: AbstractTemperedNUTSSchedulerIR
 end
 
 struct TemperedNUTSDoneIR <: AbstractTemperedNUTSSchedulerIR end
+
+struct TemperedNUTSIdleBlock <: AbstractTemperedNUTSSchedulerBlock
+    ir::TemperedNUTSIdleIR
+end
+
+struct TemperedNUTSExpandBlock <: AbstractTemperedNUTSSchedulerBlock
+    ir::TemperedNUTSExpandIR
+    active_particles::BitVector
+    directions::Vector{Int}
+end
+
+struct TemperedNUTSMergeBlock <: AbstractTemperedNUTSSchedulerBlock
+    ir::TemperedNUTSMergeIR
+    active_particles::BitVector
+end
+
+struct TemperedNUTSDoneBlock <: AbstractTemperedNUTSSchedulerBlock
+    ir::TemperedNUTSDoneIR
+end
+
+struct TemperedNUTSIdleDescriptor <: AbstractTemperedNUTSSchedulerDescriptor
+    block::TemperedNUTSIdleBlock
+end
+
+struct TemperedNUTSExpandDescriptor <: AbstractTemperedNUTSSchedulerDescriptor
+    block::TemperedNUTSExpandBlock
+    remaining_steps::Int
+    active_particles::BitVector
+    directions::Vector{Int}
+end
+
+struct TemperedNUTSMergeDescriptor <: AbstractTemperedNUTSSchedulerDescriptor
+    block::TemperedNUTSMergeBlock
+    active_particles::BitVector
+end
+
+struct TemperedNUTSDoneDescriptor <: AbstractTemperedNUTSSchedulerDescriptor
+    block::TemperedNUTSDoneBlock
+end
 
 function _begin_tempered_nuts_cohort_scheduler!(
     workspace::TemperedNUTSMoveWorkspace,
@@ -69,9 +110,41 @@ function _tempered_nuts_scheduler_ir(workspace::TemperedNUTSMoveWorkspace)
     return TemperedNUTSDoneIR()
 end
 
-function _step_tempered_nuts_cohort_scheduler!(
+_tempered_nuts_scheduler_block(workspace::TemperedNUTSMoveWorkspace) =
+    _tempered_nuts_scheduler_block(_tempered_nuts_scheduler_ir(workspace))
+
+_tempered_nuts_scheduler_block(ir::TemperedNUTSIdleIR) = TemperedNUTSIdleBlock(ir)
+
+function _tempered_nuts_scheduler_block(ir::TemperedNUTSExpandIR)
+    return TemperedNUTSExpandBlock(ir, copy(ir.active_particles), copy(ir.directions))
+end
+
+function _tempered_nuts_scheduler_block(ir::TemperedNUTSMergeIR)
+    return TemperedNUTSMergeBlock(ir, copy(ir.active_particles))
+end
+
+_tempered_nuts_scheduler_block(ir::TemperedNUTSDoneIR) = TemperedNUTSDoneBlock(ir)
+
+_tempered_nuts_scheduler_descriptor(block::TemperedNUTSIdleBlock) = TemperedNUTSIdleDescriptor(block)
+
+function _tempered_nuts_scheduler_descriptor(block::TemperedNUTSExpandBlock)
+    return TemperedNUTSExpandDescriptor(
+        block,
+        block.ir.remaining_steps,
+        copy(block.active_particles),
+        copy(block.directions),
+    )
+end
+
+function _tempered_nuts_scheduler_descriptor(block::TemperedNUTSMergeBlock)
+    return TemperedNUTSMergeDescriptor(block, copy(block.active_particles))
+end
+
+_tempered_nuts_scheduler_descriptor(block::TemperedNUTSDoneBlock) = TemperedNUTSDoneDescriptor(block)
+
+function _execute_tempered_nuts_cohort_scheduler!(
     workspace::TemperedNUTSMoveWorkspace,
-    ::TemperedNUTSIdleIR,
+    ::TemperedNUTSIdleDescriptor,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -91,9 +164,9 @@ function _step_tempered_nuts_cohort_scheduler!(
     return workspace.scheduler.phase
 end
 
-function _step_tempered_nuts_cohort_scheduler!(
+function _execute_tempered_nuts_cohort_scheduler!(
     workspace::TemperedNUTSMoveWorkspace,
-    ir::TemperedNUTSExpandIR,
+    descriptor::TemperedNUTSExpandDescriptor,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -109,13 +182,14 @@ function _step_tempered_nuts_cohort_scheduler!(
     inverse_mass_matrix::AbstractVector,
     rng::AbstractRNG,
 )
+    ir = descriptor.block.ir
     scheduler = workspace.scheduler
     scheduler.active_depth = ir.active_depth
     scheduler.active_depth_count = ir.active_depth_count
-    scheduler.remaining_steps = ir.remaining_steps
-    copyto!(scheduler.cohort_active, ir.active_particles)
-    copyto!(workspace.control.active, ir.active_particles)
-    copyto!(workspace.control.directions, ir.directions)
+    scheduler.remaining_steps = descriptor.remaining_steps
+    copyto!(scheduler.cohort_active, descriptor.active_particles)
+    copyto!(workspace.control.active, descriptor.active_particles)
+    copyto!(workspace.control.directions, descriptor.directions)
     _expand_tempered_nuts_depth_cohort!(
         workspace,
         model,
@@ -136,9 +210,9 @@ function _step_tempered_nuts_cohort_scheduler!(
     return scheduler.phase
 end
 
-function _step_tempered_nuts_cohort_scheduler!(
+function _execute_tempered_nuts_cohort_scheduler!(
     workspace::TemperedNUTSMoveWorkspace,
-    ir::TemperedNUTSMergeIR,
+    descriptor::TemperedNUTSMergeDescriptor,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -154,19 +228,20 @@ function _step_tempered_nuts_cohort_scheduler!(
     inverse_mass_matrix::AbstractVector,
     rng::AbstractRNG,
 )
+    ir = descriptor.block.ir
     scheduler = workspace.scheduler
     scheduler.active_depth = ir.active_depth
     scheduler.active_depth_count = ir.active_depth_count
-    copyto!(scheduler.cohort_active, ir.active_particles)
-    copyto!(workspace.control.active, ir.active_particles)
+    copyto!(scheduler.cohort_active, descriptor.active_particles)
+    copyto!(workspace.control.active, descriptor.active_particles)
     _merge_tempered_nuts_depth_cohort!(workspace, continuations, rng)
     _begin_tempered_nuts_cohort_scheduler!(workspace, continuations, max_tree_depth, rng)
     return scheduler.phase
 end
 
-function _step_tempered_nuts_cohort_scheduler!(
+function _execute_tempered_nuts_cohort_scheduler!(
     workspace::TemperedNUTSMoveWorkspace,
-    ::TemperedNUTSDoneIR,
+    ::TemperedNUTSDoneDescriptor,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -206,10 +281,11 @@ function _continue_batched_tempered_nuts_cohorts!(
 )
     _begin_tempered_nuts_cohort_scheduler!(workspace, continuations, max_tree_depth, rng)
     while workspace.scheduler.phase !== TemperedNUTSSchedulerDone
-        ir = _tempered_nuts_scheduler_ir(workspace)
-        _step_tempered_nuts_cohort_scheduler!(
+        block = _tempered_nuts_scheduler_block(workspace)
+        descriptor = _tempered_nuts_scheduler_descriptor(block)
+        _execute_tempered_nuts_cohort_scheduler!(
             workspace,
-            ir,
+            descriptor,
             continuations,
             model,
             cache,

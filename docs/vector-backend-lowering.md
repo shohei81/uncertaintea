@@ -33,6 +33,9 @@ Those families already work with:
 - that scheduler now also has a small control IR for `expand`, `merge`, and
   terminal states, which makes the tempered vector-latent move path easier to
   align with later backend-lowered control kernels
+- it now also materializes control blocks and descriptors before execution, so
+  target-specific lowering has a more explicit place to attach staged control
+  metadata
 
 At this point:
 

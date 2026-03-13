@@ -268,6 +268,9 @@ Current backend-lowering subset:
 - the tempered SMC NUTS cohort scheduler now also runs through an explicit
   `Expand/Merge/Done` control IR, so its control path can evolve toward the
   same backend-lowered style as the main batched NUTS implementation
+- that path now also exposes `IR -> control block -> descriptor -> execution`,
+  so the scheduler control surface is no longer coupled directly to the
+  numeric expand/merge routines
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering

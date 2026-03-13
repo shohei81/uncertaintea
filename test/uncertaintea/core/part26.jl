@@ -294,6 +294,12 @@
     @test scheduler_ir.remaining_steps == 4
     @test scheduler_ir.active_particles == BitVector([false, true, true])
     @test length(scheduler_ir.directions) == 3
+    scheduler_block = UncertainTea._tempered_nuts_scheduler_block(scheduler_workspace)
+    @test scheduler_block isa UncertainTea.TemperedNUTSExpandBlock
+    scheduler_descriptor = UncertainTea._tempered_nuts_scheduler_descriptor(scheduler_block)
+    @test scheduler_descriptor isa UncertainTea.TemperedNUTSExpandDescriptor
+    @test scheduler_descriptor.remaining_steps == 4
+    @test scheduler_descriptor.active_particles == BitVector([false, true, true])
     scheduler_continuations[1].turning = true
     scheduler_continuations[2].turning = true
     scheduler_continuations[3].turning = true
@@ -304,6 +310,10 @@
         MersenneTwister(2162),
     ) == UncertainTea.TemperedNUTSSchedulerDone
     @test UncertainTea._tempered_nuts_scheduler_ir(scheduler_workspace) isa UncertainTea.TemperedNUTSDoneIR
+    @test UncertainTea._tempered_nuts_scheduler_block(scheduler_workspace) isa UncertainTea.TemperedNUTSDoneBlock
+    @test UncertainTea._tempered_nuts_scheduler_descriptor(
+        UncertainTea._tempered_nuts_scheduler_block(scheduler_workspace),
+    ) isa UncertainTea.TemperedNUTSDoneDescriptor
 
     workspace_particles = randn(MersenneTwister(216), 2, 8)
     workspace_noise = similar(workspace_particles)
