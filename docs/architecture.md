@@ -258,6 +258,10 @@ Current backend-lowering subset:
 - that shared emit layer now also owns the target-specific source/module policy
   (`.jl`, `.metal`, `.cu` and matching buffer-argument declarations), so both
   NUTS and static model backend packages consume the same target helpers
+- tempered SMC `:nuts` rejuvenation now also owns a dedicated persistent move
+  workspace, so repeated rejuvenation steps reuse batched cohort scratch,
+  initial trajectory buffers, and per-particle tree workspaces instead of
+  rebuilding them every time
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering

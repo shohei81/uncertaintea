@@ -211,34 +211,8 @@ function _copy_nuts_column_to_state!(
     )
 end
 
-function _tempered_nuts_active_depth(
-    continuations::AbstractVector{<:NUTSContinuationState},
-    max_tree_depth::Int,
-)
-    max_tree_depth > 1 || return 0, 0
-    counts = zeros(Int, max_tree_depth - 1)
-    active_depth = 0
-    active_depth_count = 0
-    for continuation in continuations
-        if !_nuts_continuation_active(
-            continuation.tree_depth,
-            max_tree_depth,
-            continuation.divergent,
-            continuation.turning,
-        )
-            continue
-        end
-        depth = continuation.tree_depth
-        counts[depth] += 1
-        if counts[depth] > active_depth_count
-            active_depth = depth
-            active_depth_count = counts[depth]
-        end
-    end
-    return active_depth, active_depth_count
-end
-
 function _continue_batched_tempered_nuts_depth_cohort!(
+    workspace::TemperedNUTSCohortWorkspace,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -256,9 +230,46 @@ function _continue_batched_tempered_nuts_depth_cohort!(
     rng::AbstractRNG,
 )
     num_particles = length(continuations)
-    parameter_total = length(first(continuations).proposal.position)
-    active = falses(num_particles)
-    directions = zeros(Int, num_particles)
+    parameter_total = size(workspace.current_position, 1)
+    active = workspace.active
+    subtree_active = workspace.subtree_active
+    directions = workspace.directions
+    current_position = workspace.current_position
+    current_momentum = workspace.current_momentum
+    current_gradient = workspace.current_gradient
+    current_logjoint = workspace.current_logjoint
+    next_position = workspace.next_position
+    next_momentum = workspace.next_momentum
+    next_gradient = workspace.next_gradient
+    next_logjoint = workspace.next_logjoint
+    left_position = workspace.left_position
+    left_momentum = workspace.left_momentum
+    left_gradient = workspace.left_gradient
+    left_logjoint = workspace.left_logjoint
+    right_position = workspace.right_position
+    right_momentum = workspace.right_momentum
+    right_gradient = workspace.right_gradient
+    right_logjoint = workspace.right_logjoint
+    proposal_position = workspace.proposal_position
+    proposal_momentum = workspace.proposal_momentum
+    proposal_gradient = workspace.proposal_gradient
+    proposal_logjoint = workspace.proposal_logjoint
+    logjoint_values = workspace.logjoint_values
+    logjoint_gradient = workspace.logjoint_gradient
+    logproposal_values = workspace.logproposal_values
+    logproposal_gradient = workspace.logproposal_gradient
+    proposal_noise = workspace.proposal_noise
+    valid = workspace.valid
+    subtree_log_weight = workspace.subtree_log_weight
+    subtree_accept_stat_sum = workspace.subtree_accept_stat_sum
+    subtree_accept_stat_count = workspace.subtree_accept_stat_count
+    subtree_integration_steps = workspace.subtree_integration_steps
+    subtree_proposal_energy = workspace.subtree_proposal_energy
+    subtree_proposal_energy_error = workspace.subtree_proposal_energy_error
+    subtree_turning = workspace.subtree_turning
+    subtree_divergent = workspace.subtree_divergent
+
+    fill!(active, false)
     for particle_index in 1:num_particles
         continuation = continuations[particle_index]
         active[particle_index] =
@@ -272,42 +283,15 @@ function _continue_batched_tempered_nuts_depth_cohort!(
     end
     any(active) || return continuations
     _sample_batched_nuts_directions!(directions, rng)
-
-    current_position = Matrix{Float64}(undef, parameter_total, num_particles)
-    current_momentum = Matrix{Float64}(undef, parameter_total, num_particles)
-    current_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    current_logjoint = Vector{Float64}(undef, num_particles)
-    next_position = Matrix{Float64}(undef, parameter_total, num_particles)
-    next_momentum = Matrix{Float64}(undef, parameter_total, num_particles)
-    next_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    next_logjoint = Vector{Float64}(undef, num_particles)
-    left_position = Matrix{Float64}(undef, parameter_total, num_particles)
-    left_momentum = Matrix{Float64}(undef, parameter_total, num_particles)
-    left_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    left_logjoint = Vector{Float64}(undef, num_particles)
-    right_position = Matrix{Float64}(undef, parameter_total, num_particles)
-    right_momentum = Matrix{Float64}(undef, parameter_total, num_particles)
-    right_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    right_logjoint = Vector{Float64}(undef, num_particles)
-    proposal_position = Matrix{Float64}(undef, parameter_total, num_particles)
-    proposal_momentum = Matrix{Float64}(undef, parameter_total, num_particles)
-    proposal_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    proposal_logjoint = Vector{Float64}(undef, num_particles)
-    logjoint_values = Vector{Float64}(undef, num_particles)
-    logjoint_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    logproposal_values = Vector{Float64}(undef, num_particles)
-    logproposal_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    proposal_noise = Matrix{Float64}(undef, parameter_total, num_particles)
-    valid = falses(num_particles)
-    subtree_active = copy(active)
-    subtree_log_weight = fill(-Inf, num_particles)
-    subtree_accept_stat_sum = zeros(Float64, num_particles)
-    subtree_accept_stat_count = zeros(Int, num_particles)
-    subtree_integration_steps = zeros(Int, num_particles)
-    subtree_proposal_energy = fill(Inf, num_particles)
-    subtree_proposal_energy_error = fill(Inf, num_particles)
-    subtree_turning = falses(num_particles)
-    subtree_divergent = falses(num_particles)
+    copyto!(subtree_active, active)
+    fill!(subtree_log_weight, -Inf)
+    fill!(subtree_accept_stat_sum, 0.0)
+    fill!(subtree_accept_stat_count, 0)
+    fill!(subtree_integration_steps, 0)
+    fill!(subtree_proposal_energy, Inf)
+    fill!(subtree_proposal_energy_error, Inf)
+    fill!(subtree_turning, false)
+    fill!(subtree_divergent, false)
 
     for particle_index in 1:num_particles
         active[particle_index] || continue
@@ -482,6 +466,7 @@ function _continue_batched_tempered_nuts_depth_cohort!(
 end
 
 function _continue_batched_tempered_nuts_cohorts!(
+    workspace::TemperedNUTSMoveWorkspace,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -498,9 +483,14 @@ function _continue_batched_tempered_nuts_cohorts!(
     rng::AbstractRNG,
 )
     while true
-        active_depth, active_depth_count = _tempered_nuts_active_depth(continuations, max_tree_depth)
+        active_depth, active_depth_count = _tempered_nuts_active_depth!(
+            _tempered_nuts_depth_counts!(workspace, max_tree_depth),
+            continuations,
+            max_tree_depth,
+        )
         active_depth_count > 0 || break
         _continue_batched_tempered_nuts_depth_cohort!(
+            workspace.cohort,
             continuations,
             model,
             cache,
@@ -744,6 +734,7 @@ function _tempered_nuts_proposal(
 end
 
 function _batched_nuts_move!(
+    workspace::TemperedNUTSMoveWorkspace,
     particles::AbstractMatrix,
     logjoint_values::AbstractVector,
     logproposal_values::AbstractVector,
@@ -760,38 +751,30 @@ function _batched_nuts_move!(
     inverse_mass_matrix::AbstractVector,
     rng::AbstractRNG,
 )
-    num_particles = size(particles, 2)
-    parameter_total = size(particles, 1)
-    length(inverse_mass_matrix) == parameter_total ||
-        throw(DimensionMismatch("expected inverse mass matrix of length $parameter_total, got $(length(inverse_mass_matrix))"))
-    inverse_mass = Float64[inverse_mass_matrix[index] for index in eachindex(inverse_mass_matrix)]
-    cache = BatchedLogjointGradientCache(model, particles, args, constraints)
-    momentum = Matrix{Float64}(undef, parameter_total, num_particles)
-    proposal_particles = Matrix{Float64}(undef, parameter_total, num_particles)
-    proposal_momentum = similar(momentum)
-    current_logjoint_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    current_logproposal_gradient = similar(current_logjoint_gradient)
-    current_tempered_gradient = similar(current_logjoint_gradient)
-    current_tempered_values = Vector{Float64}(undef, num_particles)
-    proposal_logjoint_values = Vector{Float64}(undef, num_particles)
-    proposal_logproposal_values = similar(proposal_logjoint_values)
-    proposal_tempered_values = similar(proposal_logjoint_values)
-    proposal_logjoint_gradient = similar(current_logjoint_gradient)
-    proposal_logproposal_gradient = similar(current_logjoint_gradient)
-    proposal_tempered_gradient = similar(current_logjoint_gradient)
-    proposal_noise = Matrix{Float64}(undef, parameter_total, num_particles)
-    current_hamiltonian = Vector{Float64}(undef, num_particles)
-    directions = Vector{Int}(undef, num_particles)
-    valid = trues(num_particles)
-    proposal_gradient_buffer = Matrix{Float64}(undef, parameter_total, num_particles)
-    column_gradient_buffer = Matrix{Float64}(undef, parameter_total, num_particles)
-    column_gradient_caches = _batched_nuts_column_gradient_caches(
-        model,
-        particles,
-        args,
-        constraints,
-        column_gradient_buffer,
-    )
+    _validate_tempered_nuts_move_workspace!(workspace, particles, inverse_mass_matrix)
+    num_particles = workspace.num_particles
+    parameter_total = workspace.parameter_total
+    cache = workspace.cache
+    momentum = workspace.momentum
+    proposal_particles = workspace.proposal_particles
+    proposal_momentum = workspace.proposal_momentum
+    current_logjoint_gradient = workspace.current_logjoint_gradient
+    current_logproposal_gradient = workspace.current_logproposal_gradient
+    current_tempered_gradient = workspace.current_tempered_gradient
+    current_tempered_values = workspace.current_tempered_values
+    proposal_logjoint_values = workspace.proposal_logjoint_values
+    proposal_logproposal_values = workspace.proposal_logproposal_values
+    proposal_tempered_values = workspace.proposal_tempered_values
+    proposal_logjoint_gradient = workspace.proposal_logjoint_gradient
+    proposal_logproposal_gradient = workspace.proposal_logproposal_gradient
+    proposal_tempered_gradient = workspace.proposal_tempered_gradient
+    proposal_noise = workspace.proposal_noise
+    current_hamiltonian = workspace.current_hamiltonian
+    directions = workspace.directions
+    valid = workspace.valid
+    inverse_mass = workspace.inverse_mass
+    tree_workspaces = workspace.tree_workspaces
+    continuations = workspace.continuations
     total_accept_stat = 0.0
 
     _batched_tempered_target!(
@@ -811,7 +794,7 @@ function _batched_nuts_move!(
         proposal_log_scale,
         beta,
     )
-    _sample_batched_momentum!(momentum, rng, sqrt.(inverse_mass))
+    _sample_batched_momentum!(momentum, rng, workspace.sqrt_inverse_mass)
     _sample_batched_nuts_directions!(directions, rng)
     copyto!(proposal_particles, particles)
     copyto!(proposal_momentum, momentum)
@@ -859,16 +842,12 @@ function _batched_nuts_move!(
 
     _batched_hamiltonian!(current_hamiltonian, current_tempered_values, momentum, inverse_mass)
 
-    continuations = [NUTSContinuationState(parameter_total) for _ in 1:num_particles]
-    tree_workspaces = [NUTSSubtreeWorkspace(parameter_total) for _ in 1:num_particles]
-
     for particle_index in 1:num_particles
-        position = collect(view(particles, :, particle_index))
         tree_workspace = tree_workspaces[particle_index]
         continuation = continuations[particle_index]
         _load_nuts_state!(
             tree_workspace.current,
-            position,
+            view(particles, :, particle_index),
             view(momentum, :, particle_index),
             current_tempered_values[particle_index],
             view(current_tempered_gradient, :, particle_index),
@@ -894,6 +873,7 @@ function _batched_nuts_move!(
 
     if max_tree_depth > 1
         _continue_batched_tempered_nuts_cohorts!(
+            workspace,
             continuations,
             model,
             cache,
@@ -912,10 +892,10 @@ function _batched_nuts_move!(
     end
 
     for particle_index in 1:num_particles
-        position = collect(view(particles, :, particle_index))
+        current_position = view(particles, :, particle_index)
         continuation = continuations[particle_index]
         proposal = continuation.proposal
-        accept_stat, _, _, moved = _nuts_proposal_summary(continuation, position)
+        accept_stat, _, _, moved = _nuts_proposal_summary(continuation, current_position)
         total_accept_stat += accept_stat
         if moved
             copyto!(view(particles, :, particle_index), proposal.position)
@@ -935,4 +915,42 @@ function _batched_nuts_move!(
     end
 
     return total_accept_stat / num_particles
+end
+
+function _batched_nuts_move!(
+    particles::AbstractMatrix,
+    logjoint_values::AbstractVector,
+    logproposal_values::AbstractVector,
+    log_ratio::AbstractVector,
+    model::TeaModel,
+    args::Tuple,
+    constraints::ChoiceMap,
+    proposal_location::AbstractVector,
+    proposal_log_scale::AbstractVector,
+    beta::Float64,
+    step_size::Float64,
+    max_tree_depth::Int,
+    max_delta_energy::Float64,
+    inverse_mass_matrix::AbstractVector,
+    rng::AbstractRNG,
+)
+    workspace = TemperedNUTSMoveWorkspace(model, particles, args, constraints)
+    return _batched_nuts_move!(
+        workspace,
+        particles,
+        logjoint_values,
+        logproposal_values,
+        log_ratio,
+        model,
+        args,
+        constraints,
+        proposal_location,
+        proposal_log_scale,
+        beta,
+        step_size,
+        max_tree_depth,
+        max_delta_energy,
+        inverse_mass_matrix,
+        rng,
+    )
 end

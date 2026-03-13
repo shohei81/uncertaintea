@@ -220,6 +220,70 @@
         4,
     ) == (2, 2)
 
+    workspace_particles = randn(MersenneTwister(216), 2, 8)
+    workspace_noise = similar(workspace_particles)
+    workspace_logproposal = Vector{Float64}(undef, 8)
+    UncertainTea._gaussian_logdensity_from_particles!(
+        workspace_logproposal,
+        workspace_particles,
+        Float64[-1.0, 0.6],
+        fill(0.15, 2),
+        workspace_noise,
+    )
+    workspace_logjoint = batched_logjoint_unconstrained(
+        dirichlet_smc_model,
+        workspace_particles,
+        (),
+        choicemap(),
+    )
+    workspace_logratio = workspace_logjoint .- workspace_logproposal
+    nuts_workspace = UncertainTea.TemperedNUTSMoveWorkspace(
+        dirichlet_smc_model,
+        workspace_particles,
+        (),
+        choicemap(),
+    )
+    @test size(nuts_workspace.proposal_particles) == (2, 8)
+    @test length(nuts_workspace.tree_workspaces) == 8
+    first_workspace_acceptance = UncertainTea._batched_nuts_move!(
+        nuts_workspace,
+        workspace_particles,
+        workspace_logjoint,
+        workspace_logproposal,
+        workspace_logratio,
+        dirichlet_smc_model,
+        (),
+        choicemap(),
+        Float64[-1.0, 0.6],
+        fill(0.15, 2),
+        0.5,
+        0.02,
+        2,
+        1000.0,
+        fill(1.0, 2),
+        MersenneTwister(217),
+    )
+    second_workspace_acceptance = UncertainTea._batched_nuts_move!(
+        nuts_workspace,
+        workspace_particles,
+        workspace_logjoint,
+        workspace_logproposal,
+        workspace_logratio,
+        dirichlet_smc_model,
+        (),
+        choicemap(),
+        Float64[-1.0, 0.6],
+        fill(0.15, 2),
+        0.5,
+        0.02,
+        2,
+        1000.0,
+        fill(1.0, 2),
+        MersenneTwister(218),
+    )
+    @test 0.0 <= first_workspace_acceptance <= 1.0
+    @test 0.0 <= second_workspace_acceptance <= 1.0
+
     dirichlet_nuts_deep_smc = batched_smc(
         dirichlet_smc_model,
         (),

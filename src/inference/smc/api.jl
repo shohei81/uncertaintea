@@ -142,6 +142,10 @@ function batched_smc(
     log_evidence_estimate = 0.0
     stages = SMCStageSummary[]
     ancestor_history = Vector{Vector{Int}}()
+    nuts_move_workspace =
+        move_kernel === :nuts && move_steps > 0 ?
+        TemperedNUTSMoveWorkspace(model, particles, args, constraints) :
+        nothing
 
     for stage_index in 1:max_stages
         beta_next = _adaptive_tempering_beta(log_ratio, beta, min_effective_sample_size, logweights)
@@ -204,8 +208,10 @@ function batched_smc(
                     move_acceptance_rate = acceptance_sum / move_steps
                 else
                     acceptance_sum = 0.0
+                    nuts_workspace = nuts_move_workspace::TemperedNUTSMoveWorkspace
                     for _ in 1:move_steps
                         acceptance_sum += _batched_nuts_move!(
+                            nuts_workspace,
                             particles,
                             logjoint_values,
                             logproposal_values,

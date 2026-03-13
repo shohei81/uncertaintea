@@ -86,6 +86,9 @@ The current reference inference layer now includes:
 - that tempered `:nuts` move now batch-shares the initial trajectory
   evaluation and then advances active particles in shared depth cohorts before
   falling back to fully chain-local behavior
+- repeated tempered `:nuts` move steps inside one SMC run now reuse a
+  persistent move workspace, so the cohort scratch and initial-trajectory
+  buffers are not rebuilt at every rejuvenation step
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

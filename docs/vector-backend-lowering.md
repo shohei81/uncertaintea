@@ -24,6 +24,9 @@ Those families already work with:
 - the tempered `:nuts` rejuvenation path now batch-shares the initial
   value-and-gradient evaluation and then advances shared depth cohorts before
   any fully chain-local continuation
+- repeated tempered `:nuts` move steps now also reuse a persistent move
+  workspace, which keeps the vector-family batched cohort scratch hot across
+  rejuvenation iterations
 
 At this point:
 

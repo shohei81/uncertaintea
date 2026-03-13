@@ -1,3 +1,4 @@
 include("smc/core.jl")
+include("smc/workspace.jl")
 include("smc/moves.jl")
 include("smc/api.jl")
