@@ -274,6 +274,10 @@ Current backend-lowering subset:
 - the tempered SMC NUTS scheduler now also adapts those descriptors into the
   shared GPU backend codegen/package substrate, aligning SMC control lowering
   with the existing NUTS and static-backend package emitters
+- that same tempered SMC control path now also derives typed dataflow
+  descriptors, dependency tables, schedule/lifecycle metadata, resource
+  groups, and barrier placements from each scheduler descriptor, so SMC and
+  batched NUTS now share the same staged control-lowering vocabulary
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering

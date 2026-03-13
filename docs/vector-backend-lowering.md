@@ -39,6 +39,9 @@ Those families already work with:
 - that same tempered scheduler can now emit GPU package stubs through the
   shared backend substrate, which gives vector-latent SMC control lowering a
   direct bridge to future Metal/CUDA-specific code generation
+- that control surface now also exposes typed dataflow and resource-plan
+  metadata, so vector-latent SMC control lowering can follow the same staged
+  dependency/buffer vocabulary as batched NUTS
 
 At this point:
 

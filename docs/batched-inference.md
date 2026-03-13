@@ -100,6 +100,10 @@ The current reference inference layer now includes:
 - the tempered SMC NUTS scheduler can now also emit a shared GPU-backend
   package stub through the generic bundle/package substrate, so this control
   skeleton is no longer isolated from the repository's codegen path
+- that same tempered scheduler now also exposes explicit dataflow
+  descriptors, dependency tables, buffer lifecycles, resource groups, and
+  barrier placements, so its staged control lowering is closer to the
+  batched-NUTS backend plan than to an opaque SMC-only helper
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

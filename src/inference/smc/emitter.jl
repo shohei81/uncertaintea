@@ -8,6 +8,22 @@ function _tempered_smc_nuts_int_vector_literal(values::AbstractVector{<:Integer}
     return string("[", join((string(value) for value in values), ", "), "]")
 end
 
+function _tempered_smc_nuts_symbol_tuple_literal(values)
+    symbols = [string(":", value isa Symbol ? value : Symbol(string(value))) for value in values]
+    if length(symbols) == 1
+        return string("(", only(symbols), ",)")
+    end
+    return string("(", join(symbols, ", "), ")")
+end
+
+function _tempered_smc_nuts_int_tuple_literal(values)
+    literals = [string(value) for value in values]
+    if length(literals) == 1
+        return string("(", only(literals), ",)")
+    end
+    return string("(", join(literals, ", "), ")")
+end
+
 function _tempered_smc_nuts_package_symbol(model::TeaModel, target::Symbol)
     return Symbol(
         "UncertainTea",
@@ -57,10 +73,44 @@ function _tempered_smc_nuts_descriptor_metadata_lines(
     descriptor::TemperedNUTSIdleDescriptor,
     workspace::TemperedNUTSMoveWorkspace,
 )
+    plan = _tempered_smc_nuts_kernel_resource_plan(descriptor)
+    schedule = _tempered_smc_nuts_kernel_schedule(descriptor)
+    dataflows = _tempered_smc_nuts_kernel_dataflows(descriptor)
     return (
         string("const PARAMETER_COUNT = ", workspace.parameter_total),
         string("const PARTICLE_COUNT = ", workspace.num_particles),
         "const SCHEDULER_PHASE = :idle",
+        string(
+            "const DATAFLOW_STEPS = ",
+            _tempered_smc_nuts_symbol_tuple_literal(
+                map(_tempered_smc_nuts_kernel_step, dataflows),
+            ),
+        ),
+        string("const DATAFLOW_STEP_COUNT = ", length(dataflows)),
+        string(
+            "const DATAFLOW_READ_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_reads(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const DATAFLOW_WRITE_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_writes(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const SCHEDULE_STAGE_COUNT = ",
+            length(_tempered_smc_nuts_kernel_schedule_stages(schedule)),
+        ),
+        string(
+            "const RESOURCE_GROUP_COUNT = ",
+            length(_tempered_smc_nuts_kernel_resource_groups(plan)),
+        ),
+        string(
+            "const BARRIER_COUNT = ",
+            length(_tempered_smc_nuts_kernel_barriers(plan)),
+        ),
     )
 end
 
@@ -68,6 +118,9 @@ function _tempered_smc_nuts_descriptor_metadata_lines(
     descriptor::TemperedNUTSExpandDescriptor,
     workspace::TemperedNUTSMoveWorkspace,
 )
+    plan = _tempered_smc_nuts_kernel_resource_plan(descriptor)
+    schedule = _tempered_smc_nuts_kernel_schedule(descriptor)
+    dataflows = _tempered_smc_nuts_kernel_dataflows(descriptor)
     return (
         string("const PARAMETER_COUNT = ", workspace.parameter_total),
         string("const PARTICLE_COUNT = ", workspace.num_particles),
@@ -83,6 +136,37 @@ function _tempered_smc_nuts_descriptor_metadata_lines(
             "const STEP_DIRECTIONS = ",
             _tempered_smc_nuts_int_vector_literal(descriptor.directions),
         ),
+        string(
+            "const DATAFLOW_STEPS = ",
+            _tempered_smc_nuts_symbol_tuple_literal(
+                map(_tempered_smc_nuts_kernel_step, dataflows),
+            ),
+        ),
+        string("const DATAFLOW_STEP_COUNT = ", length(dataflows)),
+        string(
+            "const DATAFLOW_READ_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_reads(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const DATAFLOW_WRITE_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_writes(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const SCHEDULE_STAGE_COUNT = ",
+            length(_tempered_smc_nuts_kernel_schedule_stages(schedule)),
+        ),
+        string(
+            "const RESOURCE_GROUP_COUNT = ",
+            length(_tempered_smc_nuts_kernel_resource_groups(plan)),
+        ),
+        string(
+            "const BARRIER_COUNT = ",
+            length(_tempered_smc_nuts_kernel_barriers(plan)),
+        ),
     )
 end
 
@@ -90,6 +174,9 @@ function _tempered_smc_nuts_descriptor_metadata_lines(
     descriptor::TemperedNUTSMergeDescriptor,
     workspace::TemperedNUTSMoveWorkspace,
 )
+    plan = _tempered_smc_nuts_kernel_resource_plan(descriptor)
+    schedule = _tempered_smc_nuts_kernel_schedule(descriptor)
+    dataflows = _tempered_smc_nuts_kernel_dataflows(descriptor)
     return (
         string("const PARAMETER_COUNT = ", workspace.parameter_total),
         string("const PARTICLE_COUNT = ", workspace.num_particles),
@@ -100,6 +187,37 @@ function _tempered_smc_nuts_descriptor_metadata_lines(
             "const ACTIVE_PARTICLES = ",
             _tempered_smc_nuts_bool_vector_literal(descriptor.active_particles),
         ),
+        string(
+            "const DATAFLOW_STEPS = ",
+            _tempered_smc_nuts_symbol_tuple_literal(
+                map(_tempered_smc_nuts_kernel_step, dataflows),
+            ),
+        ),
+        string("const DATAFLOW_STEP_COUNT = ", length(dataflows)),
+        string(
+            "const DATAFLOW_READ_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_reads(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const DATAFLOW_WRITE_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_writes(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const SCHEDULE_STAGE_COUNT = ",
+            length(_tempered_smc_nuts_kernel_schedule_stages(schedule)),
+        ),
+        string(
+            "const RESOURCE_GROUP_COUNT = ",
+            length(_tempered_smc_nuts_kernel_resource_groups(plan)),
+        ),
+        string(
+            "const BARRIER_COUNT = ",
+            length(_tempered_smc_nuts_kernel_barriers(plan)),
+        ),
     )
 end
 
@@ -107,10 +225,44 @@ function _tempered_smc_nuts_descriptor_metadata_lines(
     descriptor::TemperedNUTSDoneDescriptor,
     workspace::TemperedNUTSMoveWorkspace,
 )
+    plan = _tempered_smc_nuts_kernel_resource_plan(descriptor)
+    schedule = _tempered_smc_nuts_kernel_schedule(descriptor)
+    dataflows = _tempered_smc_nuts_kernel_dataflows(descriptor)
     return (
         string("const PARAMETER_COUNT = ", workspace.parameter_total),
         string("const PARTICLE_COUNT = ", workspace.num_particles),
         "const SCHEDULER_PHASE = :done",
+        string(
+            "const DATAFLOW_STEPS = ",
+            _tempered_smc_nuts_symbol_tuple_literal(
+                map(_tempered_smc_nuts_kernel_step, dataflows),
+            ),
+        ),
+        string("const DATAFLOW_STEP_COUNT = ", length(dataflows)),
+        string(
+            "const DATAFLOW_READ_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_reads(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const DATAFLOW_WRITE_COUNTS = ",
+            _tempered_smc_nuts_int_tuple_literal(
+                map(dataflow -> length(_tempered_smc_nuts_kernel_writes(dataflow)), dataflows),
+            ),
+        ),
+        string(
+            "const SCHEDULE_STAGE_COUNT = ",
+            length(_tempered_smc_nuts_kernel_schedule_stages(schedule)),
+        ),
+        string(
+            "const RESOURCE_GROUP_COUNT = ",
+            length(_tempered_smc_nuts_kernel_resource_groups(plan)),
+        ),
+        string(
+            "const BARRIER_COUNT = ",
+            length(_tempered_smc_nuts_kernel_barriers(plan)),
+        ),
     )
 end
 
@@ -173,9 +325,38 @@ function tempered_smc_nuts_codegen_bundle(
     target::Symbol=:gpu,
 )
     descriptors = _tempered_smc_nuts_all_descriptors(workspace)
+    plans = map(_tempered_smc_nuts_kernel_resource_plan, descriptors)
     stages = Tuple(
         _tempered_smc_nuts_codegen_stage(model, workspace, descriptor, target)
         for descriptor in descriptors
+    )
+    stage_manifest_lines = reduce(
+        vcat,
+        [
+            [
+                string(
+                    _tempered_smc_nuts_stage_kind(descriptor),
+                    "_schedule_stages = ",
+                    length(
+                        _tempered_smc_nuts_kernel_schedule_stages(
+                            _tempered_smc_nuts_kernel_schedule(descriptor),
+                        ),
+                    ),
+                ),
+                string(
+                    _tempered_smc_nuts_stage_kind(descriptor),
+                    "_resource_groups = ",
+                    length(_tempered_smc_nuts_kernel_resource_groups(plan)),
+                ),
+                string(
+                    _tempered_smc_nuts_stage_kind(descriptor),
+                    "_barriers = ",
+                    length(_tempered_smc_nuts_kernel_barriers(plan)),
+                ),
+            ]
+            for (descriptor, plan) in zip(descriptors, plans)
+        ],
+        init=String[],
     )
     return gpu_backend_codegen_bundle(
         target,
@@ -184,6 +365,7 @@ function tempered_smc_nuts_codegen_bundle(
         manifest_lines=(
             string("model = \"", model.name, "\""),
             string("current_phase = \"", workspace.scheduler.phase, "\""),
+            Tuple(stage_manifest_lines)...,
         ),
     )
 end
