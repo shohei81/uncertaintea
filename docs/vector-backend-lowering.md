@@ -21,6 +21,9 @@ Those families already work with:
 - adaptive tempered `batched_smc`, including rejuvenation moves, in the CPU
   reference path, with random-walk, tempered HMC, and tempered NUTS kernels
   available
+- the tempered `:nuts` rejuvenation path now batch-shares the first
+  value-and-gradient evaluation and only uses chain-local continuation for
+  deeper tree growth
 
 At this point:
 

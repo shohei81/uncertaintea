@@ -83,6 +83,9 @@ The current reference inference layer now includes:
 - the current rejuvenation kernels are a simple symmetric random walk, a
   fixed-step tempered HMC move that reuses `BatchedLogjointGradientCache`, and
   a CPU-reference tempered NUTS move for higher-quality rejuvenation
+- that tempered `:nuts` move now batch-shares the initial trajectory
+  evaluation and only falls back to per-particle continuation after the first
+  tree expansion
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

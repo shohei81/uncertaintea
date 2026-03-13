@@ -240,6 +240,16 @@ function _single_gaussian_gradient!(
     return destination
 end
 
+function _sample_batched_nuts_directions!(
+    destination::AbstractVector{Int},
+    rng::AbstractRNG,
+)
+    for index in eachindex(destination)
+        destination[index] = _sample_nuts_direction(rng)
+    end
+    return destination
+end
+
 function _tempered_target_value_and_gradient!(
     gradient_destination::AbstractVector,
     proposal_gradient::AbstractVector,
@@ -389,6 +399,71 @@ function _build_tempered_nuts_subtree(
     return _nuts_subtree_summary(summary)
 end
 
+function _continue_tempered_nuts_proposal!(
+    continuation::NUTSContinuationState,
+    tree_workspace::NUTSSubtreeWorkspace,
+    gradient_buffer::AbstractVector,
+    proposal_gradient::AbstractVector,
+    model::TeaModel,
+    model_gradient_cache::LogjointGradientCache,
+    inverse_mass_matrix::Vector{Float64},
+    args::Tuple,
+    constraints::ChoiceMap,
+    proposal_location::AbstractVector,
+    proposal_log_scale::AbstractVector,
+    beta::Float64,
+    step_size::Float64,
+    max_tree_depth::Int,
+    max_delta_energy::Float64,
+    initial_hamiltonian::Float64,
+    rng::AbstractRNG,
+)
+    while _nuts_continuation_active(
+        continuation.tree_depth,
+        max_tree_depth,
+        continuation.divergent,
+        continuation.turning,
+    )
+        direction = _sample_nuts_direction(rng)
+        subtree = _build_tempered_nuts_subtree(
+            tree_workspace,
+            gradient_buffer,
+            proposal_gradient,
+            model,
+            _nuts_subtree_start_state(continuation, direction),
+            model_gradient_cache,
+            inverse_mass_matrix,
+            args,
+            constraints,
+            proposal_location,
+            proposal_log_scale,
+            beta,
+            step_size,
+            direction,
+            continuation.tree_depth,
+            initial_hamiltonian,
+            max_delta_energy,
+            rng,
+        )
+        continuation.tree_depth += 1
+        if subtree.integration_steps == 0
+            continuation.divergent = subtree.divergent
+            break
+        end
+        _copy_nuts_continuation_frontier_from_tree!(continuation, tree_workspace, direction)
+        combined_log_weight = continuation.log_weight
+        if isfinite(tree_workspace.summary.log_weight)
+            combined_log_weight = _logaddexp(continuation.log_weight, tree_workspace.summary.log_weight)
+            if log(rand(rng)) < tree_workspace.summary.log_weight - combined_log_weight
+                _copy_nuts_continuation_proposal_from_tree!(continuation, tree_workspace)
+            end
+        end
+        _merge_nuts_subtree_summary!(continuation, tree_workspace, combined_log_weight)
+        _merge_nuts_continuation_turning!(continuation, tree_workspace.summary.turning)
+    end
+    return continuation
+end
+
 function _tempered_nuts_proposal(
     model::TeaModel,
     position::AbstractVector{Float64},
@@ -440,49 +515,25 @@ function _tempered_nuts_proposal(
         rng,
     )
 
-    while _nuts_continuation_active(
-        continuation.tree_depth,
+    _continue_tempered_nuts_proposal!(
+        continuation,
+        tree_workspace,
+        gradient_buffer,
+        proposal_gradient,
+        model,
+        model_gradient_cache,
+        inverse_mass_matrix,
+        args,
+        constraints,
+        proposal_location,
+        proposal_log_scale,
+        beta,
+        step_size,
         max_tree_depth,
-        continuation.divergent,
-        continuation.turning,
+        max_delta_energy,
+        initial_hamiltonian,
+        rng,
     )
-        direction = _sample_nuts_direction(rng)
-        subtree = _build_tempered_nuts_subtree(
-            tree_workspace,
-            gradient_buffer,
-            proposal_gradient,
-            model,
-            _nuts_subtree_start_state(continuation, direction),
-            model_gradient_cache,
-            inverse_mass_matrix,
-            args,
-            constraints,
-            proposal_location,
-            proposal_log_scale,
-            beta,
-            step_size,
-            direction,
-            continuation.tree_depth,
-            initial_hamiltonian,
-            max_delta_energy,
-            rng,
-        )
-        continuation.tree_depth += 1
-        if subtree.integration_steps == 0
-            continuation.divergent = subtree.divergent
-            break
-        end
-        _copy_nuts_continuation_frontier_from_tree!(continuation, tree_workspace, direction)
-        combined_log_weight = continuation.log_weight
-        if isfinite(tree_workspace.summary.log_weight)
-            combined_log_weight = _logaddexp(continuation.log_weight, tree_workspace.summary.log_weight)
-            if log(rand(rng)) < tree_workspace.summary.log_weight - combined_log_weight
-                _copy_nuts_continuation_proposal_from_tree!(continuation, tree_workspace)
-            end
-        end
-        _merge_nuts_subtree_summary!(continuation, tree_workspace, combined_log_weight)
-        _merge_nuts_continuation_turning!(continuation, tree_workspace.summary.turning)
-    end
 
     accept_stat, proposed_energy, energy_error, moved = _nuts_proposal_summary(continuation, position)
     return continuation.proposal, accept_stat, continuation.tree_depth, continuation.integration_steps, proposed_energy, energy_error, continuation.divergent, moved
@@ -509,54 +560,171 @@ function _batched_nuts_move!(
     parameter_total = size(particles, 1)
     length(inverse_mass_matrix) == parameter_total ||
         throw(DimensionMismatch("expected inverse mass matrix of length $parameter_total, got $(length(inverse_mass_matrix))"))
+    inverse_mass = Float64[inverse_mass_matrix[index] for index in eachindex(inverse_mass_matrix)]
+    cache = BatchedLogjointGradientCache(model, particles, args, constraints)
+    momentum = Matrix{Float64}(undef, parameter_total, num_particles)
+    proposal_particles = Matrix{Float64}(undef, parameter_total, num_particles)
+    proposal_momentum = similar(momentum)
+    current_logjoint_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
+    current_logproposal_gradient = similar(current_logjoint_gradient)
+    current_tempered_gradient = similar(current_logjoint_gradient)
+    current_tempered_values = Vector{Float64}(undef, num_particles)
+    proposal_logjoint_values = Vector{Float64}(undef, num_particles)
+    proposal_logproposal_values = similar(proposal_logjoint_values)
+    proposal_tempered_values = similar(proposal_logjoint_values)
+    proposal_logjoint_gradient = similar(current_logjoint_gradient)
+    proposal_logproposal_gradient = similar(current_logjoint_gradient)
+    proposal_tempered_gradient = similar(current_logjoint_gradient)
+    proposal_noise = Matrix{Float64}(undef, parameter_total, num_particles)
+    current_hamiltonian = Vector{Float64}(undef, num_particles)
+    directions = Vector{Int}(undef, num_particles)
+    valid = trues(num_particles)
+    proposal_gradient_buffer = Matrix{Float64}(undef, parameter_total, num_particles)
+    column_gradient_buffer = Matrix{Float64}(undef, parameter_total, num_particles)
+    column_gradient_caches = _batched_nuts_column_gradient_caches(
+        model,
+        particles,
+        args,
+        constraints,
+        column_gradient_buffer,
+    )
     total_accept_stat = 0.0
 
+    _batched_tempered_target!(
+        current_tempered_values,
+        current_tempered_gradient,
+        logjoint_values,
+        current_logjoint_gradient,
+        logproposal_values,
+        current_logproposal_gradient,
+        proposal_noise,
+        model,
+        cache,
+        particles,
+        args,
+        constraints,
+        proposal_location,
+        proposal_log_scale,
+        beta,
+    )
+    _sample_batched_momentum!(momentum, rng, sqrt.(inverse_mass))
+    _sample_batched_nuts_directions!(directions, rng)
+    copyto!(proposal_particles, particles)
+    copyto!(proposal_momentum, momentum)
+    fill!(valid, true)
+
+    for particle_index in axes(particles, 2), parameter_index in axes(particles, 1)
+        signed_step_size = directions[particle_index] * step_size
+        proposal_momentum[parameter_index, particle_index] +=
+            (signed_step_size / 2) * current_tempered_gradient[parameter_index, particle_index]
+        proposal_particles[parameter_index, particle_index] +=
+            signed_step_size * inverse_mass[parameter_index] * proposal_momentum[parameter_index, particle_index]
+    end
+
+    _batched_tempered_target!(
+        proposal_tempered_values,
+        proposal_tempered_gradient,
+        proposal_logjoint_values,
+        proposal_logjoint_gradient,
+        proposal_logproposal_values,
+        proposal_logproposal_gradient,
+        proposal_noise,
+        model,
+        cache,
+        proposal_particles,
+        args,
+        constraints,
+        proposal_location,
+        proposal_log_scale,
+        beta,
+    )
+
+    for particle_index in 1:num_particles
+        if !isfinite(proposal_tempered_values[particle_index]) ||
+           !isfinite(proposal_logjoint_values[particle_index]) ||
+           !all(isfinite, view(proposal_tempered_gradient, :, particle_index))
+            valid[particle_index] = false
+            continue
+        end
+        signed_step_size = directions[particle_index] * step_size
+        for parameter_index in 1:parameter_total
+            proposal_momentum[parameter_index, particle_index] +=
+                (signed_step_size / 2) * proposal_tempered_gradient[parameter_index, particle_index]
+        end
+    end
+
+    _batched_hamiltonian!(current_hamiltonian, current_tempered_values, momentum, inverse_mass)
     for particle_index in 1:num_particles
         position = collect(view(particles, :, particle_index))
-        model_gradient_cache = _logjoint_gradient_cache(model, position, args, constraints)
-        proposal_gradient = Vector{Float64}(undef, parameter_total)
-        gradient_buffer = Vector{Float64}(undef, parameter_total)
-        current_gradient = Vector{Float64}(undef, parameter_total)
-        current_tempered_logjoint, _, _ = _tempered_target_value_and_gradient!(
-            current_gradient,
-            proposal_gradient,
-            model,
-            model_gradient_cache,
+        tree_workspace = NUTSSubtreeWorkspace(parameter_total)
+        continuation = NUTSContinuationState(parameter_total)
+        proposal_gradient = view(proposal_gradient_buffer, :, particle_index)
+        model_gradient_cache = column_gradient_caches[particle_index]
+        _load_nuts_state!(
+            tree_workspace.current,
             position,
-            args,
-            constraints,
-            proposal_location,
-            proposal_log_scale,
-            beta,
+            view(momentum, :, particle_index),
+            current_tempered_values[particle_index],
+            view(current_tempered_gradient, :, particle_index),
         )
-        proposal, accept_stat, _, _, _, _, _, moved = _tempered_nuts_proposal(
-            model,
-            position,
-            current_tempered_logjoint,
-            current_gradient,
-            model_gradient_cache,
-            proposal_gradient,
-            gradient_buffer,
-            Float64[inverse_mass_matrix[index] for index in eachindex(inverse_mass_matrix)],
-            args,
-            constraints,
-            proposal_location,
-            proposal_log_scale,
-            beta,
-            step_size,
-            max_tree_depth,
+        _load_nuts_state!(
+            tree_workspace.next,
+            view(proposal_particles, :, particle_index),
+            view(proposal_momentum, :, particle_index),
+            proposal_tempered_values[particle_index],
+            view(proposal_tempered_gradient, :, particle_index),
+        )
+        initial_hamiltonian = current_hamiltonian[particle_index]
+        _initialize_nuts_first_trajectory!(
+            continuation,
+            tree_workspace,
+            valid[particle_index],
+            directions[particle_index],
+            initial_hamiltonian,
+            inverse_mass,
             max_delta_energy,
             rng,
         )
+        if max_tree_depth > 1
+            _continue_tempered_nuts_proposal!(
+                continuation,
+                tree_workspace,
+                view(column_gradient_buffer, :, particle_index),
+                proposal_gradient,
+                model,
+                model_gradient_cache,
+                inverse_mass,
+                args,
+                constraints,
+                proposal_location,
+                proposal_log_scale,
+                beta,
+                step_size,
+                max_tree_depth,
+                max_delta_energy,
+                initial_hamiltonian,
+                rng,
+            )
+        end
+        proposal = continuation.proposal
+        accept_stat, _, _, moved = _nuts_proposal_summary(continuation, position)
         total_accept_stat += accept_stat
         if moved
             copyto!(view(particles, :, particle_index), proposal.position)
-            logjoint_values[particle_index] = logjoint_unconstrained(model, proposal.position, args, constraints)
-            logproposal_values[particle_index] = _single_gaussian_logdensity(proposal.position, proposal_location, proposal_log_scale)
+            if max_tree_depth == 1 && valid[particle_index]
+                logjoint_values[particle_index] = proposal_logjoint_values[particle_index]
+                logproposal_values[particle_index] = proposal_logproposal_values[particle_index]
+            else
+                logjoint_values[particle_index] = logjoint_unconstrained(model, proposal.position, args, constraints)
+                logproposal_values[particle_index] = _single_gaussian_logdensity(
+                    proposal.position,
+                    proposal_location,
+                    proposal_log_scale,
+                )
+            end
             log_ratio[particle_index] = logjoint_values[particle_index] - logproposal_values[particle_index]
         end
     end
 
     return total_accept_stat / num_particles
 end
-
