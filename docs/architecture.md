@@ -265,6 +265,9 @@ Current backend-lowering subset:
 - that workspace now also separates cohort control metadata from numeric
   subtree scratch, mirroring the broader batched NUTS direction of keeping
   scheduler/control state explicit
+- the tempered SMC NUTS cohort scheduler now also runs through an explicit
+  `Expand/Merge/Done` control IR, so its control path can evolve toward the
+  same backend-lowered style as the main batched NUTS implementation
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering

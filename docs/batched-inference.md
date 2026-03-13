@@ -92,6 +92,9 @@ The current reference inference layer now includes:
 - that move workspace now also carries an explicit cohort control/scheduler
   state, so active-depth selection and cohort activation are separated from
   the numeric subtree scratch
+- the tempered cohort scheduler now also lowers to a small `Expand/Merge/Done`
+  control IR, so the rejuvenation control skeleton is no longer a single
+  monolithic helper
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

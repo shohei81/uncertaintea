@@ -1,3 +1,10 @@
+@enum TemperedNUTSSchedulerPhase::UInt8 begin
+    TemperedNUTSSchedulerIdle = 0
+    TemperedNUTSSchedulerExpand = 1
+    TemperedNUTSSchedulerMerge = 2
+    TemperedNUTSSchedulerDone = 3
+end
+
 mutable struct TemperedNUTSCohortWorkspace
     current_position::Matrix{Float64}
     current_momentum::Matrix{Float64}
@@ -90,12 +97,22 @@ end
 
 mutable struct TemperedNUTSSchedulerState
     continuation_active::BitVector
+    cohort_active::BitVector
     active_depth::Int
     active_depth_count::Int
+    phase::TemperedNUTSSchedulerPhase
+    remaining_steps::Int
 end
 
 function TemperedNUTSSchedulerState(num_particles::Int)
-    return TemperedNUTSSchedulerState(falses(num_particles), 0, 0)
+    return TemperedNUTSSchedulerState(
+        falses(num_particles),
+        falses(num_particles),
+        0,
+        0,
+        TemperedNUTSSchedulerIdle,
+        0,
+    )
 end
 
 mutable struct TemperedNUTSMoveWorkspace{C,TW<:NUTSSubtreeWorkspace,CS<:NUTSContinuationState}

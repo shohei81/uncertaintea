@@ -211,9 +211,70 @@ function _copy_nuts_column_to_state!(
     )
 end
 
-function _continue_batched_tempered_nuts_depth_cohort!(
+function _initialize_tempered_nuts_depth_cohort!(
     workspace::TemperedNUTSMoveWorkspace,
     continuations::AbstractVector{<:NUTSContinuationState},
+    cohort_depth::Int,
+    rng::AbstractRNG,
+)
+    cohort_workspace = workspace.cohort
+    control = workspace.control
+    num_particles = length(continuations)
+    active = control.active
+    subtree_active = control.subtree_active
+    directions = control.directions
+    current_position = cohort_workspace.current_position
+    current_momentum = cohort_workspace.current_momentum
+    current_gradient = cohort_workspace.current_gradient
+    current_logjoint = cohort_workspace.current_logjoint
+    next_position = cohort_workspace.next_position
+    next_momentum = cohort_workspace.next_momentum
+    next_gradient = cohort_workspace.next_gradient
+    next_logjoint = cohort_workspace.next_logjoint
+    left_position = cohort_workspace.left_position
+    left_momentum = cohort_workspace.left_momentum
+    left_gradient = cohort_workspace.left_gradient
+    left_logjoint = cohort_workspace.left_logjoint
+    right_position = cohort_workspace.right_position
+    right_momentum = cohort_workspace.right_momentum
+    right_gradient = cohort_workspace.right_gradient
+    right_logjoint = cohort_workspace.right_logjoint
+    proposal_position = cohort_workspace.proposal_position
+    proposal_momentum = cohort_workspace.proposal_momentum
+    proposal_gradient = cohort_workspace.proposal_gradient
+    proposal_logjoint = cohort_workspace.proposal_logjoint
+    any(active) || return workspace
+    workspace.scheduler.active_depth == cohort_depth ||
+        throw(ArgumentError("cohort depth mismatch: expected $(workspace.scheduler.active_depth), got $cohort_depth"))
+    _sample_batched_nuts_directions!(directions, rng)
+    _reset_tempered_nuts_cohort_statistics!(workspace)
+
+    for particle_index in 1:num_particles
+        active[particle_index] || continue
+        start_state = _nuts_subtree_start_state(continuations[particle_index], directions[particle_index])
+        copyto!(view(current_position, :, particle_index), start_state.position)
+        copyto!(view(current_momentum, :, particle_index), start_state.momentum)
+        copyto!(view(current_gradient, :, particle_index), start_state.gradient)
+        current_logjoint[particle_index] = start_state.logjoint
+        copyto!(view(left_position, :, particle_index), start_state.position)
+        copyto!(view(left_momentum, :, particle_index), start_state.momentum)
+        copyto!(view(left_gradient, :, particle_index), start_state.gradient)
+        left_logjoint[particle_index] = start_state.logjoint
+        copyto!(view(right_position, :, particle_index), start_state.position)
+        copyto!(view(right_momentum, :, particle_index), start_state.momentum)
+        copyto!(view(right_gradient, :, particle_index), start_state.gradient)
+        right_logjoint[particle_index] = start_state.logjoint
+        copyto!(view(proposal_position, :, particle_index), start_state.position)
+        copyto!(view(proposal_momentum, :, particle_index), start_state.momentum)
+        copyto!(view(proposal_gradient, :, particle_index), start_state.gradient)
+        proposal_logjoint[particle_index] = start_state.logjoint
+    end
+
+    return workspace
+end
+
+function _expand_tempered_nuts_depth_cohort!(
+    workspace::TemperedNUTSMoveWorkspace,
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
     args::Tuple,
@@ -222,18 +283,14 @@ function _continue_batched_tempered_nuts_depth_cohort!(
     proposal_log_scale::AbstractVector,
     beta::Float64,
     step_size::Float64,
-    max_tree_depth::Int,
     max_delta_energy::Float64,
     initial_hamiltonian::AbstractVector,
     inverse_mass_matrix::AbstractVector,
-    cohort_depth::Int,
     rng::AbstractRNG,
 )
     cohort_workspace = workspace.cohort
     control = workspace.control
-    num_particles = length(continuations)
-    parameter_total = size(cohort_workspace.current_position, 1)
-    active = _activate_tempered_nuts_depth_cohort!(workspace, continuations, cohort_depth)
+    num_particles = size(cohort_workspace.current_position, 2)
     subtree_active = control.subtree_active
     directions = control.directions
     current_position = cohort_workspace.current_position
@@ -271,32 +328,7 @@ function _continue_batched_tempered_nuts_depth_cohort!(
     subtree_turning = cohort_workspace.subtree_turning
     subtree_divergent = cohort_workspace.subtree_divergent
 
-    any(active) || return continuations
-    _sample_batched_nuts_directions!(directions, rng)
-    _reset_tempered_nuts_cohort_statistics!(workspace)
-
-    for particle_index in 1:num_particles
-        active[particle_index] || continue
-        start_state = _nuts_subtree_start_state(continuations[particle_index], directions[particle_index])
-        copyto!(view(current_position, :, particle_index), start_state.position)
-        copyto!(view(current_momentum, :, particle_index), start_state.momentum)
-        copyto!(view(current_gradient, :, particle_index), start_state.gradient)
-        current_logjoint[particle_index] = start_state.logjoint
-        copyto!(view(left_position, :, particle_index), start_state.position)
-        copyto!(view(left_momentum, :, particle_index), start_state.momentum)
-        copyto!(view(left_gradient, :, particle_index), start_state.gradient)
-        left_logjoint[particle_index] = start_state.logjoint
-        copyto!(view(right_position, :, particle_index), start_state.position)
-        copyto!(view(right_momentum, :, particle_index), start_state.momentum)
-        copyto!(view(right_gradient, :, particle_index), start_state.gradient)
-        right_logjoint[particle_index] = start_state.logjoint
-        copyto!(view(proposal_position, :, particle_index), start_state.position)
-        copyto!(view(proposal_momentum, :, particle_index), start_state.momentum)
-        copyto!(view(proposal_gradient, :, particle_index), start_state.gradient)
-        proposal_logjoint[particle_index] = start_state.logjoint
-    end
-
-    for _ in 1:(1 << cohort_depth)
+    for _ in 1:workspace.scheduler.remaining_steps
         any(subtree_active) || break
         _batched_tempered_nuts_leapfrog_step_to!(
             next_position,
@@ -388,6 +420,39 @@ function _continue_batched_tempered_nuts_depth_cohort!(
         current_logjoint, next_logjoint = next_logjoint, current_logjoint
     end
 
+    return workspace
+end
+
+function _merge_tempered_nuts_depth_cohort!(
+    workspace::TemperedNUTSMoveWorkspace,
+    continuations::AbstractVector{<:NUTSContinuationState},
+    rng::AbstractRNG,
+)
+    cohort_workspace = workspace.cohort
+    active = workspace.control.active
+    directions = workspace.control.directions
+    num_particles = length(continuations)
+    left_position = cohort_workspace.left_position
+    left_momentum = cohort_workspace.left_momentum
+    left_gradient = cohort_workspace.left_gradient
+    left_logjoint = cohort_workspace.left_logjoint
+    right_position = cohort_workspace.right_position
+    right_momentum = cohort_workspace.right_momentum
+    right_gradient = cohort_workspace.right_gradient
+    right_logjoint = cohort_workspace.right_logjoint
+    proposal_position = cohort_workspace.proposal_position
+    proposal_momentum = cohort_workspace.proposal_momentum
+    proposal_gradient = cohort_workspace.proposal_gradient
+    proposal_logjoint = cohort_workspace.proposal_logjoint
+    subtree_log_weight = cohort_workspace.subtree_log_weight
+    subtree_accept_stat_sum = cohort_workspace.subtree_accept_stat_sum
+    subtree_accept_stat_count = cohort_workspace.subtree_accept_stat_count
+    subtree_integration_steps = cohort_workspace.subtree_integration_steps
+    subtree_proposal_energy = cohort_workspace.subtree_proposal_energy
+    subtree_proposal_energy_error = cohort_workspace.subtree_proposal_energy_error
+    subtree_turning = cohort_workspace.subtree_turning
+    subtree_divergent = cohort_workspace.subtree_divergent
+
     for particle_index in 1:num_particles
         active[particle_index] || continue
         continuation = continuations[particle_index]
@@ -444,52 +509,6 @@ function _continue_batched_tempered_nuts_depth_cohort!(
         _merge_nuts_continuation_turning!(continuation, subtree_turning[particle_index])
     end
 
-    return continuations
-end
-
-function _continue_batched_tempered_nuts_cohorts!(
-    workspace::TemperedNUTSMoveWorkspace,
-    continuations::AbstractVector{<:NUTSContinuationState},
-    model::TeaModel,
-    cache::BatchedLogjointGradientCache,
-    args::Tuple,
-    constraints::ChoiceMap,
-    proposal_location::AbstractVector,
-    proposal_log_scale::AbstractVector,
-    beta::Float64,
-    step_size::Float64,
-    max_tree_depth::Int,
-    max_delta_energy::Float64,
-    initial_hamiltonian::AbstractVector,
-    inverse_mass_matrix::AbstractVector,
-    rng::AbstractRNG,
-)
-    while true
-        active_depth, active_depth_count = _select_tempered_nuts_depth_cohort!(
-            workspace,
-            continuations,
-            max_tree_depth,
-        )
-        active_depth_count > 0 || break
-        _continue_batched_tempered_nuts_depth_cohort!(
-            workspace,
-            continuations,
-            model,
-            cache,
-            args,
-            constraints,
-            proposal_location,
-            proposal_log_scale,
-            beta,
-            step_size,
-            max_tree_depth,
-            max_delta_energy,
-            initial_hamiltonian,
-            inverse_mass_matrix,
-            active_depth,
-            rng,
-        )
-    end
     return continuations
 end
 

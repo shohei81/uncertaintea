@@ -30,6 +30,9 @@ Those families already work with:
 - the same move path now carries explicit cohort control state for active-depth
   selection, which makes its control skeleton closer to the batched NUTS
   scheduler used elsewhere in the CPU reference path
+- that scheduler now also has a small control IR for `expand`, `merge`, and
+  terminal states, which makes the tempered vector-latent move path easier to
+  align with later backend-lowered control kernels
 
 At this point:
 
