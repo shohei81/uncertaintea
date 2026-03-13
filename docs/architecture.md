@@ -291,8 +291,9 @@ Why:
   CPU-reference tempered NUTS move kernels, so the remaining work is to widen
   the backend-native subset and lower those same batch APIs to GPU
 - the current tempered `:nuts` rejuvenation path already batch-shares its
-  initial trajectory and first continuation subtree, which is the same
-  structural split the future GPU path will want
+  initial trajectory and then advances shared depth cohorts before any fully
+  chain-local remainder, which is the same structural split the future GPU
+  path will want
 
 ## Recommended Execution Modes
 

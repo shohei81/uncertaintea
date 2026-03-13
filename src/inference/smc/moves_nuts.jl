@@ -211,7 +211,34 @@ function _copy_nuts_column_to_state!(
     )
 end
 
-function _continue_batched_tempered_nuts_depth1!(
+function _tempered_nuts_active_depth(
+    continuations::AbstractVector{<:NUTSContinuationState},
+    max_tree_depth::Int,
+)
+    max_tree_depth > 1 || return 0, 0
+    counts = zeros(Int, max_tree_depth - 1)
+    active_depth = 0
+    active_depth_count = 0
+    for continuation in continuations
+        if !_nuts_continuation_active(
+            continuation.tree_depth,
+            max_tree_depth,
+            continuation.divergent,
+            continuation.turning,
+        )
+            continue
+        end
+        depth = continuation.tree_depth
+        counts[depth] += 1
+        if counts[depth] > active_depth_count
+            active_depth = depth
+            active_depth_count = counts[depth]
+        end
+    end
+    return active_depth, active_depth_count
+end
+
+function _continue_batched_tempered_nuts_depth_cohort!(
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -221,9 +248,11 @@ function _continue_batched_tempered_nuts_depth1!(
     proposal_log_scale::AbstractVector,
     beta::Float64,
     step_size::Float64,
+    max_tree_depth::Int,
     max_delta_energy::Float64,
     initial_hamiltonian::AbstractVector,
     inverse_mass_matrix::AbstractVector,
+    cohort_depth::Int,
     rng::AbstractRNG,
 )
     num_particles = length(continuations)
@@ -233,8 +262,13 @@ function _continue_batched_tempered_nuts_depth1!(
     for particle_index in 1:num_particles
         continuation = continuations[particle_index]
         active[particle_index] =
-            continuation.tree_depth == 1 &&
-            _nuts_continuation_active(continuation.tree_depth, 2, continuation.divergent, continuation.turning)
+            continuation.tree_depth == cohort_depth &&
+            _nuts_continuation_active(
+                continuation.tree_depth,
+                max_tree_depth,
+                continuation.divergent,
+                continuation.turning,
+            )
     end
     any(active) || return continuations
     _sample_batched_nuts_directions!(directions, rng)
@@ -296,7 +330,7 @@ function _continue_batched_tempered_nuts_depth1!(
         proposal_logjoint[particle_index] = start_state.logjoint
     end
 
-    for _ in 1:2
+    for _ in 1:(1 << cohort_depth)
         any(subtree_active) || break
         _batched_tempered_nuts_leapfrog_step_to!(
             next_position,
@@ -444,6 +478,46 @@ function _continue_batched_tempered_nuts_depth1!(
         _merge_nuts_continuation_turning!(continuation, subtree_turning[particle_index])
     end
 
+    return continuations
+end
+
+function _continue_batched_tempered_nuts_cohorts!(
+    continuations::AbstractVector{<:NUTSContinuationState},
+    model::TeaModel,
+    cache::BatchedLogjointGradientCache,
+    args::Tuple,
+    constraints::ChoiceMap,
+    proposal_location::AbstractVector,
+    proposal_log_scale::AbstractVector,
+    beta::Float64,
+    step_size::Float64,
+    max_tree_depth::Int,
+    max_delta_energy::Float64,
+    initial_hamiltonian::AbstractVector,
+    inverse_mass_matrix::AbstractVector,
+    rng::AbstractRNG,
+)
+    while true
+        active_depth, active_depth_count = _tempered_nuts_active_depth(continuations, max_tree_depth)
+        active_depth_count > 0 || break
+        _continue_batched_tempered_nuts_depth_cohort!(
+            continuations,
+            model,
+            cache,
+            args,
+            constraints,
+            proposal_location,
+            proposal_log_scale,
+            beta,
+            step_size,
+            max_tree_depth,
+            max_delta_energy,
+            initial_hamiltonian,
+            inverse_mass_matrix,
+            active_depth,
+            rng,
+        )
+    end
     return continuations
 end
 
@@ -819,7 +893,7 @@ function _batched_nuts_move!(
     end
 
     if max_tree_depth > 1
-        _continue_batched_tempered_nuts_depth1!(
+        _continue_batched_tempered_nuts_cohorts!(
             continuations,
             model,
             cache,
@@ -829,6 +903,7 @@ function _batched_nuts_move!(
             proposal_log_scale,
             beta,
             step_size,
+            max_tree_depth,
             max_delta_energy,
             current_hamiltonian,
             inverse_mass,
@@ -838,31 +913,7 @@ function _batched_nuts_move!(
 
     for particle_index in 1:num_particles
         position = collect(view(particles, :, particle_index))
-        tree_workspace = tree_workspaces[particle_index]
         continuation = continuations[particle_index]
-        proposal_gradient = view(proposal_gradient_buffer, :, particle_index)
-        model_gradient_cache = column_gradient_caches[particle_index]
-        if max_tree_depth > 2
-            _continue_tempered_nuts_proposal!(
-                continuation,
-                tree_workspace,
-                view(column_gradient_buffer, :, particle_index),
-                proposal_gradient,
-                model,
-                model_gradient_cache,
-                inverse_mass,
-                args,
-                constraints,
-                proposal_location,
-                proposal_log_scale,
-                beta,
-                step_size,
-                max_tree_depth,
-                max_delta_energy,
-                current_hamiltonian[particle_index],
-                rng,
-            )
-        end
         proposal = continuation.proposal
         accept_stat, _, _, moved = _nuts_proposal_summary(continuation, position)
         total_accept_stat += accept_stat

@@ -22,8 +22,8 @@ Those families already work with:
   reference path, with random-walk, tempered HMC, and tempered NUTS kernels
   available
 - the tempered `:nuts` rejuvenation path now batch-shares the initial
-  value-and-gradient evaluation and the first continuation subtree, and only
-  uses chain-local continuation for deeper tree growth
+  value-and-gradient evaluation and then advances shared depth cohorts before
+  any fully chain-local continuation
 
 At this point:
 
