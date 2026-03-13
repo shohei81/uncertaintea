@@ -220,6 +220,68 @@
         4,
     ) == (2, 2)
 
+    scheduler_workspace = UncertainTea.TemperedNUTSMoveWorkspace(
+        dirichlet_smc_model,
+        randn(MersenneTwister(2160), 2, 3),
+        (),
+        choicemap(),
+    )
+    scheduler_continuations = [
+        UncertainTea.NUTSContinuationState(
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            Inf,
+            Inf,
+            -Inf,
+            0.0,
+            0,
+            0,
+            1,
+            false,
+            false,
+        ),
+        UncertainTea.NUTSContinuationState(
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            Inf,
+            Inf,
+            -Inf,
+            0.0,
+            0,
+            0,
+            2,
+            false,
+            false,
+        ),
+        UncertainTea.NUTSContinuationState(
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            UncertainTea.NUTSState(zeros(2), zeros(2), 0.0, zeros(2)),
+            Inf,
+            Inf,
+            -Inf,
+            0.0,
+            0,
+            0,
+            2,
+            false,
+            false,
+        ),
+    ]
+    @test UncertainTea._select_tempered_nuts_depth_cohort!(
+        scheduler_workspace,
+        scheduler_continuations,
+        4,
+    ) == (2, 2)
+    @test scheduler_workspace.scheduler.continuation_active == BitVector([true, true, true])
+    @test UncertainTea._activate_tempered_nuts_depth_cohort!(
+        scheduler_workspace,
+        scheduler_continuations,
+        2,
+    ) == BitVector([false, true, true])
+
     workspace_particles = randn(MersenneTwister(216), 2, 8)
     workspace_noise = similar(workspace_particles)
     workspace_logproposal = Vector{Float64}(undef, 8)

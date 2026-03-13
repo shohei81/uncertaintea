@@ -27,6 +27,9 @@ Those families already work with:
 - repeated tempered `:nuts` move steps now also reuse a persistent move
   workspace, which keeps the vector-family batched cohort scratch hot across
   rejuvenation iterations
+- the same move path now carries explicit cohort control state for active-depth
+  selection, which makes its control skeleton closer to the batched NUTS
+  scheduler used elsewhere in the CPU reference path
 
 At this point:
 

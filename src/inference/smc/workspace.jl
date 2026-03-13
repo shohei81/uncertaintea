@@ -1,8 +1,4 @@
 mutable struct TemperedNUTSCohortWorkspace
-    active::BitVector
-    subtree_active::BitVector
-    valid::BitVector
-    directions::Vector{Int}
     current_position::Matrix{Float64}
     current_momentum::Matrix{Float64}
     current_gradient::Matrix{Float64}
@@ -40,10 +36,6 @@ end
 
 function TemperedNUTSCohortWorkspace(parameter_total::Int, num_particles::Int)
     return TemperedNUTSCohortWorkspace(
-        falses(num_particles),
-        falses(num_particles),
-        falses(num_particles),
-        Vector{Int}(undef, num_particles),
         Matrix{Float64}(undef, parameter_total, num_particles),
         Matrix{Float64}(undef, parameter_total, num_particles),
         Matrix{Float64}(undef, parameter_total, num_particles),
@@ -80,6 +72,32 @@ function TemperedNUTSCohortWorkspace(parameter_total::Int, num_particles::Int)
     )
 end
 
+mutable struct TemperedNUTSCohortControlState
+    active::BitVector
+    subtree_active::BitVector
+    valid::BitVector
+    directions::Vector{Int}
+end
+
+function TemperedNUTSCohortControlState(num_particles::Int)
+    return TemperedNUTSCohortControlState(
+        falses(num_particles),
+        falses(num_particles),
+        falses(num_particles),
+        Vector{Int}(undef, num_particles),
+    )
+end
+
+mutable struct TemperedNUTSSchedulerState
+    continuation_active::BitVector
+    active_depth::Int
+    active_depth_count::Int
+end
+
+function TemperedNUTSSchedulerState(num_particles::Int)
+    return TemperedNUTSSchedulerState(falses(num_particles), 0, 0)
+end
+
 mutable struct TemperedNUTSMoveWorkspace{C,TW<:NUTSSubtreeWorkspace,CS<:NUTSContinuationState}
     parameter_total::Int
     num_particles::Int
@@ -106,6 +124,8 @@ mutable struct TemperedNUTSMoveWorkspace{C,TW<:NUTSSubtreeWorkspace,CS<:NUTSCont
     depth_counts::Vector{Int}
     tree_workspaces::Vector{TW}
     continuations::Vector{CS}
+    control::TemperedNUTSCohortControlState
+    scheduler::TemperedNUTSSchedulerState
     cohort::TemperedNUTSCohortWorkspace
 end
 
@@ -143,6 +163,8 @@ function TemperedNUTSMoveWorkspace(
         Int[],
         [NUTSSubtreeWorkspace(parameter_total) for _ in 1:num_particles],
         [NUTSContinuationState(parameter_total) for _ in 1:num_particles],
+        TemperedNUTSCohortControlState(num_particles),
+        TemperedNUTSSchedulerState(num_particles),
         TemperedNUTSCohortWorkspace(parameter_total, num_particles),
     )
 end
@@ -206,6 +228,73 @@ function _tempered_nuts_active_depth!(
         end
     end
     return active_depth, active_depth_count
+end
+
+function _select_tempered_nuts_depth_cohort!(
+    workspace::TemperedNUTSMoveWorkspace,
+    continuations::AbstractVector{<:NUTSContinuationState},
+    max_tree_depth::Int,
+)
+    scheduler = workspace.scheduler
+    counts = _tempered_nuts_depth_counts!(workspace, max_tree_depth)
+    fill!(counts, 0)
+    fill!(scheduler.continuation_active, false)
+    scheduler.active_depth = 0
+    scheduler.active_depth_count = 0
+    max_tree_depth > 1 || return 0, 0
+
+    for particle_index in eachindex(continuations)
+        continuation = continuations[particle_index]
+        is_active = _nuts_continuation_active(
+            continuation.tree_depth,
+            max_tree_depth,
+            continuation.divergent,
+            continuation.turning,
+        )
+        scheduler.continuation_active[particle_index] = is_active
+        is_active || continue
+        depth = continuation.tree_depth
+        counts[depth] += 1
+        if counts[depth] > scheduler.active_depth_count
+            scheduler.active_depth = depth
+            scheduler.active_depth_count = counts[depth]
+        end
+    end
+
+    return scheduler.active_depth, scheduler.active_depth_count
+end
+
+function _activate_tempered_nuts_depth_cohort!(
+    workspace::TemperedNUTSMoveWorkspace,
+    continuations::AbstractVector{<:NUTSContinuationState},
+    cohort_depth::Int,
+)
+    active = workspace.control.active
+    continuation_active = workspace.scheduler.continuation_active
+    fill!(active, false)
+    for particle_index in eachindex(continuations)
+        active[particle_index] =
+            continuation_active[particle_index] &&
+            continuations[particle_index].tree_depth == cohort_depth
+    end
+    return active
+end
+
+function _reset_tempered_nuts_cohort_statistics!(
+    workspace::TemperedNUTSMoveWorkspace,
+)
+    control = workspace.control
+    cohort = workspace.cohort
+    copyto!(control.subtree_active, control.active)
+    fill!(cohort.subtree_log_weight, -Inf)
+    fill!(cohort.subtree_accept_stat_sum, 0.0)
+    fill!(cohort.subtree_accept_stat_count, 0)
+    fill!(cohort.subtree_integration_steps, 0)
+    fill!(cohort.subtree_proposal_energy, Inf)
+    fill!(cohort.subtree_proposal_energy_error, Inf)
+    fill!(cohort.subtree_turning, false)
+    fill!(cohort.subtree_divergent, false)
+    return workspace
 end
 
 function _tempered_nuts_active_depth(

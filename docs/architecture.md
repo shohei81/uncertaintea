@@ -262,6 +262,9 @@ Current backend-lowering subset:
   workspace, so repeated rejuvenation steps reuse batched cohort scratch,
   initial trajectory buffers, and per-particle tree workspaces instead of
   rebuilding them every time
+- that workspace now also separates cohort control metadata from numeric
+  subtree scratch, mirroring the broader batched NUTS direction of keeping
+  scheduler/control state explicit
 - stub source-module bodies are now emitted through a shared source-template
   helper as well, so backend-specific package generation no longer duplicates
   string assembly across NUTS and static model lowering

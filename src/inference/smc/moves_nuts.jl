@@ -212,7 +212,7 @@ function _copy_nuts_column_to_state!(
 end
 
 function _continue_batched_tempered_nuts_depth_cohort!(
-    workspace::TemperedNUTSCohortWorkspace,
+    workspace::TemperedNUTSMoveWorkspace,
     continuations::AbstractVector{<:NUTSContinuationState},
     model::TeaModel,
     cache::BatchedLogjointGradientCache,
@@ -229,69 +229,51 @@ function _continue_batched_tempered_nuts_depth_cohort!(
     cohort_depth::Int,
     rng::AbstractRNG,
 )
+    cohort_workspace = workspace.cohort
+    control = workspace.control
     num_particles = length(continuations)
-    parameter_total = size(workspace.current_position, 1)
-    active = workspace.active
-    subtree_active = workspace.subtree_active
-    directions = workspace.directions
-    current_position = workspace.current_position
-    current_momentum = workspace.current_momentum
-    current_gradient = workspace.current_gradient
-    current_logjoint = workspace.current_logjoint
-    next_position = workspace.next_position
-    next_momentum = workspace.next_momentum
-    next_gradient = workspace.next_gradient
-    next_logjoint = workspace.next_logjoint
-    left_position = workspace.left_position
-    left_momentum = workspace.left_momentum
-    left_gradient = workspace.left_gradient
-    left_logjoint = workspace.left_logjoint
-    right_position = workspace.right_position
-    right_momentum = workspace.right_momentum
-    right_gradient = workspace.right_gradient
-    right_logjoint = workspace.right_logjoint
-    proposal_position = workspace.proposal_position
-    proposal_momentum = workspace.proposal_momentum
-    proposal_gradient = workspace.proposal_gradient
-    proposal_logjoint = workspace.proposal_logjoint
-    logjoint_values = workspace.logjoint_values
-    logjoint_gradient = workspace.logjoint_gradient
-    logproposal_values = workspace.logproposal_values
-    logproposal_gradient = workspace.logproposal_gradient
-    proposal_noise = workspace.proposal_noise
-    valid = workspace.valid
-    subtree_log_weight = workspace.subtree_log_weight
-    subtree_accept_stat_sum = workspace.subtree_accept_stat_sum
-    subtree_accept_stat_count = workspace.subtree_accept_stat_count
-    subtree_integration_steps = workspace.subtree_integration_steps
-    subtree_proposal_energy = workspace.subtree_proposal_energy
-    subtree_proposal_energy_error = workspace.subtree_proposal_energy_error
-    subtree_turning = workspace.subtree_turning
-    subtree_divergent = workspace.subtree_divergent
+    parameter_total = size(cohort_workspace.current_position, 1)
+    active = _activate_tempered_nuts_depth_cohort!(workspace, continuations, cohort_depth)
+    subtree_active = control.subtree_active
+    directions = control.directions
+    current_position = cohort_workspace.current_position
+    current_momentum = cohort_workspace.current_momentum
+    current_gradient = cohort_workspace.current_gradient
+    current_logjoint = cohort_workspace.current_logjoint
+    next_position = cohort_workspace.next_position
+    next_momentum = cohort_workspace.next_momentum
+    next_gradient = cohort_workspace.next_gradient
+    next_logjoint = cohort_workspace.next_logjoint
+    left_position = cohort_workspace.left_position
+    left_momentum = cohort_workspace.left_momentum
+    left_gradient = cohort_workspace.left_gradient
+    left_logjoint = cohort_workspace.left_logjoint
+    right_position = cohort_workspace.right_position
+    right_momentum = cohort_workspace.right_momentum
+    right_gradient = cohort_workspace.right_gradient
+    right_logjoint = cohort_workspace.right_logjoint
+    proposal_position = cohort_workspace.proposal_position
+    proposal_momentum = cohort_workspace.proposal_momentum
+    proposal_gradient = cohort_workspace.proposal_gradient
+    proposal_logjoint = cohort_workspace.proposal_logjoint
+    logjoint_values = cohort_workspace.logjoint_values
+    logjoint_gradient = cohort_workspace.logjoint_gradient
+    logproposal_values = cohort_workspace.logproposal_values
+    logproposal_gradient = cohort_workspace.logproposal_gradient
+    proposal_noise = cohort_workspace.proposal_noise
+    valid = control.valid
+    subtree_log_weight = cohort_workspace.subtree_log_weight
+    subtree_accept_stat_sum = cohort_workspace.subtree_accept_stat_sum
+    subtree_accept_stat_count = cohort_workspace.subtree_accept_stat_count
+    subtree_integration_steps = cohort_workspace.subtree_integration_steps
+    subtree_proposal_energy = cohort_workspace.subtree_proposal_energy
+    subtree_proposal_energy_error = cohort_workspace.subtree_proposal_energy_error
+    subtree_turning = cohort_workspace.subtree_turning
+    subtree_divergent = cohort_workspace.subtree_divergent
 
-    fill!(active, false)
-    for particle_index in 1:num_particles
-        continuation = continuations[particle_index]
-        active[particle_index] =
-            continuation.tree_depth == cohort_depth &&
-            _nuts_continuation_active(
-                continuation.tree_depth,
-                max_tree_depth,
-                continuation.divergent,
-                continuation.turning,
-            )
-    end
     any(active) || return continuations
     _sample_batched_nuts_directions!(directions, rng)
-    copyto!(subtree_active, active)
-    fill!(subtree_log_weight, -Inf)
-    fill!(subtree_accept_stat_sum, 0.0)
-    fill!(subtree_accept_stat_count, 0)
-    fill!(subtree_integration_steps, 0)
-    fill!(subtree_proposal_energy, Inf)
-    fill!(subtree_proposal_energy_error, Inf)
-    fill!(subtree_turning, false)
-    fill!(subtree_divergent, false)
+    _reset_tempered_nuts_cohort_statistics!(workspace)
 
     for particle_index in 1:num_particles
         active[particle_index] || continue
@@ -483,14 +465,14 @@ function _continue_batched_tempered_nuts_cohorts!(
     rng::AbstractRNG,
 )
     while true
-        active_depth, active_depth_count = _tempered_nuts_active_depth!(
-            _tempered_nuts_depth_counts!(workspace, max_tree_depth),
+        active_depth, active_depth_count = _select_tempered_nuts_depth_cohort!(
+            workspace,
             continuations,
             max_tree_depth,
         )
         active_depth_count > 0 || break
         _continue_batched_tempered_nuts_depth_cohort!(
-            workspace.cohort,
+            workspace,
             continuations,
             model,
             cache,
