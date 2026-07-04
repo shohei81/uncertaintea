@@ -107,9 +107,12 @@ struct DeterministicPlanStep <: AbstractPlanStep
     binding::Symbol
     binding_slot::Union{Nothing,Int}
     expr::Any
+    scopes::Vector{LoopScopeSpec}
 end
 
-DeterministicPlanStep(binding::Symbol, expr::Any) = DeterministicPlanStep(binding, nothing, expr)
+DeterministicPlanStep(binding::Symbol, expr::Any) = DeterministicPlanStep(binding, nothing, expr, LoopScopeSpec[])
+DeterministicPlanStep(binding::Symbol, binding_slot::Union{Nothing,Int}, expr::Any) =
+    DeterministicPlanStep(binding, binding_slot, expr, LoopScopeSpec[])
 
 struct LoopPlanStep <: AbstractPlanStep
     iterator::Symbol
@@ -342,7 +345,12 @@ end
 function _substitute_step(step::DeterministicPlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
     binding = get(substitutions, step.binding, step.binding)
     binding isa Symbol || throw(ArgumentError("deterministic binding substitution must stay a Symbol"))
-    return DeterministicPlanStep(binding, _substitute_expr(step.expr, substitutions))
+    return DeterministicPlanStep(
+        binding,
+        nothing,
+        _substitute_expr(step.expr, substitutions),
+        _substitute_loop_scopes(step.scopes, substitutions),
+    )
 end
 
 function _substitute_step(step::LoopPlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
@@ -547,7 +555,9 @@ function _inline_plan_steps(steps::Vector{AbstractPlanStep})
 end
 
 function _inline_plan_step(step::DeterministicPlanStep)
-    return AbstractPlanStep[step]
+    isempty(step.scopes) && return AbstractPlanStep[step]
+    stripped = DeterministicPlanStep(step.binding, step.binding_slot, step.expr, LoopScopeSpec[])
+    return _wrap_steps_with_scopes(AbstractPlanStep[stripped], step.scopes)
 end
 
 function _inline_plan_step(step::LoopPlanStep)

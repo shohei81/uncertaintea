@@ -92,6 +92,11 @@ function _append_address_parts!(parts, expr; symbol_literal::Bool=false)
         _append_address_parts!(parts, expr.args[2]; symbol_literal=symbol_literal)
         _append_address_parts!(parts, expr.args[3]; symbol_literal=symbol_literal)
         return parts
+    elseif expr isa Expr && expr.head == :tuple
+        for element in expr.args
+            _append_address_parts!(parts, element; symbol_literal=symbol_literal)
+        end
+        return parts
     elseif expr isa Number || expr isa String || expr isa Char
         push!(parts, _address_part_expr(expr, true))
         return parts
@@ -231,40 +236,14 @@ function _supports_parameter_slot(rhs)
     return !isnothing(_supported_distribution_family(rhs))
 end
 
-function _static_length_expr(expr)
-    if expr isa Expr
-        if expr.head == :vect || expr.head == :tuple
-            return length(expr.args)
-        end
-    elseif expr isa QuoteNode
-        value = expr.value
-        if value isa Tuple || value isa AbstractVector
-            return length(value)
-        end
-    elseif expr isa Tuple || expr isa AbstractVector
-        return length(expr)
-    end
-    return nothing
-end
-
 function _dirichlet_static_size(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :dirichlet || return nothing
-    if length(rhs.args) == 2
-        return _static_length_expr(rhs.args[2])
-    end
-    return length(rhs.args) - 1
+    return _dirichlet_static_size(rhs.args[2:end])
 end
 
 function _mvnormal_static_size(rhs)
     rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :mvnormal || return nothing
-    length(rhs.args) == 3 || return nothing
-    mu_size = _static_length_expr(rhs.args[2])
-    sigma_size = _static_length_expr(rhs.args[3])
-    if !isnothing(mu_size) && !isnothing(sigma_size)
-        mu_size == sigma_size || throw(ArgumentError("mvnormal requires mean and scale vectors with the same static length"))
-        return mu_size
-    end
-    return something(mu_size, sigma_size)
+    return _mvnormal_static_size(rhs.args[2:end])
 end
 
 function _parameter_layout_sizes(rhs)
@@ -325,6 +304,8 @@ function _address_expr_has_dynamic_parts(expr)
         return true
     elseif expr isa Expr && expr.head == :call && !isempty(expr.args) && expr.args[1] === :(=>)
         return _address_expr_has_dynamic_parts(expr.args[2]) || _address_expr_has_dynamic_parts(expr.args[3])
+    elseif expr isa Expr && expr.head == :tuple
+        return any(_address_expr_has_dynamic_parts, expr.args)
     elseif expr isa Number || expr isa String || expr isa Char
         return false
     end
@@ -342,7 +323,7 @@ function _expr_has_dynamic_content(expr)
     elseif expr isa Expr
         if expr.head == :call
             start = 2
-            if !isempty(expr.args) && expr.args[1] isa Symbol && expr.args[1] in (:, :+, :-, :*, :/, :%, :^, :(=>))
+            if !isempty(expr.args) && expr.args[1] isa Symbol && expr.args[1] in (Symbol(":"), :+, :-, :*, :/, :%, :^, :(=>))
                 start = 2
             else
                 start = 1
@@ -369,32 +350,6 @@ function _parse_loop_scope(iteration)
     throw(ArgumentError("@tea only supports simple `for x in xs` loops in static analysis"))
 end
 
-function _collect_choice_spec_exprs!(expr, specs::Vector{Tuple{Expr,Tuple}})
-    return _collect_choice_spec_exprs!(expr, specs, ())
-end
-
-function _collect_choice_spec_exprs!(expr, specs::Vector{Tuple{Expr,Tuple}}, loop_scopes::Tuple)
-    if !(expr isa Expr)
-        return specs
-    end
-
-    if expr.head == :for && length(expr.args) == 2
-        scope = _parse_loop_scope(expr.args[1])
-        return _collect_choice_spec_exprs!(expr.args[2], specs, (loop_scopes..., scope))
-    end
-
-    if expr.head == :call && !isempty(expr.args) && expr.args[1] === :~
-        push!(specs, (expr, loop_scopes, nothing))
-        return specs
-    end
-
-    for arg in expr.args
-        _collect_choice_spec_exprs!(arg, specs, loop_scopes)
-    end
-
-    return specs
-end
-
 function _collect_plan_nodes!(expr, nodes::Vector{Tuple}, loop_scopes::Tuple=())
     if !(expr isa Expr)
         return nodes
@@ -419,8 +374,8 @@ function _collect_plan_nodes!(expr, nodes::Vector{Tuple}, loop_scopes::Tuple=())
         if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :~
             binding_override = lhs isa Symbol ? lhs : nothing
             push!(nodes, (:choice, rhs, loop_scopes, binding_override))
-        elseif lhs isa Symbol && isempty(loop_scopes)
-            push!(nodes, (:deterministic, lhs, rhs))
+        elseif lhs isa Symbol
+            push!(nodes, (:deterministic, lhs, rhs, loop_scopes))
         end
         return nodes
     end
@@ -463,9 +418,12 @@ function _execution_plan_steps_expr(plan_nodes, slot_lookup)
                 $slot_expr,
             )))
         elseif node[1] === :deterministic
+            scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, node[4])...)
             push!(step_exprs, :($(_qualify(:DeterministicPlanStep))(
                 $(QuoteNode(node[2])),
+                nothing,
                 $(QuoteNode(node[3])),
+                $scopes_expr,
             )))
         end
     end

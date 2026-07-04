@@ -602,7 +602,7 @@ function _concrete_backend_address_parts(env::PlanEnvironment, parts::Tuple)
 end
 
 function _concrete_address(env::PlanEnvironment, address::BackendAddressSpec)
-    return _concrete_backend_address_parts(env, address.parts)
+    return _normalize_concrete_address(_concrete_backend_address_parts(env, address.parts))
 end
 
 _concrete_backend_address_parts(env::BatchedPlanEnvironment, ::Tuple{}, batch_index::Int) = ()
@@ -618,7 +618,7 @@ function _concrete_backend_address_parts(env::BatchedPlanEnvironment, parts::Tup
 end
 
 function _concrete_address(env::BatchedPlanEnvironment, address::BackendAddressSpec, batch_index::Int)
-    return _concrete_backend_address_parts(env, address.parts, batch_index)
+    return _normalize_concrete_address(_concrete_backend_address_parts(env, address.parts, batch_index))
 end
 
 _batched_backend_address_parts(env::BatchedPlanEnvironment, ::Tuple{}, depth::Int=1) = ()
@@ -639,8 +639,14 @@ end
 _concrete_batched_address(::Tuple{}, batch_index::Int) = ()
 
 function _concrete_batched_address(parts::Tuple, batch_index::Int)
+    return _normalize_concrete_address(_concrete_batched_address_parts(parts, batch_index))
+end
+
+_concrete_batched_address_parts(::Tuple{}, batch_index::Int) = ()
+
+function _concrete_batched_address_parts(parts::Tuple, batch_index::Int)
     source = first(parts)
     head = source isa AbstractVector ? source[batch_index] : source
-    return (head, _concrete_batched_address(Base.tail(parts), batch_index)...)
+    return (head, _concrete_batched_address_parts(Base.tail(parts), batch_index)...)
 end
 

@@ -48,6 +48,16 @@ function normalize_address(address::Tuple)
     return flattened
 end
 
+# Concrete addresses assembled from plan specs are already flat unless a
+# dynamic part evaluated to a nested Pair or Tuple at runtime.
+function _needs_address_normalization(address::Tuple)
+    return any(part -> part isa Pair || part isa Tuple || part isa QuoteNode, address)
+end
+
+function _normalize_concrete_address(address::Tuple)
+    return _needs_address_normalization(address) ? normalize_address(address) : address
+end
+
 function _pushchoice!(cm::ChoiceMap, entry::Pair)
     return _pushchoice!(cm, entry.first, entry.second)
 end

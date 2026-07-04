@@ -335,7 +335,7 @@ function _concrete_compiled_address_parts(env::PlanEnvironment, parts::Tuple)
 end
 
 function _concrete_address(env::PlanEnvironment, address::CompiledAddressSpec)
-    return _concrete_compiled_address_parts(env, address.parts)
+    return _normalize_concrete_address(_concrete_compiled_address_parts(env, address.parts))
 end
 
 function _distribution_from_spec(model::TeaModel, env::PlanEnvironment, rhs::DistributionSpec)

@@ -84,7 +84,7 @@ function generate(model::TeaModel, args::Tuple=(), constraints::ChoiceMap=choice
 end
 
 function assess(model::TeaModel, args::Tuple=(), constraints::ChoiceMap=choicemap(); rng::AbstractRNG=Random.default_rng())
-    _, log_weight = generate(model, args, constraints; rng=rng)
+    _, log_weight = _run_model(model, args, constraints; rng=rng, require_all_choices_scored=true)
     return log_weight
 end
 

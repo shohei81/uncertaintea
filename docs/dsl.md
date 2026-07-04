@@ -148,6 +148,8 @@ The initial static mode should accept:
 - explicit addresses like `{:x}`
 - hierarchical addresses like `{:layer => 1 => :weight}`
 - repeated addresses generated from static loops, such as `{:y => i}`
+- tuple addresses such as `{(:y, i)}`, which flatten to the same normalized
+  parts as `{:y => i}`
 
 The address language should lower into a normalized `AddressSpec` rather than a
 runtime dictionary key scheme.
@@ -174,6 +176,9 @@ The backend should then provide:
 - `assess(spec_or_model, args, constraints)`
 - `logjoint(spec, unconstrained_params, constraints, args)`
 - `replay(spec, unconstrained_params, args)`
+
+`assess` requires a complete choicemap covering every choice in the model and
+returns the full log density; it throws if any choice is missing.
 
 ## Distribution Interface
 
