@@ -9,6 +9,7 @@ function _advance_batched_nuts_subtree_cohort!(
     fill!(access.copy_left, false)
     fill!(access.copy_right, false)
     fill!(access.select_proposal, false)
+    fill!(access.turning, false)
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] || continue
         tree_workspace = workspace.column_tree_workspaces[chain_index]
@@ -58,6 +59,29 @@ function _advance_batched_nuts_subtree_cohort!(
             access.proposal_energy_error[chain_index] = leaf.delta_energy
         end
         access.log_weight[chain_index] = leaf.combined_log_weight
+
+        # Generalized (dyadic) U-turn: the new leaf lives in tree_workspace.current
+        # (just copied from next). Even leaves store a checkpoint; odd leaves test
+        # every dyadic block ending here against its start checkpoint.
+        leaf_index = workspace.subtree_integration_steps[chain_index] - 1
+        if iseven(leaf_index)
+            _store_tree_checkpoint!(
+                tree_workspace.checkpoint_positions,
+                tree_workspace.checkpoint_momenta,
+                leaf_index,
+                tree_workspace.current.position,
+                tree_workspace.current.momentum,
+            )
+        elseif _dyadic_turning(
+            tree_workspace.checkpoint_positions,
+            tree_workspace.checkpoint_momenta,
+            leaf_index,
+            tree_workspace.current.position,
+            tree_workspace.current.momentum,
+            workspace.control.step_direction[chain_index],
+        )
+            access.turning[chain_index] = true
+        end
     end
 
     _copy_masked_nuts_buffers!(
@@ -100,14 +124,9 @@ function _advance_batched_nuts_subtree_cohort!(
         access.select_proposal,
     )
 
-    _batched_is_turning!(
-        access.turning,
-        access.left_position,
-        access.right_position,
-        access.left_momentum,
-        access.right_momentum,
-        workspace.subtree_active,
-    )
+    # Subtree-level turning is now decided per-particle by the dyadic checkpoint
+    # scheme inside the loop above (access.turning); the merge-level whole-
+    # trajectory U-turn check lives in _merge_batched_nuts_subtree_cohort!.
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] =
             workspace.subtree_active[chain_index] && !access.turning[chain_index]

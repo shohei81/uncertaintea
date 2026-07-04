@@ -256,6 +256,8 @@ function _expand_tempered_nuts_depth_cohort!(
     subtree_proposal_energy_error = cohort_workspace.subtree_proposal_energy_error
     subtree_turning = cohort_workspace.subtree_turning
     subtree_divergent = cohort_workspace.subtree_divergent
+    checkpoint_positions = cohort_workspace.checkpoint_positions
+    checkpoint_momenta = cohort_workspace.checkpoint_momenta
 
     for _ in 1:workspace.scheduler.remaining_steps
         any(subtree_active) || break
@@ -333,12 +335,29 @@ function _expand_tempered_nuts_depth_cohort!(
                 subtree_proposal_energy_error[particle_index] = leaf.delta_energy
             end
             subtree_log_weight[particle_index] = leaf.combined_log_weight
-            subtree_turning[particle_index] = _is_turning(
-                view(left_position, :, particle_index),
-                view(right_position, :, particle_index),
-                view(left_momentum, :, particle_index),
-                view(right_momentum, :, particle_index),
-            )
+
+            # Generalized (dyadic) U-turn: the new leaf lives in next_position /
+            # next_momentum. Even leaves store a checkpoint; odd leaves test every
+            # dyadic block ending here against its start checkpoint.
+            leaf_index = subtree_integration_steps[particle_index] - 1
+            if iseven(leaf_index)
+                _store_tree_checkpoint!(
+                    view(checkpoint_positions, :, :, particle_index),
+                    view(checkpoint_momenta, :, :, particle_index),
+                    leaf_index,
+                    view(next_position, :, particle_index),
+                    view(next_momentum, :, particle_index),
+                )
+            else
+                subtree_turning[particle_index] = _dyadic_turning(
+                    view(checkpoint_positions, :, :, particle_index),
+                    view(checkpoint_momenta, :, :, particle_index),
+                    leaf_index,
+                    view(next_position, :, particle_index),
+                    view(next_momentum, :, particle_index),
+                    directions[particle_index],
+                )
+            end
             subtree_active[particle_index] = !subtree_turning[particle_index]
         end
 
@@ -639,7 +658,7 @@ function _batched_nuts_move!(
     inverse_mass_matrix::AbstractVector,
     rng::AbstractRNG,
 )
-    workspace = TemperedNUTSMoveWorkspace(model, particles, args, constraints)
+    workspace = TemperedNUTSMoveWorkspace(model, particles, args, constraints, max_tree_depth)
     return _batched_nuts_move!(
         workspace,
         particles,

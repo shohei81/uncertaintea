@@ -155,7 +155,7 @@ function batched_smc(
     ancestor_history = Vector{Vector{Int}}()
     nuts_move_workspace =
         move_kernel === :nuts && move_steps > 0 ?
-        TemperedNUTSMoveWorkspace(model, particles, args, constraints) :
+        TemperedNUTSMoveWorkspace(model, particles, args, constraints, move_max_tree_depth) :
         nothing
 
     for stage_index in 1:max_stages

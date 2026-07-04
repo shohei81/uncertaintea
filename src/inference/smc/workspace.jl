@@ -39,9 +39,16 @@ mutable struct TemperedNUTSCohortWorkspace
     subtree_proposal_energy_error::Vector{Float64}
     subtree_turning::BitVector
     subtree_divergent::BitVector
+    checkpoint_positions::Array{Float64,3}
+    checkpoint_momenta::Array{Float64,3}
 end
 
-function TemperedNUTSCohortWorkspace(parameter_total::Int, num_particles::Int)
+function TemperedNUTSCohortWorkspace(
+    parameter_total::Int,
+    num_particles::Int,
+    max_tree_depth::Int=1,
+)
+    checkpoint_slots = max(max_tree_depth + 1, 1)
     return TemperedNUTSCohortWorkspace(
         Matrix{Float64}(undef, parameter_total, num_particles),
         Matrix{Float64}(undef, parameter_total, num_particles),
@@ -76,6 +83,8 @@ function TemperedNUTSCohortWorkspace(parameter_total::Int, num_particles::Int)
         fill(Inf, num_particles),
         falses(num_particles),
         falses(num_particles),
+        zeros(Float64, parameter_total, checkpoint_slots, num_particles),
+        zeros(Float64, parameter_total, checkpoint_slots, num_particles),
     )
 end
 
@@ -151,6 +160,7 @@ function TemperedNUTSMoveWorkspace(
     particles::AbstractMatrix,
     args=(),
     constraints=choicemap(),
+    max_tree_depth::Int=1,
 )
     parameter_total, num_particles = size(particles)
     cache = BatchedLogjointGradientCache(model, particles, args, constraints)
@@ -182,7 +192,7 @@ function TemperedNUTSMoveWorkspace(
         [NUTSContinuationState(parameter_total) for _ in 1:num_particles],
         TemperedNUTSCohortControlState(num_particles),
         TemperedNUTSSchedulerState(num_particles),
-        TemperedNUTSCohortWorkspace(parameter_total, num_particles),
+        TemperedNUTSCohortWorkspace(parameter_total, num_particles, max_tree_depth),
     )
 end
 

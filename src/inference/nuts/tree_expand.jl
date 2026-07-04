@@ -53,6 +53,54 @@ struct _NUTSSubtreeMerge
     select_proposal::Bool
 end
 
+# Generalized (dyadic) U-turn checkpoint math, shared by the scalar
+# `_build_nuts_subtree` and both batched cohort expand loops. `leaf_index` is
+# the 0-based index of the leaf just produced within the current subtree
+# (`completed-steps-in-subtree - 1`). Checkpoint columns are indexed by
+# `count_ones(block_start) + 1`; callers pass per-particle checkpoint views.
+
+# Store the (position, momentum) of an even leaf into its checkpoint slot.
+# Caller must ensure `iseven(leaf_index)`. The slot is `count_ones(leaf_index)+1`.
+function _store_tree_checkpoint!(
+    checkpoint_positions::AbstractMatrix,
+    checkpoint_momenta::AbstractMatrix,
+    leaf_index::Int,
+    position::AbstractVector,
+    momentum::AbstractVector,
+)
+    slot = count_ones(leaf_index) + 1
+    copyto!(view(checkpoint_positions, :, slot), position)
+    copyto!(view(checkpoint_momenta, :, slot), momentum)
+    return nothing
+end
+
+# Odd-leaf dyadic U-turn test: for each dyadic block ending at `leaf_index`,
+# compare the block's start checkpoint against the current endpoint. `direction`
+# selects the argument orientation (>0 forward, <0 backward). Returns true as
+# soon as any block turns. Caller must ensure `isodd(leaf_index)`.
+function _dyadic_turning(
+    checkpoint_positions::AbstractMatrix,
+    checkpoint_momenta::AbstractMatrix,
+    leaf_index::Int,
+    position::AbstractVector,
+    momentum::AbstractVector,
+    direction::Int,
+)
+    for k in 1:trailing_ones(leaf_index)
+        block_start = leaf_index - (1 << k) + 1
+        slot = count_ones(block_start) + 1
+        ckpt_position = view(checkpoint_positions, :, slot)
+        ckpt_momentum = view(checkpoint_momenta, :, slot)
+        turned = if direction > 0
+            _is_turning(ckpt_position, position, ckpt_momentum, momentum)
+        else
+            _is_turning(position, ckpt_position, momentum, ckpt_momentum)
+        end
+        turned && return true
+    end
+    return false
+end
+
 # Per-particle subtree-into-continuation merge: combined log weight and the
 # proposal swap decision (one rand draw, consumed only when the subtree log
 # weight is finite).

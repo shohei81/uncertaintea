@@ -192,3 +192,93 @@
     dyadic_depth_values = treedepths(dyadic_depth_chain)
     @test all(isfinite, dyadic_depth_chain.unconstrained_samples)
     @test (sum(dyadic_depth_values) / length(dyadic_depth_values)) <= 5
+
+    # dyadicb_: batched (cohort) dyadic U-turn coverage. The scalar dyadic
+    # promotion is validated by the grid test above (unchanged), which now
+    # exercises the shared _store_tree_checkpoint! / _dyadic_turning helpers via
+    # _build_nuts_subtree.
+
+    # Direct unit test of the shared helpers against _is_turning. leaf_index 0
+    # (even) stores checkpoint slot count_ones(0)+1 = 1; leaf_index 1 (odd)
+    # tests block_start 0 (slot 1) versus the current endpoint.
+    dyadicb_ckpt_pos = zeros(2, 3)
+    dyadicb_ckpt_mom = zeros(2, 3)
+    UncertainTea._store_tree_checkpoint!(
+        dyadicb_ckpt_pos,
+        dyadicb_ckpt_mom,
+        0,
+        [0.0, 0.0],
+        [1.0, 0.0],
+    )
+    @test dyadicb_ckpt_pos[:, 1] == [0.0, 0.0]
+    @test dyadicb_ckpt_mom[:, 1] == [1.0, 0.0]
+    # Backward endpoint relative to the checkpoint: a U-turn under direction > 0.
+    @test UncertainTea._dyadic_turning(
+        dyadicb_ckpt_pos,
+        dyadicb_ckpt_mom,
+        1,
+        [-1.0, 0.0],
+        [1.0, 0.0],
+        1,
+    ) == UncertainTea._is_turning([0.0, 0.0], [-1.0, 0.0], [1.0, 0.0], [1.0, 0.0])
+    @test UncertainTea._dyadic_turning(
+        dyadicb_ckpt_pos,
+        dyadicb_ckpt_mom,
+        1,
+        [-1.0, 0.0],
+        [1.0, 0.0],
+        1,
+    )
+    # Forward-progressing endpoint: no U-turn.
+    @test !UncertainTea._dyadic_turning(
+        dyadicb_ckpt_pos,
+        dyadicb_ckpt_mom,
+        1,
+        [1.0, 0.0],
+        [1.0, 0.0],
+        1,
+    )
+
+    @tea static function dyadicb_model()
+        x ~ normal(0.0f0, 1.0f0)
+        y ~ normal(0.0f0, 2.0f0)
+        return x
+    end
+
+    dyadicb_max_tree_depth = 6
+    dyadicb_batched = batched_nuts(
+        dyadicb_model,
+        (),
+        choicemap();
+        num_chains=2,
+        num_samples=120,
+        num_warmup=120,
+        step_size=0.35,
+        max_tree_depth=dyadicb_max_tree_depth,
+        rng=MersenneTwister(20240705),
+    )
+    for dyadicb_chain in dyadicb_batched
+        @test all(1 <= depth <= dyadicb_chain.max_tree_depth for depth in treedepths(dyadicb_chain))
+        @test all(isfinite, dyadicb_chain.unconstrained_samples)
+    end
+    dyadicb_rhat = rhat(dyadicb_batched)
+    @test all(isfinite, dyadicb_rhat)
+    @test all(0.9 <= value <= 1.3 for value in dyadicb_rhat)
+
+    dyadicb_smc = batched_smc(
+        dyadicb_model,
+        (),
+        choicemap();
+        num_particles=24,
+        proposal_loc=Float64[0.0, 0.0],
+        proposal_log_scale=log.([1.0, 2.0]),
+        target_ess_ratio=0.9,
+        move_kernel=:nuts,
+        move_steps=2,
+        move_max_tree_depth=4,
+        move_step_size=0.3,
+        rng=MersenneTwister(20240706),
+    )
+    @test dyadicb_smc isa SMCResult
+    @test isfinite(dyadicb_smc.importance.log_evidence_estimate)
+    @test all(0.0 <= stage.move_acceptance_rate <= 1.0 for stage in dyadicb_smc.stages)

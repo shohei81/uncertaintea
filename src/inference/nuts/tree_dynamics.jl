@@ -66,37 +66,23 @@ function _build_nuts_subtree(
 
         leaf_index = summary.integration_steps - 1
         if iseven(leaf_index)
-            slot = count_ones(leaf_index) + 1
-            copyto!(view(checkpoint_positions, :, slot), current.position)
-            copyto!(view(checkpoint_momenta, :, slot), current.momentum)
-        else
-            turned = false
-            for k in 1:trailing_ones(leaf_index)
-                block_start = leaf_index - (1 << k) + 1
-                slot = count_ones(block_start) + 1
-                ckpt_position = view(checkpoint_positions, :, slot)
-                ckpt_momentum = view(checkpoint_momenta, :, slot)
-                if direction > 0
-                    turned = _is_turning(
-                        ckpt_position,
-                        current.position,
-                        ckpt_momentum,
-                        current.momentum,
-                    )
-                else
-                    turned = _is_turning(
-                        current.position,
-                        ckpt_position,
-                        current.momentum,
-                        ckpt_momentum,
-                    )
-                end
-                turned && break
-            end
-            if turned
-                summary.turning = true
-                break
-            end
+            _store_tree_checkpoint!(
+                checkpoint_positions,
+                checkpoint_momenta,
+                leaf_index,
+                current.position,
+                current.momentum,
+            )
+        elseif _dyadic_turning(
+            checkpoint_positions,
+            checkpoint_momenta,
+            leaf_index,
+            current.position,
+            current.momentum,
+            direction,
+        )
+            summary.turning = true
+            break
         end
     end
 
