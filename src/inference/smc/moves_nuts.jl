@@ -310,30 +310,29 @@ function _expand_tempered_nuts_depth_cohort!(
                 view(next_momentum, :, particle_index),
                 inverse_mass_matrix,
             )
-            delta_energy = proposed_energy - initial_hamiltonian[particle_index]
-            if !isfinite(delta_energy) || delta_energy > max_delta_energy
+            leaf = _advance_tree_leaf(
+                proposed_energy,
+                initial_hamiltonian[particle_index],
+                max_delta_energy,
+                subtree_log_weight[particle_index],
+                rng,
+            )
+            if leaf.divergent
                 subtree_divergent[particle_index] = true
                 subtree_active[particle_index] = false
                 continue
             end
-            accept_prob = min(1.0, exp(min(0.0, -delta_energy)))
-            subtree_accept_stat_sum[particle_index] += accept_prob
+            subtree_accept_stat_sum[particle_index] += leaf.accept_prob
             subtree_accept_stat_count[particle_index] += 1
-            candidate_log_weight = -proposed_energy
-            combined_log_weight = _logaddexp(
-                subtree_log_weight[particle_index],
-                candidate_log_weight,
-            )
-            if !isfinite(subtree_log_weight[particle_index]) ||
-               log(rand(rng)) < candidate_log_weight - combined_log_weight
+            if leaf.select_proposal
                 copyto!(view(proposal_position, :, particle_index), view(next_position, :, particle_index))
                 copyto!(view(proposal_momentum, :, particle_index), view(next_momentum, :, particle_index))
                 copyto!(view(proposal_gradient, :, particle_index), view(next_gradient, :, particle_index))
                 proposal_logjoint[particle_index] = next_logjoint[particle_index]
                 subtree_proposal_energy[particle_index] = proposed_energy
-                subtree_proposal_energy_error[particle_index] = delta_energy
+                subtree_proposal_energy_error[particle_index] = leaf.delta_energy
             end
-            subtree_log_weight[particle_index] = combined_log_weight
+            subtree_log_weight[particle_index] = leaf.combined_log_weight
             subtree_turning[particle_index] = _is_turning(
                 view(left_position, :, particle_index),
                 view(right_position, :, particle_index),
@@ -409,30 +408,28 @@ function _merge_tempered_nuts_depth_cohort!(
                 particle_index,
             )
         end
-        combined_log_weight = continuation.log_weight
-        if isfinite(subtree_log_weight[particle_index])
-            combined_log_weight = _logaddexp(
-                continuation.log_weight,
-                subtree_log_weight[particle_index],
+        merge = _merge_subtree_stats(
+            continuation.log_weight,
+            subtree_log_weight[particle_index],
+            rng,
+        )
+        if merge.select_proposal
+            _copy_nuts_column_to_state!(
+                continuation.proposal,
+                proposal_position,
+                proposal_momentum,
+                proposal_logjoint,
+                proposal_gradient,
+                particle_index,
             )
-            if log(rand(rng)) < subtree_log_weight[particle_index] - combined_log_weight
-                _copy_nuts_column_to_state!(
-                    continuation.proposal,
-                    proposal_position,
-                    proposal_momentum,
-                    proposal_logjoint,
-                    proposal_gradient,
-                    particle_index,
-                )
-                continuation.proposal_energy = subtree_proposal_energy[particle_index]
-                continuation.proposal_energy_error = subtree_proposal_energy_error[particle_index]
-            end
+            continuation.proposal_energy = subtree_proposal_energy[particle_index]
+            continuation.proposal_energy_error = subtree_proposal_energy_error[particle_index]
         end
         continuation.integration_steps += subtree_integration_steps[particle_index]
         continuation.accept_stat_sum += subtree_accept_stat_sum[particle_index]
         continuation.accept_stat_count += subtree_accept_stat_count[particle_index]
         if isfinite(subtree_log_weight[particle_index])
-            continuation.log_weight = combined_log_weight
+            continuation.log_weight = merge.combined_log_weight
         end
         continuation.divergent = subtree_divergent[particle_index]
         _merge_nuts_continuation_turning!(continuation, subtree_turning[particle_index])

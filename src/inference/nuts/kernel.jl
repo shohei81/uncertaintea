@@ -32,31 +32,32 @@ function _advance_batched_nuts_subtree_cohort!(
             access.right_logjoint[chain_index] = access.current_logjoint[chain_index]
         end
 
-        delta_energy = access.proposed_energy[chain_index] - access.current_energy[chain_index]
-        access.delta_energy[chain_index] = delta_energy
-        if !isfinite(delta_energy) || delta_energy > max_delta_energy
+        leaf = _advance_tree_leaf(
+            access.proposed_energy[chain_index],
+            access.current_energy[chain_index],
+            max_delta_energy,
+            access.log_weight[chain_index],
+            rng,
+        )
+        access.delta_energy[chain_index] = leaf.delta_energy
+        if leaf.divergent
             workspace.subtree_divergent[chain_index] = true
             workspace.subtree_active[chain_index] = false
             continue
         end
 
-        access.accept_prob[chain_index] = min(1.0, exp(min(0.0, -delta_energy)))
-        workspace.subtree_accept_stat_sum[chain_index] += access.accept_prob[chain_index]
+        access.accept_prob[chain_index] = leaf.accept_prob
+        workspace.subtree_accept_stat_sum[chain_index] += leaf.accept_prob
         workspace.subtree_accept_stat_count[chain_index] += 1
-        access.candidate_log_weight[chain_index] = -access.proposed_energy[chain_index]
-        access.combined_log_weight[chain_index] = _logaddexp(
-            access.log_weight[chain_index],
-            access.candidate_log_weight[chain_index],
-        )
-        if !isfinite(access.log_weight[chain_index]) || log(rand(rng)) <
-            access.candidate_log_weight[chain_index] -
-            access.combined_log_weight[chain_index]
+        access.candidate_log_weight[chain_index] = leaf.candidate_log_weight
+        access.combined_log_weight[chain_index] = leaf.combined_log_weight
+        if leaf.select_proposal
             access.select_proposal[chain_index] = true
             access.proposal_logjoint[chain_index] = access.current_logjoint[chain_index]
             access.proposal_energy[chain_index] = access.proposed_energy[chain_index]
-            access.proposal_energy_error[chain_index] = delta_energy
+            access.proposal_energy_error[chain_index] = leaf.delta_energy
         end
-        access.log_weight[chain_index] = access.combined_log_weight[chain_index]
+        access.log_weight[chain_index] = leaf.combined_log_weight
     end
 
     _copy_masked_nuts_buffers!(
@@ -185,30 +186,23 @@ function _merge_batched_nuts_subtree_cohort!(
 
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] || continue
-        access.select_proposal[chain_index] = false
-        access.candidate_log_weight[chain_index] = -Inf
-        access.combined_log_weight[chain_index] =
-            access.continuation_log_weight[chain_index]
-        if isfinite(workspace.subtree_log_weight[chain_index])
-            access.candidate_log_weight[chain_index] =
-                workspace.subtree_log_weight[chain_index]
-            access.combined_log_weight[chain_index] = _logaddexp(
-                access.continuation_log_weight[chain_index],
-                access.candidate_log_weight[chain_index],
+        merge = _merge_subtree_stats(
+            access.continuation_log_weight[chain_index],
+            workspace.subtree_log_weight[chain_index],
+            rng,
+        )
+        access.select_proposal[chain_index] = merge.select_proposal
+        access.candidate_log_weight[chain_index] = merge.candidate_log_weight
+        access.combined_log_weight[chain_index] = merge.combined_log_weight
+        if merge.select_proposal
+            access.proposal_energy[chain_index] = _hamiltonian(
+                access.tree_proposal_logjoint[chain_index],
+                view(access.tree_proposal_momentum, :, chain_index),
+                inverse_mass_matrix,
             )
-            access.select_proposal[chain_index] =
-                log(rand(rng)) < access.candidate_log_weight[chain_index] -
-                access.combined_log_weight[chain_index]
-            if access.select_proposal[chain_index]
-                access.proposal_energy[chain_index] = _hamiltonian(
-                    access.tree_proposal_logjoint[chain_index],
-                    view(access.tree_proposal_momentum, :, chain_index),
-                    inverse_mass_matrix,
-                )
-                access.proposal_energy_error[chain_index] =
-                    access.proposal_energy[chain_index] -
-                    access.current_energy[chain_index]
-            end
+            access.proposal_energy_error[chain_index] =
+                access.proposal_energy[chain_index] -
+                access.current_energy[chain_index]
         end
         _merge_batched_subtree_summary!(workspace, chain_index)
     end
