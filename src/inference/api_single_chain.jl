@@ -292,17 +292,15 @@ function nuts(
     mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
 
     sample_index = 0
+    nuts_target = ModelDensityTarget(model, args, constraints, gradient_cache)
     for iteration in 1:total_iterations
         proposal, accept_stat, tree_depth, integration_steps_used, proposal_energy, energy_error, divergent_step, moved_step =
             _nuts_proposal(
-                model,
+                nuts_target,
                 position,
                 current_logjoint,
                 current_gradient,
-                gradient_cache,
                 inverse_mass_matrix,
-                args,
-                constraints,
                 nuts_step_size,
                 max_tree_depth,
                 nuts_max_delta_energy,

@@ -1,11 +1,8 @@
 function _build_nuts_subtree(
     subtree_workspace::NUTSSubtreeWorkspace,
-    model::TeaModel,
+    target::AbstractDensityTarget,
     start_state::NUTSState,
-    gradient_cache::LogjointGradientCache,
     inverse_mass_matrix::Vector{Float64},
-    args::Tuple,
-    constraints::ChoiceMap,
     step_size::Float64,
     direction::Int,
     depth::Int,
@@ -26,16 +23,7 @@ function _build_nuts_subtree(
     _reset_nuts_subtree_summary!(summary)
 
     for _ in 1:(1 << depth)
-        if !_leapfrog_step!(
-            next,
-            model,
-            current,
-            gradient_cache,
-            inverse_mass_matrix,
-            args,
-            constraints,
-            direction * step_size,
-        )
+        if !leapfrog_step!(next, target, current, inverse_mass_matrix, direction * step_size)
             summary.divergent = true
             break
         end
@@ -88,13 +76,10 @@ end
 
 function _continue_nuts_proposal!(
     continuation::NUTSContinuationState,
-    model::TeaModel,
+    target::AbstractDensityTarget,
     initial_hamiltonian::Float64,
-    gradient_cache::LogjointGradientCache,
     tree_workspace::NUTSSubtreeWorkspace,
     inverse_mass_matrix::Vector{Float64},
-    args::Tuple,
-    constraints::ChoiceMap,
     step_size::Float64,
     max_tree_depth::Int,
     max_delta_energy::Float64,
@@ -109,12 +94,9 @@ function _continue_nuts_proposal!(
         direction = _sample_nuts_direction(rng)
         subtree = _build_nuts_subtree(
             tree_workspace,
-            model,
+            target,
             _nuts_subtree_start_state(continuation, direction),
-            gradient_cache,
             inverse_mass_matrix,
-            args,
-            constraints,
             step_size,
             direction,
             continuation.tree_depth,
@@ -162,13 +144,10 @@ end
 function _continue_batched_nuts_proposal!(
     workspace::BatchedNUTSWorkspace,
     chain_index::Int,
-    model::TeaModel,
+    target::AbstractDensityTarget,
     initial_hamiltonian::Float64,
-    gradient_cache::LogjointGradientCache,
     tree_workspace::NUTSSubtreeWorkspace,
     inverse_mass_matrix::Vector{Float64},
-    args::Tuple,
-    constraints::ChoiceMap,
     step_size::Float64,
     max_tree_depth::Int,
     max_delta_energy::Float64,
@@ -184,12 +163,9 @@ function _continue_batched_nuts_proposal!(
         direction = _sample_nuts_direction(rng)
         subtree = _build_nuts_subtree(
             tree_workspace,
-            model,
+            target,
             _nuts_subtree_start_state(continuation, direction),
-            gradient_cache,
             inverse_mass_matrix,
-            args,
-            constraints,
             step_size,
             direction,
             workspace.control.tree_depths[chain_index],
@@ -288,14 +264,11 @@ function _continue_batched_nuts_batched_subtree!(
 end
 
 function _nuts_proposal(
-    model::TeaModel,
+    target::AbstractDensityTarget,
     position::AbstractVector{Float64},
     current_logjoint::Float64,
     current_gradient::AbstractVector{Float64},
-    gradient_cache::LogjointGradientCache,
     inverse_mass_matrix::Vector{Float64},
-    args::Tuple,
-    constraints::ChoiceMap,
     step_size::Float64,
     max_tree_depth::Int,
     max_delta_energy::Float64,
@@ -313,14 +286,11 @@ function _nuts_proposal(
     )
     initial_hamiltonian = _hamiltonian(initial_state.logjoint, initial_state.momentum, inverse_mass_matrix)
     direction = _sample_nuts_direction(rng)
-    first_step_valid = _leapfrog_step!(
+    first_step_valid = leapfrog_step!(
         tree_workspace.next,
-        model,
+        target,
         initial_state,
-        gradient_cache,
         inverse_mass_matrix,
-        args,
-        constraints,
         direction * step_size,
     )
     _initialize_nuts_first_trajectory!(
@@ -335,13 +305,10 @@ function _nuts_proposal(
     )
     _continue_nuts_proposal!(
         continuation,
-        model,
+        target,
         initial_hamiltonian,
-        gradient_cache,
         tree_workspace,
         inverse_mass_matrix,
-        args,
-        constraints,
         step_size,
         max_tree_depth,
         max_delta_energy,
@@ -396,16 +363,19 @@ function _batched_nuts_proposals!(
     )
     end
     for chain_index in 1:num_chains
+        target = ModelDensityTarget(
+            model,
+            _batched_args(args, chain_index),
+            _batched_constraints(constraints, chain_index),
+            workspace.column_gradient_caches[chain_index],
+        )
         _continue_batched_nuts_proposal!(
             workspace,
             chain_index,
-            model,
+            target,
             workspace.current_energy[chain_index],
-            workspace.column_gradient_caches[chain_index],
             workspace.column_tree_workspaces[chain_index],
             inverse_mass_matrix,
-            _batched_args(args, chain_index),
-            _batched_constraints(constraints, chain_index),
             step_size,
             max_tree_depth,
             max_delta_energy,

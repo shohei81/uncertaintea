@@ -124,3 +124,77 @@
         @test column_dest.momentum[1] ≈ integ_dest_momentum[1, index] atol=1e-10
         @test column_dest.logjoint ≈ integ_dest_logjoint[index] atol=1e-10
     end
+
+    @testset "scalar NUTS proposal target equivalence" begin
+        treetgt_constraints = choicemap((:y, 0.4f0))
+        treetgt_position = [0.3]
+        treetgt_args = ()
+        treetgt_cache_model = UncertainTea._logjoint_gradient_cache(
+            integrator_model,
+            treetgt_position,
+            treetgt_args,
+            treetgt_constraints,
+        )
+        treetgt_cache_tempered = UncertainTea._logjoint_gradient_cache(
+            integrator_model,
+            treetgt_position,
+            treetgt_args,
+            treetgt_constraints,
+        )
+        treetgt_logjoint = UncertainTea.logjoint_unconstrained(
+            integrator_model,
+            treetgt_position,
+            treetgt_args,
+            treetgt_constraints,
+        )
+        treetgt_gradient =
+            copy(UncertainTea._logjoint_gradient!(treetgt_cache_model, treetgt_position))
+        treetgt_imm = [1.0]
+
+        treetgt_model_target = UncertainTea.ModelDensityTarget(
+            integrator_model,
+            treetgt_args,
+            treetgt_constraints,
+            treetgt_cache_model,
+        )
+        treetgt_prop_model, _, _, _, _, _, _, treetgt_moved_model =
+            UncertainTea._nuts_proposal(
+                treetgt_model_target,
+                treetgt_position,
+                treetgt_logjoint,
+                treetgt_gradient,
+                treetgt_imm,
+                0.1,
+                5,
+                1000.0,
+                MersenneTwister(3105),
+            )
+
+        treetgt_tempered_target = UncertainTea.TemperedDensityTarget(
+            integrator_model,
+            treetgt_args,
+            treetgt_constraints,
+            treetgt_cache_tempered,
+            zeros(1),
+            zeros(1),
+            zeros(1),
+            zeros(1),
+            1.0,
+        )
+        treetgt_prop_tempered, _, _, _, _, _, _, treetgt_moved_tempered =
+            UncertainTea._nuts_proposal(
+                treetgt_tempered_target,
+                treetgt_position,
+                treetgt_logjoint,
+                treetgt_gradient,
+                treetgt_imm,
+                0.1,
+                5,
+                1000.0,
+                MersenneTwister(3105),
+            )
+
+        @test treetgt_prop_model.position == treetgt_prop_tempered.position
+        @test treetgt_prop_model.logjoint == treetgt_prop_tempered.logjoint
+        @test treetgt_moved_model == treetgt_moved_tempered
+    end

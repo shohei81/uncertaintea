@@ -270,20 +270,6 @@ function _logaddexp(x::Float64, y::Float64)
     return high + log1p(exp(min(x, y) - high))
 end
 
-function _leapfrog_step!(
-    destination::NUTSState,
-    model::TeaModel,
-    state::NUTSState,
-    gradient_cache::LogjointGradientCache,
-    inverse_mass_matrix::Vector{Float64},
-    args::Tuple,
-    constraints::ChoiceMap,
-    step_size::Float64,
-)
-    target = ModelDensityTarget(model, args, constraints, gradient_cache)
-    return leapfrog_step!(destination, target, state, inverse_mass_matrix, step_size)
-end
-
 function _is_turning(
     left_position::AbstractVector,
     right_position::AbstractVector,
