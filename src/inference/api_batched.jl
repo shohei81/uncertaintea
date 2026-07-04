@@ -75,8 +75,6 @@ function batched_nuts(
     nuts_target_accept = Float64(target_accept)
     nuts_max_delta_energy = Float64(max_delta_energy)
     inverse_mass_matrix = ones(num_params)
-    warmup_schedule = _warmup_schedule(num_warmup)
-    mass_window_index = 1
     step_size_workspace = nothing
     if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
         step_size_workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
@@ -94,16 +92,32 @@ function batched_nuts(
             rng,
         )
     end
-    dual_state = _dual_averaging_state(nuts_step_size, nuts_target_accept)
-    variance_state = _running_variance_state(
+    driver = WarmupDriver(
         num_params,
-        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
-            _warmup_window_length(warmup_schedule, mass_window_index),
+        num_warmup,
+        nuts_step_size,
+        nuts_target_accept;
+        adapt_step_size=adapt_step_size,
+        adapt_mass_matrix=adapt_mass_matrix,
+        mass_matrix_regularization=mass_matrix_regularization,
+        mass_matrix_min_samples=mass_matrix_min_samples,
     )
-    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
+    refind = BatchedStepSizeSearch(
+        step_size_workspace,
+        model,
+        position,
+        current_logjoint,
+        current_gradient,
+        batch_args,
+        batch_constraints,
+        nuts_max_delta_energy,
+        rng,
+    )
 
     sample_index = 0
     for iteration in 1:total_iterations
+        nuts_step_size = driver.step_size
+        inverse_mass_matrix = driver.inverse_mass_matrix
         _batched_nuts_proposals!(
             workspace,
             model,
@@ -128,83 +142,28 @@ function batched_nuts(
         end
 
         if iteration <= num_warmup
-            if adapt_step_size
-                nuts_step_size = _update_step_size!(
-                    dual_state,
-                    _mean_batched_adaptation_probability(workspace.accept_prob, workspace.control.divergent_step),
+            @inbounds for chain_index in 1:num_chains
+                workspace.mass_adaptation_weights[chain_index] = _mass_adaptation_weight(
+                    driver.variance_state,
+                    false,
+                    workspace.accept_prob[chain_index],
+                    workspace.control.divergent_step[chain_index],
                 )
             end
-
-            if adapt_mass_matrix &&
-               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
-               iteration > warmup_schedule.initial_buffer
-                @inbounds for chain_index in 1:num_chains
-                    workspace.mass_adaptation_weights[chain_index] = _mass_adaptation_weight(
-                        variance_state,
-                        false,
-                        workspace.accept_prob[chain_index],
-                        workspace.control.divergent_step[chain_index],
-                    )
-                end
-                _update_running_variance!(
-                    variance_state,
-                    position,
-                    workspace.mass_adaptation_weights,
-                )
-                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
-                    mass_updated = false
-                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                        mass_updated = true
-                    end
-                    push!(
-                        mass_adaptation_windows,
-                        _mass_adaptation_window_summary(
-                            warmup_schedule,
-                            mass_window_index,
-                            variance_state,
-                            inverse_mass_matrix,
-                            mass_updated,
-                        ),
-                    )
-                    mass_window_index += 1
-                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
-                        variance_state = _running_variance_state(
-                            num_params,
-                            _warmup_window_length(warmup_schedule, mass_window_index),
-                        )
-                    else
-                        variance_state = _running_variance_state(num_params)
-                    end
-                    if adapt_step_size && iteration < num_warmup
-                        if isnothing(step_size_workspace)
-                            step_size_workspace = BatchedHMCWorkspace(model, position, batch_args, batch_constraints, inverse_mass_matrix)
-                        end
-                        nuts_step_size = _find_reasonable_batched_step_size(
-                            step_size_workspace,
-                            model,
-                            position,
-                            current_logjoint,
-                            current_gradient,
-                            inverse_mass_matrix,
-                            batch_args,
-                            batch_constraints,
-                            nuts_step_size,
-                            nuts_max_delta_energy,
-                            rng,
-                        )
-                        dual_state = _dual_averaging_state(nuts_step_size, nuts_target_accept)
-                    end
-                end
-            end
-
+            accept_statistic = _mean_batched_adaptation_probability(
+                workspace.accept_prob,
+                workspace.control.divergent_step,
+            )
+            warmup_update!(
+                driver,
+                iteration,
+                accept_statistic,
+                position,
+                workspace.mass_adaptation_weights,
+                refind,
+            )
             if iteration == num_warmup
-                if adapt_step_size
-                    nuts_step_size = _final_step_size(dual_state)
-                end
-                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                end
+                warmup_finalize!(driver)
             end
         else
             sample_index += 1
@@ -231,7 +190,7 @@ function batched_nuts(
         end
     end
 
-    mass_matrix = 1 ./ inverse_mass_matrix
+    mass_matrix = 1 ./ driver.inverse_mass_matrix
     chains = Vector{HMCChain}(undef, num_chains)
     for chain_index in 1:num_chains
         chains[chain_index] = HMCChain(
@@ -247,14 +206,14 @@ function batched_nuts(
             vec(energy_errors[:, chain_index]),
             vec(accepted[:, chain_index]),
             vec(divergent[:, chain_index]),
-            nuts_step_size,
+            driver.step_size,
             copy(mass_matrix),
             0,
             max_tree_depth,
             vec(tree_depths[:, chain_index]),
             vec(integration_steps_values[:, chain_index]),
             nuts_target_accept,
-            copy(mass_adaptation_windows),
+            copy(driver.mass_adaptation_windows),
         )
     end
 
@@ -336,8 +295,6 @@ function batched_hmc(
     hmc_step_size = Float64(step_size)
     hmc_target_accept = Float64(target_accept)
     hmc_divergence_threshold = Float64(divergence_threshold)
-    warmup_schedule = _warmup_schedule(num_warmup)
-    mass_window_index = 1
     if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
         hmc_step_size = _find_reasonable_batched_step_size(
             workspace,
@@ -353,16 +310,32 @@ function batched_hmc(
             rng,
         )
     end
-    dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
-    variance_state = _running_variance_state(
+    driver = WarmupDriver(
         num_params,
-        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
-            _warmup_window_length(warmup_schedule, mass_window_index),
+        num_warmup,
+        hmc_step_size,
+        hmc_target_accept;
+        adapt_step_size=adapt_step_size,
+        adapt_mass_matrix=adapt_mass_matrix,
+        mass_matrix_regularization=mass_matrix_regularization,
+        mass_matrix_min_samples=mass_matrix_min_samples,
     )
-    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
+    refind = BatchedStepSizeSearch(
+        workspace,
+        model,
+        position,
+        current_logjoint,
+        current_gradient,
+        batch_args,
+        batch_constraints,
+        hmc_divergence_threshold,
+        rng,
+    )
 
     sample_index = 0
     for iteration in 1:total_iterations
+        hmc_step_size = driver.step_size
+        inverse_mass_matrix = driver.inverse_mass_matrix
         _update_sqrt_inverse_mass_matrix!(workspace.sqrt_inverse_mass_matrix, inverse_mass_matrix)
         _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
         proposal_position, proposal_momentum, proposed_logjoint, proposal_gradient, valid = _batched_leapfrog!(
@@ -421,79 +394,24 @@ function batched_hmc(
         end
 
         if iteration <= num_warmup
-            if adapt_step_size
-                hmc_step_size = _update_step_size!(
-                    dual_state,
-                    _mean_batched_adaptation_probability(accept_prob, divergent_step),
-                )
-            end
-
-            if adapt_mass_matrix &&
-               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
-               iteration > warmup_schedule.initial_buffer
-                _mass_adaptation_weights!(
-                    variance_state,
-                    workspace.mass_adaptation_weights,
-                    accepted_step,
-                    accept_prob,
-                    divergent_step,
-                )
-                _update_running_variance!(
-                    variance_state,
-                    position,
-                    workspace.mass_adaptation_weights,
-                )
-                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
-                    mass_updated = false
-                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                        mass_updated = true
-                    end
-                    push!(
-                        mass_adaptation_windows,
-                        _mass_adaptation_window_summary(
-                            warmup_schedule,
-                            mass_window_index,
-                            variance_state,
-                            inverse_mass_matrix,
-                            mass_updated,
-                        ),
-                    )
-                    mass_window_index += 1
-                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
-                        variance_state = _running_variance_state(
-                            num_params,
-                            _warmup_window_length(warmup_schedule, mass_window_index),
-                        )
-                    else
-                        variance_state = _running_variance_state(num_params)
-                    end
-                    if adapt_step_size && iteration < num_warmup
-                        hmc_step_size = _find_reasonable_batched_step_size(
-                            workspace,
-                            model,
-                            position,
-                            current_logjoint,
-                            current_gradient,
-                            inverse_mass_matrix,
-                            batch_args,
-                            batch_constraints,
-                            hmc_step_size,
-                            hmc_divergence_threshold,
-                            rng,
-                        )
-                        dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
-                    end
-                end
-            end
-
+            _mass_adaptation_weights!(
+                driver.variance_state,
+                workspace.mass_adaptation_weights,
+                accepted_step,
+                accept_prob,
+                divergent_step,
+            )
+            accept_statistic = _mean_batched_adaptation_probability(accept_prob, divergent_step)
+            warmup_update!(
+                driver,
+                iteration,
+                accept_statistic,
+                position,
+                workspace.mass_adaptation_weights,
+                refind,
+            )
             if iteration == num_warmup
-                if adapt_step_size
-                    hmc_step_size = _final_step_size(dual_state)
-                end
-                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                end
+                warmup_finalize!(driver)
             end
         end
 
@@ -521,7 +439,7 @@ function batched_hmc(
         end
     end
 
-    mass_matrix = 1 ./ inverse_mass_matrix
+    mass_matrix = 1 ./ driver.inverse_mass_matrix
     chains = Vector{HMCChain}(undef, num_chains)
     for chain_index in 1:num_chains
         chains[chain_index] = HMCChain(
@@ -537,14 +455,14 @@ function batched_hmc(
             vec(energy_errors[:, chain_index]),
             vec(accepted[:, chain_index]),
             vec(divergent[:, chain_index]),
-            hmc_step_size,
+            driver.step_size,
             copy(mass_matrix),
             num_leapfrog_steps,
             0,
             zeros(Int, num_samples),
             fill(num_leapfrog_steps, num_samples),
             hmc_target_accept,
-            copy(mass_adaptation_windows),
+            copy(driver.mass_adaptation_windows),
         )
     end
 

@@ -49,8 +49,6 @@ function hmc(
     hmc_target_accept = Float64(target_accept)
     hmc_divergence_threshold = Float64(divergence_threshold)
     inverse_mass_matrix = ones(num_params)
-    warmup_schedule = _warmup_schedule(num_warmup)
-    mass_window_index = 1
     if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
         hmc_step_size = _find_reasonable_step_size(
             model,
@@ -64,16 +62,22 @@ function hmc(
             rng,
         )
     end
-    dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
-    variance_state = _running_variance_state(
+    driver = WarmupDriver(
         num_params,
-        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
-            _warmup_window_length(warmup_schedule, mass_window_index),
+        num_warmup,
+        hmc_step_size,
+        hmc_target_accept;
+        adapt_step_size=adapt_step_size,
+        adapt_mass_matrix=adapt_mass_matrix,
+        mass_matrix_regularization=mass_matrix_regularization,
+        mass_matrix_min_samples=mass_matrix_min_samples,
     )
-    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
+    refind = ScalarStepSizeSearch(model, gradient_cache, args, constraints, rng, position, current_logjoint)
 
     sample_index = 0
     for iteration in 1:total_iterations
+        hmc_step_size = driver.step_size
+        inverse_mass_matrix = driver.inverse_mass_matrix
         momentum = _sample_momentum(rng, inverse_mass_matrix)
         proposal = _leapfrog(
             model,
@@ -113,67 +117,12 @@ function hmc(
         end
 
         if iteration <= num_warmup
-            if adapt_step_size
-                hmc_step_size = _update_step_size!(dual_state, accept_prob)
-            end
-
-            if adapt_mass_matrix &&
-               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
-               iteration > warmup_schedule.initial_buffer
-                _update_running_variance!(
-                    variance_state,
-                    position,
-                    _mass_adaptation_weight(variance_state, accepted_step, accept_prob, divergent_step),
-                )
-                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
-                    mass_updated = false
-                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                        mass_updated = true
-                    end
-                    push!(
-                        mass_adaptation_windows,
-                        _mass_adaptation_window_summary(
-                            warmup_schedule,
-                            mass_window_index,
-                            variance_state,
-                            inverse_mass_matrix,
-                            mass_updated,
-                        ),
-                    )
-                    mass_window_index += 1
-                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
-                        variance_state = _running_variance_state(
-                            num_params,
-                            _warmup_window_length(warmup_schedule, mass_window_index),
-                        )
-                    else
-                        variance_state = _running_variance_state(num_params)
-                    end
-                    if adapt_step_size && iteration < num_warmup
-                        hmc_step_size = _find_reasonable_step_size(
-                            model,
-                            position,
-                            current_logjoint,
-                            gradient_cache,
-                            inverse_mass_matrix,
-                            args,
-                            constraints,
-                            hmc_step_size,
-                            rng,
-                        )
-                        dual_state = _dual_averaging_state(hmc_step_size, hmc_target_accept)
-                    end
-                end
-            end
-
+            refind.position = position
+            refind.current_logjoint = current_logjoint
+            mass_weight = _mass_adaptation_weight(driver.variance_state, accepted_step, accept_prob, divergent_step)
+            warmup_update!(driver, iteration, accept_prob, position, mass_weight, refind)
             if iteration == num_warmup
-                if adapt_step_size
-                    hmc_step_size = _final_step_size(dual_state)
-                end
-                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                end
+                warmup_finalize!(driver)
             end
         else
             sample_index += 1
@@ -201,14 +150,14 @@ function hmc(
         energy_errors,
         accepted,
         divergent,
-        hmc_step_size,
-        1 ./ inverse_mass_matrix,
+        driver.step_size,
+        1 ./ driver.inverse_mass_matrix,
         num_leapfrog_steps,
         0,
         zeros(Int, num_samples),
         fill(num_leapfrog_steps, num_samples),
         hmc_target_accept,
-        mass_adaptation_windows,
+        driver.mass_adaptation_windows,
     )
 end
 
@@ -268,8 +217,6 @@ function nuts(
     nuts_target_accept = Float64(target_accept)
     nuts_max_delta_energy = Float64(max_delta_energy)
     inverse_mass_matrix = ones(num_params)
-    warmup_schedule = _warmup_schedule(num_warmup)
-    mass_window_index = 1
     if find_reasonable_step_size || (num_warmup > 0 && adapt_step_size)
         nuts_step_size = _find_reasonable_step_size(
             model,
@@ -283,17 +230,23 @@ function nuts(
             rng,
         )
     end
-    dual_state = _dual_averaging_state(nuts_step_size, nuts_target_accept)
-    variance_state = _running_variance_state(
+    driver = WarmupDriver(
         num_params,
-        isempty(warmup_schedule.slow_window_ends) ? (_RUNNING_VARIANCE_CLIP_START + 16) :
-            _warmup_window_length(warmup_schedule, mass_window_index),
+        num_warmup,
+        nuts_step_size,
+        nuts_target_accept;
+        adapt_step_size=adapt_step_size,
+        adapt_mass_matrix=adapt_mass_matrix,
+        mass_matrix_regularization=mass_matrix_regularization,
+        mass_matrix_min_samples=mass_matrix_min_samples,
     )
-    mass_adaptation_windows = HMCMassAdaptationWindowSummary[]
+    refind = ScalarStepSizeSearch(model, gradient_cache, args, constraints, rng, position, current_logjoint)
 
     sample_index = 0
     nuts_target = ModelDensityTarget(model, args, constraints, gradient_cache)
     for iteration in 1:total_iterations
+        nuts_step_size = driver.step_size
+        inverse_mass_matrix = driver.inverse_mass_matrix
         proposal, accept_stat, tree_depth, integration_steps_used, proposal_energy, energy_error, divergent_step, moved_step =
             _nuts_proposal(
                 nuts_target,
@@ -314,67 +267,12 @@ function nuts(
         end
 
         if iteration <= num_warmup
-            if adapt_step_size
-                nuts_step_size = _update_step_size!(dual_state, accept_stat)
-            end
-
-            if adapt_mass_matrix &&
-               mass_window_index <= length(warmup_schedule.slow_window_ends) &&
-               iteration > warmup_schedule.initial_buffer
-                _update_running_variance!(
-                    variance_state,
-                    position,
-                    _mass_adaptation_weight(variance_state, false, accept_stat, divergent_step),
-                )
-                if iteration == warmup_schedule.slow_window_ends[mass_window_index]
-                    mass_updated = false
-                    if _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                        inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                        mass_updated = true
-                    end
-                    push!(
-                        mass_adaptation_windows,
-                        _mass_adaptation_window_summary(
-                            warmup_schedule,
-                            mass_window_index,
-                            variance_state,
-                            inverse_mass_matrix,
-                            mass_updated,
-                        ),
-                    )
-                    mass_window_index += 1
-                    if mass_window_index <= length(warmup_schedule.slow_window_ends)
-                        variance_state = _running_variance_state(
-                            num_params,
-                            _warmup_window_length(warmup_schedule, mass_window_index),
-                        )
-                    else
-                        variance_state = _running_variance_state(num_params)
-                    end
-                    if adapt_step_size && iteration < num_warmup
-                        nuts_step_size = _find_reasonable_step_size(
-                            model,
-                            position,
-                            current_logjoint,
-                            gradient_cache,
-                            inverse_mass_matrix,
-                            args,
-                            constraints,
-                            nuts_step_size,
-                            rng,
-                        )
-                        dual_state = _dual_averaging_state(nuts_step_size, nuts_target_accept)
-                    end
-                end
-            end
-
+            refind.position = position
+            refind.current_logjoint = current_logjoint
+            mass_weight = _mass_adaptation_weight(driver.variance_state, false, accept_stat, divergent_step)
+            warmup_update!(driver, iteration, accept_stat, position, mass_weight, refind)
             if iteration == num_warmup
-                if adapt_step_size
-                    nuts_step_size = _final_step_size(dual_state)
-                end
-                if adapt_mass_matrix && _running_variance_effective_count(variance_state) >= mass_matrix_min_samples
-                    inverse_mass_matrix = _inverse_mass_matrix(variance_state, Float64(mass_matrix_regularization))
-                end
+                warmup_finalize!(driver)
             end
         else
             sample_index += 1
@@ -404,13 +302,13 @@ function nuts(
         energy_errors,
         accepted,
         divergent,
-        nuts_step_size,
-        1 ./ inverse_mass_matrix,
+        driver.step_size,
+        1 ./ driver.inverse_mass_matrix,
         0,
         max_tree_depth,
         tree_depths,
         integration_steps_per_sample,
         nuts_target_accept,
-        mass_adaptation_windows,
+        driver.mass_adaptation_windows,
     )
 end
