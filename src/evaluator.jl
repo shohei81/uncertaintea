@@ -218,64 +218,6 @@ function _compiled_execution_plan(model::TeaModel)
     return cached::CompiledExecutionPlan
 end
 
-function _resolve_eval_symbol(model::TeaModel, env::PlanEnvironment, sym::Symbol)
-    _environment_hasvalue(env, sym) && return _environment_value(env, sym)
-
-    module_ = _evaluation_module(model)
-    if isdefined(module_, sym)
-        return getfield(module_, sym)
-    elseif isdefined(@__MODULE__, sym)
-        return getfield(@__MODULE__, sym)
-    elseif isdefined(Base, sym)
-        return getfield(Base, sym)
-    end
-
-    throw(ArgumentError("lower-level logjoint could not resolve symbol `$sym` in model $(model.name)"))
-end
-
-function _resolve_eval_callable(model::TeaModel, env::PlanEnvironment, callee)
-    if callee isa Symbol
-        if callee === Symbol(":")
-            return getfield(Base, Symbol(":"))
-        elseif callee === Symbol("=>")
-            return getfield(Base, Symbol("=>"))
-        end
-    end
-
-    return _eval_plan_expr(model, env, callee)
-end
-
-function _eval_plan_expr(model::TeaModel, env::PlanEnvironment, expr)
-    if expr isa QuoteNode
-        return expr.value
-    elseif expr isa Symbol
-        return _resolve_eval_symbol(model, env, expr)
-    elseif expr isa GlobalRef
-        return getfield(expr.mod, expr.name)
-    elseif expr isa Expr
-        if expr.head == :call
-            f = _resolve_eval_callable(model, env, expr.args[1])
-            args = map(arg -> _eval_plan_expr(model, env, arg), expr.args[2:end])
-            return f(args...)
-        elseif expr.head == :block
-            value = nothing
-            for arg in expr.args
-                arg isa LineNumberNode && continue
-                value = _eval_plan_expr(model, env, arg)
-            end
-            return value
-        elseif expr.head == :tuple
-            return tuple((_eval_plan_expr(model, env, arg) for arg in expr.args)...)
-        elseif expr.head == :vect
-            return Any[_eval_plan_expr(model, env, arg) for arg in expr.args]
-        end
-
-        throw(ArgumentError("unsupported expression in lower-level logjoint: $expr"))
-    end
-
-    return expr
-end
-
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledLiteralExpr)
     return expr.value
 end
@@ -306,22 +248,6 @@ function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledBlockExpr)
     return value
 end
 
-_concrete_runtime_address_parts(model::TeaModel, env::PlanEnvironment, ::Tuple{}) = ()
-
-function _concrete_runtime_address_parts(model::TeaModel, env::PlanEnvironment, parts::Tuple)
-    part = first(parts)
-    head = if part isa AddressLiteralPart
-        part.value
-    else
-        _eval_plan_expr(model, env, part.value)
-    end
-    return (head, _concrete_runtime_address_parts(model, env, Base.tail(parts))...)
-end
-
-function _concrete_address(model::TeaModel, env::PlanEnvironment, address::AddressSpec)
-    return _concrete_runtime_address_parts(model, env, address.parts)
-end
-
 _concrete_compiled_address_parts(env::PlanEnvironment, ::Tuple{}) = ()
 
 function _concrete_compiled_address_parts(env::PlanEnvironment, parts::Tuple)
@@ -336,12 +262,6 @@ end
 
 function _concrete_address(env::PlanEnvironment, address::CompiledAddressSpec)
     return _normalize_concrete_address(_concrete_compiled_address_parts(env, address.parts))
-end
-
-function _distribution_from_spec(model::TeaModel, env::PlanEnvironment, rhs::DistributionSpec)
-    constructor = getfield(@__MODULE__, rhs.family)
-    args = map(arg -> _eval_plan_expr(model, env, arg), rhs.arguments)
-    return constructor(args...)
 end
 
 function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
@@ -368,27 +288,6 @@ function _score_compiled_steps(steps::Tuple, env::PlanEnvironment, params::Abstr
            _score_compiled_steps(Base.tail(steps), env, params, constraints)
 end
 
-function _score_distribution_instance!(
-    model::TeaModel,
-    step::ChoicePlanStep,
-    env::PlanEnvironment,
-    params::AbstractVector,
-    constraints::ChoiceMap,
-)
-    address = _concrete_address(model, env, step.address)
-    value = if !isnothing(step.parameter_slot)
-        _parameter_slot_value(executionplan(model).parameter_layout, step.parameter_slot, params)
-    else
-        found, constrained_value = _choice_tryget_normalized(constraints, address)
-        found || throw(ArgumentError("lower-level logjoint requires a provided value for choice $(address)"))
-        constrained_value
-    end
-
-    dist = _distribution_from_spec(model, env, step.rhs)
-    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
-    return logpdf(dist, value)
-end
-
 function _score_plan_step!(
     step::CompiledChoicePlanStep,
     env::PlanEnvironment,
@@ -407,57 +306,6 @@ function _score_plan_step!(
     dist = _compiled_distribution(step, env)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     return logpdf(dist, value)
-end
-
-function _score_plan_step!(
-    model::TeaModel,
-    step::ChoicePlanStep,
-    env::PlanEnvironment,
-    params::AbstractVector,
-    constraints::ChoiceMap,
-)
-    isempty(step.scopes) ||
-        throw(ArgumentError("ChoicePlanStep scopes must be lowered into LoopPlanStep before evaluation"))
-
-    if step.rhs isa DistributionSpec
-        return _score_distribution_instance!(model, step, env, params, constraints)
-    end
-
-    throw(ArgumentError("lower-level logjoint does not support RHS type $(typeof(step.rhs))"))
-end
-
-function _score_plan_step!(
-    model::TeaModel,
-    step::DeterministicPlanStep,
-    env::PlanEnvironment,
-    params::AbstractVector,
-    constraints::ChoiceMap,
-)
-    _environment_set!(env, step.binding_slot, _eval_plan_expr(model, env, step.expr))
-    return 0.0
-end
-
-function _score_plan_step!(
-    model::TeaModel,
-    step::LoopPlanStep,
-    env::PlanEnvironment,
-    params::AbstractVector,
-    constraints::ChoiceMap,
-)
-    iterable = _eval_plan_expr(model, env, step.iterable)
-    had_previous = _environment_hasvalue(env, step.iterator_slot)
-    previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
-    total = 0.0
-
-    for item in iterable
-        _environment_set!(env, step.iterator_slot, item)
-        for body_step in step.body
-            total += _score_plan_step!(model, body_step, env, params, constraints)
-        end
-    end
-
-    _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
-    return total
 end
 
 function _score_plan_step!(
@@ -494,8 +342,7 @@ function logjoint(
     model::TeaModel,
     params::AbstractVector,
     args::Tuple=(),
-    constraints::ChoiceMap=choicemap();
-    rng::AbstractRNG=Random.default_rng(),
+    constraints::ChoiceMap=choicemap(),
 )
     plan = executionplan(model)
     compiled_plan = _compiled_execution_plan(model)
@@ -516,11 +363,10 @@ function logjoint_unconstrained(
     model::TeaModel,
     params::AbstractVector,
     args::Tuple=(),
-    constraints::ChoiceMap=choicemap();
-    rng::AbstractRNG=Random.default_rng(),
+    constraints::ChoiceMap=choicemap(),
 )
     constrained, logabsdet = transform_to_constrained_with_logabsdet(model, params)
-    return logjoint(model, constrained, args, constraints; rng=rng) + logabsdet
+    return logjoint(model, constrained, args, constraints) + logabsdet
 end
 
 struct LogjointGradientCache{F,C,V}

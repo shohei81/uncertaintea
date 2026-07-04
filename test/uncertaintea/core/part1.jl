@@ -44,8 +44,8 @@
     @test params == [Float64(trace[:mu])]
     @test length(initial) == 1
     @test overrides[:mu] == trace[:mu]
-    @test logjoint(gaussian_mean, params, (), constraints; rng=MersenneTwister(7)) ≈ expected_joint atol=1e-6
-    @test logjoint_unconstrained(gaussian_mean, params, (), constraints; rng=MersenneTwister(15)) ≈ expected_joint atol=1e-6
+    @test logjoint(gaussian_mean, params, (), constraints) ≈ expected_joint atol=1e-6
+    @test logjoint_unconstrained(gaussian_mean, params, (), constraints) ≈ expected_joint atol=1e-6
     @test logjoint_gradient_unconstrained(gaussian_mean, params, (), constraints)[1] ≈
         (0.3f0 - 2 * trace[:mu]) atol=1e-5
     @test logjoint(gaussian_mean, params, (), constraints) ≈
@@ -128,7 +128,7 @@
         sum(UncertainTea.logpdf(normal(trace2[:mu], 1.0f0), y) for y in ys)
     full_repeated = choicemap([(:mu, trace2[:mu]); [(:y => i, ys[i]) for i in eachindex(ys)]])
 
-    @test logjoint(iid_model, params2, (length(ys),), repeated; rng=MersenneTwister(8)) ≈ expected_joint2 atol=1e-6
+    @test logjoint(iid_model, params2, (length(ys),), repeated) ≈ expected_joint2 atol=1e-6
     @test logjoint(iid_model, params2, (length(ys),), repeated) ≈
         assess(iid_model, (length(ys),), full_repeated) atol=1e-6
 
@@ -144,7 +144,7 @@
     @test step_spec.parameter_layout.slots[1].binding == :z
     @test step_spec.parameter_layout.slots[1].transform isa IdentityTransform
     @test step_plan.steps[1].parameter_slot == 1
-    @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap(); rng=MersenneTwister(9)) ≈
+    @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap()) ≈
         UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z]) atol=1e-6
 
     @tea static function chain_model(T)
@@ -190,7 +190,7 @@
         (:z => 2 => :z, trace3[:z => 2 => :z]),
         (:z => 3 => :z, trace3[:z => 3 => :z]),
     )
-    @test logjoint(chain_model, params3, (3,), chain_constraints; rng=MersenneTwister(10)) ≈
+    @test logjoint(chain_model, params3, (3,), chain_constraints) ≈
         assess(
             chain_model,
             (3,),
