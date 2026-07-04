@@ -565,51 +565,21 @@ function _batched_nuts_leapfrog_step_to!(
     direction::AbstractVector{Int},
     active::AbstractVector{Bool},
 )
-    q = destination_position
-    p = destination_momentum
-    proposed_gradient = destination_gradient
-    valid = workspace.control.step_valid
-    num_chains = size(position, 2)
-    size(position) == size(momentum) == size(gradient) ||
-        throw(DimensionMismatch("batched NUTS leapfrog requires matching position, momentum, and gradient matrices"))
-    size(q) == size(position) ||
-        throw(DimensionMismatch("expected proposal position workspace of size $(size(position)), got $(size(q))"))
-    size(p) == size(position) ||
-        throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
-    size(proposed_gradient) == size(position) ||
-        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(proposed_gradient))"))
-    length(direction) == num_chains ||
-        throw(DimensionMismatch("expected $num_chains batched NUTS directions, got $(length(direction))"))
-    length(active) == num_chains ||
-        throw(DimensionMismatch("expected $num_chains batched NUTS activity flags, got $(length(active))"))
-
-    copyto!(q, position)
-    copyto!(p, momentum)
-    fill!(valid, false)
-    for chain_index in 1:num_chains
-        active[chain_index] || continue
-        valid[chain_index] = true
-        signed_step = direction[chain_index] * step_size
-        p[:, chain_index] .+= (signed_step / 2) .* gradient[:, chain_index]
-        q[:, chain_index] .+= signed_step .* (inverse_mass_matrix .* p[:, chain_index])
-    end
-
-    proposed_logjoint, new_gradient = _batched_logjoint_and_gradient_unconstrained!(
+    target = BatchedModelDensityTarget(workspace.gradient_cache)
+    return batched_leapfrog_step_to!(
+        destination_position,
+        destination_momentum,
+        destination_gradient,
         destination_logjoint,
-        workspace.gradient_cache,
-        q,
+        workspace.control.step_valid,
+        position,
+        momentum,
+        gradient,
+        target,
+        inverse_mass_matrix,
+        step_size,
+        direction,
+        active,
     )
-    copyto!(proposed_gradient, new_gradient)
-    for chain_index in 1:num_chains
-        valid[chain_index] || continue
-        if !isfinite(proposed_logjoint[chain_index]) || !all(isfinite, view(proposed_gradient, :, chain_index))
-            valid[chain_index] = false
-        else
-            signed_step = direction[chain_index] * step_size
-            p[:, chain_index] .+= (signed_step / 2) .* proposed_gradient[:, chain_index]
-        end
-    end
-
-    return q, p, workspace.proposed_logjoint, proposed_gradient, valid
 end
 

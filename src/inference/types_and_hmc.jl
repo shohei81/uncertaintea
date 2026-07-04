@@ -1,3 +1,5 @@
 include("data_types.jl")
 include("diagnostics.jl")
+include("targets.jl")
+include("integrator.jl")
 include("hmc_support.jl")

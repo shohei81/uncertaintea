@@ -441,72 +441,21 @@ function _batched_leapfrog!(
     step_size::Float64,
     num_leapfrog_steps::Int,
 )
-    q = workspace.proposal_position
-    p = workspace.proposal_momentum
-    proposed_gradient = workspace.proposal_gradient
-    valid = workspace.valid
-    num_chains = size(q, 2)
-    size(q) == size(position) ||
-        throw(DimensionMismatch("expected proposal position workspace of size $(size(position)), got $(size(q))"))
-    size(p) == size(position) ||
-        throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
-    size(current_gradient) == size(position) ||
-        throw(DimensionMismatch("expected current gradient workspace of size $(size(position)), got $(size(current_gradient))"))
-    size(proposed_gradient) == size(position) ||
-        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(proposed_gradient))"))
-
-    copyto!(q, position)
-    copyto!(p, workspace.momentum)
-    fill!(valid, true)
-    gradient = current_gradient
-
-    for chain_index in 1:num_chains
-        if !all(isfinite, view(gradient, :, chain_index))
-            valid[chain_index] = false
-        else
-            p[:, chain_index] .+= (step_size / 2) .* gradient[:, chain_index]
-        end
-    end
-
-    for leapfrog_step in 1:num_leapfrog_steps
-        for chain_index in 1:num_chains
-            valid[chain_index] || continue
-            q[:, chain_index] .+= step_size .* (inverse_mass_matrix .* p[:, chain_index])
-        end
-
-        if leapfrog_step < num_leapfrog_steps
-            gradient = batched_logjoint_gradient_unconstrained!(workspace.gradient_cache, q)
-            for chain_index in 1:num_chains
-                valid[chain_index] || continue
-                if !all(isfinite, view(gradient, :, chain_index))
-                    valid[chain_index] = false
-                else
-                    p[:, chain_index] .+= step_size .* gradient[:, chain_index]
-                end
-            end
-        else
-            proposed_logjoint, gradient = _batched_logjoint_and_gradient_unconstrained!(
-                workspace.proposed_logjoint,
-                workspace.gradient_cache,
-                q,
-            )
-            copyto!(proposed_gradient, gradient)
-            for chain_index in 1:num_chains
-                valid[chain_index] || continue
-                if !all(isfinite, view(proposed_gradient, :, chain_index)) || !isfinite(proposed_logjoint[chain_index])
-                    valid[chain_index] = false
-                end
-            end
-        end
-    end
-
-    for chain_index in 1:num_chains
-        valid[chain_index] || continue
-        p[:, chain_index] .+= (step_size / 2) .* proposed_gradient[:, chain_index]
-        p[:, chain_index] .*= -1
-    end
-
-    return q, p, workspace.proposed_logjoint, proposed_gradient, valid
+    target = BatchedModelDensityTarget(workspace.gradient_cache)
+    return batched_leapfrog_trajectory!(
+        workspace.proposal_position,
+        workspace.proposal_momentum,
+        workspace.proposal_gradient,
+        workspace.proposed_logjoint,
+        workspace.valid,
+        position,
+        workspace.momentum,
+        current_gradient,
+        target,
+        inverse_mass_matrix,
+        step_size,
+        num_leapfrog_steps,
+    )
 end
 
 function _leapfrog(
@@ -520,29 +469,8 @@ function _leapfrog(
     step_size::Float64,
     num_leapfrog_steps::Int,
 )
-    q = copy(position)
-    p = copy(momentum)
-
-    gradient = _logjoint_gradient!(gradient_cache, q)
-    all(isfinite, gradient) || return nothing
-    p .+= (step_size / 2) .* gradient
-
-    for leapfrog_step in 1:num_leapfrog_steps
-        q .+= step_size .* (inverse_mass_matrix .* p)
-        gradient = _logjoint_gradient!(gradient_cache, q)
-        all(isfinite, gradient) || return nothing
-
-        if leapfrog_step < num_leapfrog_steps
-            p .+= step_size .* gradient
-        end
-    end
-
-    p .+= (step_size / 2) .* gradient
-    p .*= -1
-
-    proposed_logjoint = logjoint_unconstrained(model, q, args, constraints)
-    isfinite(proposed_logjoint) || return nothing
-    return q, p, proposed_logjoint
+    target = ModelDensityTarget(model, args, constraints, gradient_cache)
+    return leapfrog_trajectory(target, position, momentum, inverse_mass_matrix, step_size, num_leapfrog_steps)
 end
 
 function _kinetic_energy(momentum::AbstractVector, inverse_mass_matrix::AbstractVector)

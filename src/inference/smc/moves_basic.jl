@@ -90,106 +90,48 @@ function _batched_hmc_move!(
     momentum = Matrix{Float64}(undef, parameter_total, num_particles)
     proposal_particles = Matrix{Float64}(undef, parameter_total, num_particles)
     proposal_momentum = similar(momentum)
-    current_logjoint_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
-    current_logproposal_gradient = similar(current_logjoint_gradient)
-    current_tempered_gradient = similar(current_logjoint_gradient)
-    proposal_logjoint_values = Vector{Float64}(undef, num_particles)
-    proposal_logproposal_values = similar(proposal_logjoint_values)
-    proposal_tempered_values = similar(proposal_logjoint_values)
-    proposal_logjoint_gradient = similar(current_logjoint_gradient)
-    proposal_logproposal_gradient = similar(current_logjoint_gradient)
-    proposal_tempered_gradient = similar(current_logjoint_gradient)
-    proposal_noise = similar(current_logjoint_gradient)
+    current_tempered_gradient = Matrix{Float64}(undef, parameter_total, num_particles)
+    proposal_tempered_values = Vector{Float64}(undef, num_particles)
+    proposal_tempered_gradient = similar(current_tempered_gradient)
     current_tempered_values = Vector{Float64}(undef, num_particles)
     current_hamiltonian = Vector{Float64}(undef, num_particles)
     proposal_hamiltonian = similar(current_hamiltonian)
     valid = trues(num_particles)
     accepted = 0
 
-    _batched_tempered_target!(
-        current_tempered_values,
-        current_tempered_gradient,
-        logjoint_values,
-        current_logjoint_gradient,
-        logproposal_values,
-        current_logproposal_gradient,
-        proposal_noise,
+    target = BatchedTemperedDensityTarget(
         model,
-        cache,
-        particles,
         args,
         constraints,
+        cache,
         proposal_location,
         proposal_log_scale,
         beta,
+        parameter_total,
+        num_particles,
     )
+
+    batched_target_logdensity_and_gradient!(current_tempered_values, current_tempered_gradient, target, particles)
+    copyto!(logjoint_values, target.logjoint_values)
+    copyto!(logproposal_values, target.logproposal_values)
 
     sqrt_inverse_mass_matrix = sqrt.(Float64.(inverse_mass_matrix))
     _sample_batched_momentum!(momentum, rng, sqrt_inverse_mass_matrix)
-    copyto!(proposal_particles, particles)
-    copyto!(proposal_momentum, momentum)
-    fill!(valid, true)
 
-    for particle_index in 1:num_particles
-        for parameter_index in 1:parameter_total
-            proposal_momentum[parameter_index, particle_index] +=
-                (step_size / 2) * current_tempered_gradient[parameter_index, particle_index]
-        end
-    end
-
-    for leapfrog_step in 1:num_leapfrog_steps
-        for particle_index in 1:num_particles
-            valid[particle_index] || continue
-            for parameter_index in 1:parameter_total
-                proposal_particles[parameter_index, particle_index] +=
-                    step_size * inverse_mass_matrix[parameter_index] * proposal_momentum[parameter_index, particle_index]
-            end
-        end
-
-        _batched_tempered_target!(
-            proposal_tempered_values,
-            proposal_tempered_gradient,
-            proposal_logjoint_values,
-            proposal_logjoint_gradient,
-            proposal_logproposal_values,
-            proposal_logproposal_gradient,
-            proposal_noise,
-            model,
-            cache,
-            proposal_particles,
-            args,
-            constraints,
-            proposal_location,
-            proposal_log_scale,
-            beta,
-        )
-
-        for particle_index in 1:num_particles
-            valid[particle_index] || continue
-            if !isfinite(proposal_tempered_values[particle_index]) ||
-               !isfinite(proposal_logjoint_values[particle_index]) ||
-               !all(isfinite, view(proposal_tempered_gradient, :, particle_index))
-                valid[particle_index] = false
-                continue
-            end
-
-            if leapfrog_step < num_leapfrog_steps
-                for parameter_index in 1:parameter_total
-                    proposal_momentum[parameter_index, particle_index] +=
-                        step_size * proposal_tempered_gradient[parameter_index, particle_index]
-                end
-            end
-        end
-    end
-
-    for particle_index in 1:num_particles
-        valid[particle_index] || continue
-        for parameter_index in 1:parameter_total
-            proposal_momentum[parameter_index, particle_index] +=
-                (step_size / 2) * proposal_tempered_gradient[parameter_index, particle_index]
-            proposal_momentum[parameter_index, particle_index] *= -1
-        end
-    end
+    batched_leapfrog_trajectory!(
+        proposal_particles,
+        proposal_momentum,
+        proposal_tempered_gradient,
+        proposal_tempered_values,
+        valid,
+        particles,
+        momentum,
+        current_tempered_gradient,
+        target,
+        inverse_mass_matrix,
+        step_size,
+        num_leapfrog_steps,
+    )
 
     _batched_hamiltonian!(current_hamiltonian, current_tempered_values, momentum, inverse_mass_matrix)
     _batched_hamiltonian!(proposal_hamiltonian, proposal_tempered_values, proposal_momentum, inverse_mass_matrix)
@@ -199,9 +141,10 @@ function _batched_hmc_move!(
         log_accept_ratio = current_hamiltonian[particle_index] - proposal_hamiltonian[particle_index]
         if log(rand(rng)) < min(0.0, log_accept_ratio)
             copyto!(view(particles, :, particle_index), view(proposal_particles, :, particle_index))
-            logjoint_values[particle_index] = proposal_logjoint_values[particle_index]
-            logproposal_values[particle_index] = proposal_logproposal_values[particle_index]
-            log_ratio[particle_index] = proposal_logjoint_values[particle_index] - proposal_logproposal_values[particle_index]
+            logjoint_values[particle_index] = target.logjoint_values[particle_index]
+            logproposal_values[particle_index] = target.logproposal_values[particle_index]
+            log_ratio[particle_index] =
+                target.logjoint_values[particle_index] - target.logproposal_values[particle_index]
             accepted += 1
         end
     end

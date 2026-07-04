@@ -79,31 +79,18 @@ function _tempered_nuts_leapfrog_step!(
     beta::Float64,
     step_size::Float64,
 )
-    q = destination.position
-    p = destination.momentum
-    gradient = destination.gradient
-    copyto!(q, state.position)
-    copyto!(p, state.momentum)
-    p .+= (step_size / 2) .* state.gradient
-    q .+= step_size .* (inverse_mass_matrix .* p)
-    proposed_logjoint, _, _ = _tempered_target_value_and_gradient!(
-        gradient_buffer,
-        proposal_gradient,
+    target = TemperedDensityTarget(
         model,
-        model_gradient_cache,
-        q,
         args,
         constraints,
+        model_gradient_cache,
         proposal_location,
         proposal_log_scale,
+        proposal_gradient,
+        gradient_buffer,
         beta,
     )
-    isfinite(proposed_logjoint) || return false
-    all(isfinite, gradient_buffer) || return false
-    copyto!(gradient, gradient_buffer)
-    p .+= (step_size / 2) .* gradient
-    destination.logjoint = proposed_logjoint
-    return true
+    return leapfrog_step!(destination, target, state, inverse_mass_matrix, step_size)
 end
 
 function _batched_tempered_nuts_leapfrog_step_to!(
@@ -133,65 +120,36 @@ function _batched_tempered_nuts_leapfrog_step_to!(
     active::AbstractVector{Bool},
 )
     num_particles = size(start_position, 2)
-    size(destination_position) == size(start_position) == size(start_momentum) == size(start_gradient) ||
-        throw(DimensionMismatch("expected batched tempered NUTS buffers of matching size"))
-    size(destination_momentum) == size(start_position) == size(destination_gradient) ||
-        throw(DimensionMismatch("expected batched tempered NUTS destination buffers of matching size"))
-    length(destination_logjoint) == num_particles == length(valid) == length(direction) == length(active) ||
-        throw(DimensionMismatch("expected batched tempered NUTS vectors of length $num_particles"))
-
-    copyto!(destination_position, start_position)
-    copyto!(destination_momentum, start_momentum)
-    fill!(valid, false)
-
-    for particle_index in 1:num_particles
-        active[particle_index] || continue
-        valid[particle_index] = true
-        signed_step_size = direction[particle_index] * step_size
-        for parameter_index in axes(start_position, 1)
-            destination_momentum[parameter_index, particle_index] +=
-                (signed_step_size / 2) * start_gradient[parameter_index, particle_index]
-            destination_position[parameter_index, particle_index] +=
-                signed_step_size *
-                inverse_mass_matrix[parameter_index] *
-                destination_momentum[parameter_index, particle_index]
-        end
-    end
-
-    _batched_tempered_target!(
-        destination_logjoint,
-        destination_gradient,
+    target = BatchedTemperedDensityTarget(
+        model,
+        args,
+        constraints,
+        cache,
+        proposal_location,
+        proposal_log_scale,
         logjoint_values,
         logjoint_gradient,
         logproposal_values,
         logproposal_gradient,
         proposal_noise,
-        model,
-        cache,
-        destination_position,
-        args,
-        constraints,
-        proposal_location,
-        proposal_log_scale,
+        Vector{Float64}(undef, num_particles),
         beta,
     )
-
-    for particle_index in 1:num_particles
-        valid[particle_index] || continue
-        if !isfinite(destination_logjoint[particle_index]) ||
-           !isfinite(logjoint_values[particle_index]) ||
-           !all(isfinite, view(destination_gradient, :, particle_index))
-            valid[particle_index] = false
-            continue
-        end
-        signed_step_size = direction[particle_index] * step_size
-        for parameter_index in axes(destination_position, 1)
-            destination_momentum[parameter_index, particle_index] +=
-                (signed_step_size / 2) * destination_gradient[parameter_index, particle_index]
-        end
-    end
-
-    return destination_position, destination_momentum, destination_gradient, destination_logjoint, valid
+    return batched_leapfrog_step_to!(
+        destination_position,
+        destination_momentum,
+        destination_gradient,
+        destination_logjoint,
+        valid,
+        start_position,
+        start_momentum,
+        start_gradient,
+        target,
+        inverse_mass_matrix,
+        step_size,
+        direction,
+        active,
+    )
 end
 
 function _copy_nuts_column_to_state!(

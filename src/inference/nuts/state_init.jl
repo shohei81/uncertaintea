@@ -280,21 +280,8 @@ function _leapfrog_step!(
     constraints::ChoiceMap,
     step_size::Float64,
 )
-    q = destination.position
-    p = destination.momentum
-    gradient = destination.gradient
-    copyto!(q, state.position)
-    copyto!(p, state.momentum)
-    p .+= (step_size / 2) .* state.gradient
-    q .+= step_size .* (inverse_mass_matrix .* p)
-    proposed_logjoint = logjoint_unconstrained(model, q, args, constraints)
-    isfinite(proposed_logjoint) || return false
-    proposed_gradient = _logjoint_gradient!(gradient_cache, q)
-    all(isfinite, proposed_gradient) || return false
-    copyto!(gradient, proposed_gradient)
-    p .+= (step_size / 2) .* gradient
-    destination.logjoint = proposed_logjoint
-    return true
+    target = ModelDensityTarget(model, args, constraints, gradient_cache)
+    return leapfrog_step!(destination, target, state, inverse_mass_matrix, step_size)
 end
 
 function _is_turning(
