@@ -404,7 +404,7 @@ function batched_hmc(
                 energy_error[chain_index] = proposed_hamiltonian[chain_index] - current_hamiltonian[chain_index]
                 divergent_step[chain_index] =
                     !isfinite(energy_error[chain_index]) ||
-                    abs(energy_error[chain_index]) > hmc_divergence_threshold
+                    energy_error[chain_index] > hmc_divergence_threshold
             end
         end
 

@@ -177,3 +177,75 @@
     @test !isnothing(studentt_location_batch_cache.backend_cache)
     @test isnothing(studentt_location_batch_cache.flat_cache)
     @test isempty(studentt_location_batch_cache.column_caches)
+
+    @tea static function studentt_scale_model()
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ studentt(7.0f0, 0.5f0, exp(s))
+        return s
+    end
+
+    studentt_scale_batch_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
+    studentt_scale_batch_constraints = [
+        choicemap((:y, -0.9f0)),
+        choicemap((:y, 0.5f0)),
+        choicemap((:y, 2.3f0)),
+    ]
+    studentt_scale_batch_gradient = batched_logjoint_gradient_unconstrained(
+        studentt_scale_model,
+        studentt_scale_batch_params,
+        (),
+        studentt_scale_batch_constraints,
+    )
+    studentt_scale_batch_cache = BatchedLogjointGradientCache(
+        studentt_scale_model,
+        studentt_scale_batch_params,
+        (),
+        studentt_scale_batch_constraints,
+    )
+    @test studentt_scale_batch_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(
+            studentt_scale_model,
+            studentt_scale_batch_params[:, index],
+            (),
+            studentt_scale_batch_constraints[index],
+        ) for index in 1:3
+    ]...) atol=1e-8
+    @test !isnothing(studentt_scale_batch_cache.backend_cache)
+    @test isnothing(studentt_scale_batch_cache.flat_cache)
+    @test isempty(studentt_scale_batch_cache.column_caches)
+
+    @tea static function studentt_dof_model()
+        t ~ normal(0.0f0, 0.3f0)
+        {:y} ~ studentt(2.0f0 + exp(t), 0.0f0, 1.5f0)
+        return t
+    end
+
+    studentt_dof_batch_params = reshape(Float64[-0.5, 0.0, 0.7], 1, 3)
+    studentt_dof_batch_constraints = [
+        choicemap((:y, -1.4f0)),
+        choicemap((:y, 0.3f0)),
+        choicemap((:y, 3.1f0)),
+    ]
+    studentt_dof_batch_gradient = batched_logjoint_gradient_unconstrained(
+        studentt_dof_model,
+        studentt_dof_batch_params,
+        (),
+        studentt_dof_batch_constraints,
+    )
+    studentt_dof_batch_cache = BatchedLogjointGradientCache(
+        studentt_dof_model,
+        studentt_dof_batch_params,
+        (),
+        studentt_dof_batch_constraints,
+    )
+    @test studentt_dof_batch_gradient ≈ hcat([
+        logjoint_gradient_unconstrained(
+            studentt_dof_model,
+            studentt_dof_batch_params[:, index],
+            (),
+            studentt_dof_batch_constraints[index],
+        ) for index in 1:3
+    ]...) atol=1e-8
+    @test !isnothing(studentt_dof_batch_cache.backend_cache)
+    @test isnothing(studentt_dof_batch_cache.flat_cache)
+    @test isempty(studentt_dof_batch_cache.column_caches)

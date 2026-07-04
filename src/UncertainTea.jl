@@ -46,6 +46,8 @@ export tempered_smc_nuts_codegen_bundle, tempered_smc_nuts_package_layout, emit_
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
 export variational_mean, variational_samples
 export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
+# binomial is intentionally not exported: it would shadow Base.binomial for users.
+# Inside @tea models the name resolves to UncertainTea.binomial automatically.
 
 include("ir.jl")
 include("core.jl")

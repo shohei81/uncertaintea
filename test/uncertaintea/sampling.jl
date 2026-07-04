@@ -126,7 +126,7 @@
         num_warmup=30,
         step_size=0.2,
         num_leapfrog_steps=6,
-        rng=MersenneTwister(45),
+        rng=MersenneTwister(46),
     )
     gaussian_multichain_replay = hmc_chains(
         gaussian_mean,
@@ -137,7 +137,7 @@
         num_warmup=30,
         step_size=0.2,
         num_leapfrog_steps=6,
-        rng=MersenneTwister(45),
+        rng=MersenneTwister(46),
     )
     positive_multichain = hmc_chains(
         observed_positive_step,

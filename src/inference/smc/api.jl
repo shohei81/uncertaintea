@@ -21,12 +21,16 @@ function batched_importance_sampling(
     _gaussian_logdensity!(log_proposal, noise, log_scale)
 
     logjoint_values = batched_logjoint_unconstrained(model, particles, args, constraints)
-    all(isfinite, logjoint_values) ||
-        throw(ArgumentError("batched_importance_sampling encountered a non-finite unconstrained logjoint value"))
+    num_nonfinite = count(!isfinite, logjoint_values)
+    num_nonfinite < num_particles ||
+        throw(ArgumentError("batched_importance_sampling encountered only non-finite unconstrained logjoint values"))
+    num_nonfinite == 0 ||
+        @warn "batched_importance_sampling assigned zero weight to particles with a non-finite logjoint" num_nonfinite maxlog = 1
 
     logweights = Vector{Float64}(undef, num_particles)
     for particle_index in eachindex(logweights)
-        logweights[particle_index] = logjoint_values[particle_index] - log_proposal[particle_index]
+        value = logjoint_values[particle_index]
+        logweights[particle_index] = isfinite(value) ? value - log_proposal[particle_index] : -Inf
     end
 
     normalized_weights, log_weight_total = _normalized_logweights(logweights)
@@ -127,8 +131,15 @@ function batched_smc(
     _draw_gaussian_particles!(particles, noise, location, log_scale, rng)
     _gaussian_logdensity!(logproposal_values, noise, log_scale)
     copyto!(logjoint_values, batched_logjoint_unconstrained(model, particles, args, constraints))
-    all(isfinite, logjoint_values) ||
-        throw(ArgumentError("batched_smc encountered a non-finite unconstrained logjoint value"))
+    num_nonfinite = count(!isfinite, logjoint_values)
+    num_nonfinite < num_particles ||
+        throw(ArgumentError("batched_smc encountered only non-finite unconstrained logjoint values"))
+    if num_nonfinite > 0
+        @warn "batched_smc assigned zero weight to particles with a non-finite logjoint" num_nonfinite maxlog = 1
+        for index in eachindex(logjoint_values)
+            isfinite(logjoint_values[index]) || (logjoint_values[index] = -Inf)
+        end
+    end
 
     log_ratio = Vector{Float64}(undef, num_particles)
     for index in eachindex(log_ratio)

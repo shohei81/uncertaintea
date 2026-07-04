@@ -353,7 +353,7 @@ function _accumulate_studentt_gradient!(
         denominator = nu + z * z
         dvalue = -((nu + 1) * z) / (sigma * denominator)
         dmu = -dvalue
-        dsigma = (z * z - nu) / (sigma * denominator)
+        dsigma = nu * (z * z - 1.0) / (sigma * denominator)
         dnu = 0.5 * (
             digamma((nu + 1) / 2) -
             digamma(nu / 2) -

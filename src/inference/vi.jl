@@ -274,6 +274,7 @@ function batched_advi(
     log_scale_m2 = zeros(Float64, parameter_total)
     elbo_history = Vector{Float64}(undef, num_steps)
     gradient_norm_history = Vector{Float64}(undef, num_steps)
+    particle_valid = Vector{Bool}(undef, num_particles)
     best_location = copy(location)
     best_log_scale = copy(log_scale)
     best_elbo = -Inf
@@ -287,9 +288,17 @@ function batched_advi(
     for iteration in 1:num_steps
         _draw_gaussian_particles!(particles, noise, location, log_scale, rng)
         _batched_logjoint_and_gradient_unconstrained!(values, cache, particles)
-        all(isfinite, values) || throw(ArgumentError("batched_advi encountered a non-finite unconstrained logjoint value"))
-        all(isfinite, cache.gradient_buffer) ||
-            throw(ArgumentError("batched_advi encountered a non-finite unconstrained gradient"))
+        num_valid_particles = 0
+        for particle_index in 1:num_particles
+            particle_valid[particle_index] =
+                isfinite(values[particle_index]) &&
+                all(isfinite, view(cache.gradient_buffer, :, particle_index))
+            num_valid_particles += particle_valid[particle_index]
+        end
+        num_valid_particles > 0 ||
+            throw(ArgumentError("batched_advi encountered only non-finite unconstrained logjoint values or gradients"))
+        num_valid_particles == num_particles ||
+            @warn "batched_advi skipped particles with a non-finite logjoint or gradient" maxlog = 1
 
         fill!(location_gradient, 0.0)
         fill!(log_scale_gradient, 1.0)
@@ -298,12 +307,13 @@ function batched_advi(
             mean_gradient = 0.0
             mean_scale_gradient = 0.0
             for particle_index in 1:num_particles
+                particle_valid[particle_index] || continue
                 target_gradient = cache.gradient_buffer[parameter_index, particle_index]
                 mean_gradient += target_gradient
                 mean_scale_gradient += target_gradient * scale * noise[parameter_index, particle_index]
             end
-            location_gradient[parameter_index] = mean_gradient / num_particles
-            log_scale_gradient[parameter_index] += mean_scale_gradient / num_particles
+            location_gradient[parameter_index] = mean_gradient / num_valid_particles
+            log_scale_gradient[parameter_index] += mean_scale_gradient / num_valid_particles
         end
 
         gradient_norm_history[iteration] = _clip_advi_gradients!(
@@ -311,7 +321,12 @@ function batched_advi(
             log_scale_gradient,
             gradient_clip_f64,
         )
-        elbo = sum(values) / num_particles + _gaussian_entropy(log_scale)
+        elbo_total = 0.0
+        for particle_index in 1:num_particles
+            particle_valid[particle_index] || continue
+            elbo_total += values[particle_index]
+        end
+        elbo = elbo_total / num_valid_particles + _gaussian_entropy(log_scale)
         elbo_history[iteration] = elbo
         if elbo > best_elbo
             best_elbo = elbo

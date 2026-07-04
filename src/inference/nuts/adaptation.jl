@@ -287,7 +287,7 @@ function _proposal_diagnostics(
     _, proposed_momentum, proposed_logjoint = proposal
     proposed_hamiltonian = _hamiltonian(proposed_logjoint, proposed_momentum, inverse_mass_matrix)
     energy_error = proposed_hamiltonian - current_hamiltonian
-    divergent = !isfinite(energy_error) || abs(energy_error) > divergence_threshold
+    divergent = !isfinite(energy_error) || energy_error > divergence_threshold
     return proposed_hamiltonian, energy_error, divergent
 end
 
@@ -309,9 +309,16 @@ function _find_reasonable_batched_step_size(
     max_step_size = 1e3
     target_accept = 0.5
 
+    _update_sqrt_inverse_mass_matrix!(workspace.sqrt_inverse_mass_matrix, inverse_mass_matrix)
+    _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
+    current_hamiltonian = _batched_hamiltonian!(
+        workspace.current_hamiltonian,
+        current_logjoint,
+        workspace.momentum,
+        inverse_mass_matrix,
+    )
+
     for _ in 0:20
-        _update_sqrt_inverse_mass_matrix!(workspace.sqrt_inverse_mass_matrix, inverse_mass_matrix)
-        _sample_batched_momentum!(workspace.momentum, rng, workspace.sqrt_inverse_mass_matrix)
         _, proposal_momentum, proposed_logjoint, _, valid = _batched_leapfrog!(
             workspace,
             model,
@@ -324,12 +331,6 @@ function _find_reasonable_batched_step_size(
             1,
         )
 
-        current_hamiltonian = _batched_hamiltonian!(
-            workspace.current_hamiltonian,
-            current_logjoint,
-            workspace.momentum,
-            inverse_mass_matrix,
-        )
         proposed_hamiltonian = workspace.proposed_hamiltonian
         copyto!(proposed_hamiltonian, current_hamiltonian)
         log_accept_ratio = workspace.log_accept_ratio
@@ -347,7 +348,7 @@ function _find_reasonable_batched_step_size(
                     current_hamiltonian[chain_index] - proposed_hamiltonian[chain_index]
                 energy_error = proposed_hamiltonian[chain_index] - current_hamiltonian[chain_index]
                 divergent_step[chain_index] =
-                    !isfinite(energy_error) || abs(energy_error) > divergence_threshold
+                    !isfinite(energy_error) || energy_error > divergence_threshold
             end
         end
 
@@ -406,7 +407,6 @@ function _find_reasonable_step_size(
         end
 
         reasonable_step_size = next_step_size
-        momentum = _sample_momentum(rng, inverse_mass_matrix)
         proposal = _leapfrog(
             model,
             position,

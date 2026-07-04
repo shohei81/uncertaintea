@@ -368,9 +368,13 @@ function _backend_bundle_layout(
     )
 end
 
+# Emission targets (:gpu, :metal, :cuda) all lower through the shared :gpu plan;
+# only file naming and module symbols differ per target.
+_backend_lowering_target(target::Symbol) = :gpu
+
 function backend_package_layout(model::TeaModel; target::Symbol=:gpu)
     _gpu_backend_require_target(target)
-    plan = backend_execution_plan(model; target=:gpu)
+    plan = backend_execution_plan(model; target=_backend_lowering_target(target))
     package_symbol = _backend_package_symbol(model, target)
     root_dir = lowercase(String(package_symbol))
     return gpu_backend_codegen_package_layout(
