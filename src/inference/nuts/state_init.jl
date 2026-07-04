@@ -249,10 +249,22 @@ function _initialize_batched_nuts_first_step!(
     return (moved, false)
 end
 
-function NUTSSubtreeWorkspace(num_params::Int)
+function NUTSSubtreeWorkspace(num_params::Int, max_tree_depth::Int)
     state() = NUTSState(zeros(num_params), zeros(num_params), 0.0, zeros(num_params))
     summary = NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, Inf, Inf, 0.0, -Inf, -Inf, false, false)
-    return NUTSSubtreeWorkspace(state(), state(), state(), state(), state(), summary)
+    checkpoint_columns = max(max_tree_depth + 1, 1)
+    checkpoint_positions = zeros(num_params, checkpoint_columns)
+    checkpoint_momenta = zeros(num_params, checkpoint_columns)
+    return NUTSSubtreeWorkspace(
+        state(),
+        state(),
+        state(),
+        state(),
+        state(),
+        summary,
+        checkpoint_positions,
+        checkpoint_momenta,
+    )
 end
 
 function NUTSContinuationState(num_params::Int)

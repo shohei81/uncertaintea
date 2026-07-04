@@ -293,7 +293,7 @@
     )
     @test !gaussian_copy_nuts_workspace.subtree_merged_turning[1]
     @test !any(gaussian_copy_nuts_workspace.subtree_active)
-    scalar_tree_workspace = UncertainTea.NUTSSubtreeWorkspace(1)
+    scalar_tree_workspace = UncertainTea.NUTSSubtreeWorkspace(1, 4)
     scalar_tree_workspace.summary.log_weight = 1.0
     scalar_tree_workspace.summary.accept_stat_sum = 2.0
     scalar_tree_workspace.summary.accept_stat_count = 3

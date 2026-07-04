@@ -46,7 +46,7 @@ function batched_nuts(
         constrained_num_params,
         num_chains,
     )
-    workspace = BatchedNUTSWorkspace(model, position, batch_args, batch_constraints)
+    workspace = BatchedNUTSWorkspace(model, position, batch_args, batch_constraints, max_tree_depth)
     current_logjoint = Vector{Float64}(undef, num_chains)
     current_gradient = workspace.current_gradient
     _, gradient = _batched_logjoint_and_gradient_unconstrained!(

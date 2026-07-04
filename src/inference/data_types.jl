@@ -162,6 +162,8 @@ mutable struct NUTSSubtreeWorkspace{
     right::R
     proposal::P
     summary::S
+    checkpoint_positions::Matrix{Float64}
+    checkpoint_momenta::Matrix{Float64}
 end
 
 mutable struct NUTSContinuationState{L<:NUTSState,R<:NUTSState,P<:NUTSState}
@@ -603,8 +605,10 @@ function BatchedNUTSWorkspace(
     position::AbstractMatrix,
     args=(),
     constraints=choicemap(),
+    max_tree_depth::Int=10,
 )
     num_params, num_chains = size(position)
+    checkpoint_columns = max(max_tree_depth + 1, 1)
     constrained_num_params = parametervaluecount(parameterlayout(model))
     batch_args = _validate_batched_args(args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
@@ -639,6 +643,8 @@ function BatchedNUTSWorkspace(
             NUTSState(view(tree_right_position, :, chain_index), view(tree_right_momentum, :, chain_index), 0.0, view(tree_right_gradient, :, chain_index)),
             NUTSState(view(tree_proposal_position, :, chain_index), view(tree_proposal_momentum, :, chain_index), 0.0, view(tree_proposal_gradient, :, chain_index)),
             NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, Inf, Inf, 0.0, -Inf, -Inf, false, false),
+            zeros(num_params, checkpoint_columns),
+            zeros(num_params, checkpoint_columns),
         ) for chain_index in 1:num_chains
     ]
     left_position = Matrix{Float64}(undef, num_params, num_chains)

@@ -16,6 +16,8 @@ function _build_nuts_subtree(
     right = subtree_workspace.right
     proposal = subtree_workspace.proposal
     summary = subtree_workspace.summary
+    checkpoint_positions = subtree_workspace.checkpoint_positions
+    checkpoint_momenta = subtree_workspace.checkpoint_momenta
     _copyto_nuts_state!(current, start_state)
     _copyto_nuts_state!(left, start_state)
     _copyto_nuts_state!(right, start_state)
@@ -62,13 +64,40 @@ function _build_nuts_subtree(
         end
         summary.log_weight = summary.combined_log_weight
 
-        summary.turning = _is_turning(
-            left.position,
-            right.position,
-            left.momentum,
-            right.momentum,
-        )
-        summary.turning && break
+        leaf_index = summary.integration_steps - 1
+        if iseven(leaf_index)
+            slot = count_ones(leaf_index) + 1
+            copyto!(view(checkpoint_positions, :, slot), current.position)
+            copyto!(view(checkpoint_momenta, :, slot), current.momentum)
+        else
+            turned = false
+            for k in 1:trailing_ones(leaf_index)
+                block_start = leaf_index - (1 << k) + 1
+                slot = count_ones(block_start) + 1
+                ckpt_position = view(checkpoint_positions, :, slot)
+                ckpt_momentum = view(checkpoint_momenta, :, slot)
+                if direction > 0
+                    turned = _is_turning(
+                        ckpt_position,
+                        current.position,
+                        ckpt_momentum,
+                        current.momentum,
+                    )
+                else
+                    turned = _is_turning(
+                        current.position,
+                        ckpt_position,
+                        current.momentum,
+                        ckpt_momentum,
+                    )
+                end
+                turned && break
+            end
+            if turned
+                summary.turning = true
+                break
+            end
+        end
     end
 
     return _nuts_subtree_summary(summary)
@@ -274,7 +303,7 @@ function _nuts_proposal(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    tree_workspace = NUTSSubtreeWorkspace(length(position))
+    tree_workspace = NUTSSubtreeWorkspace(length(position), max_tree_depth)
     continuation = NUTSContinuationState(length(position))
     initial_momentum = _sample_momentum(rng, inverse_mass_matrix)
     initial_state = _load_nuts_state!(

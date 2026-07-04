@@ -178,7 +178,7 @@ function TemperedNUTSMoveWorkspace(
         Vector{Float64}(undef, parameter_total),
         Vector{Float64}(undef, parameter_total),
         Int[],
-        [NUTSSubtreeWorkspace(parameter_total) for _ in 1:num_particles],
+        [NUTSSubtreeWorkspace(parameter_total, 0) for _ in 1:num_particles],
         [NUTSContinuationState(parameter_total) for _ in 1:num_particles],
         TemperedNUTSCohortControlState(num_particles),
         TemperedNUTSSchedulerState(num_particles),
