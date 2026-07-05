@@ -566,7 +566,7 @@ function _leapfrog(
     position::Vector{Float64},
     momentum::Vector{Float64},
     gradient_cache::LogjointGradientCache,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
     args::Tuple,
     constraints::ChoiceMap,
     step_size::Float64,

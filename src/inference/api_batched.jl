@@ -266,6 +266,7 @@ function batched_nuts(
             vec(integration_steps_values[:, chain_index]),
             nuts_target_accept,
             copy(driver.mass_adaptation_windows),
+            nothing,
         )
     end
 
@@ -565,6 +566,7 @@ function batched_hmc(
             fill(num_leapfrog_steps, num_samples),
             hmc_target_accept,
             copy(driver.mass_adaptation_windows),
+            nothing,
         )
     end
 
@@ -777,6 +779,7 @@ function _batched_nuts_per_chain!(
             vec(integration_steps_values[:, chain_index]),
             nuts_target_accept,
             copy(drivers[chain_index].mass_adaptation_windows),
+            nothing,
         )
     end
 
@@ -1020,6 +1023,7 @@ function _batched_hmc_per_chain!(
             fill(num_leapfrog_steps, num_samples),
             hmc_target_accept,
             copy(drivers[chain_index].mass_adaptation_windows),
+            nothing,
         )
     end
 

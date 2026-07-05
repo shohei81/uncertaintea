@@ -45,10 +45,12 @@ function hmc(
     divergence_threshold::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    metric::Symbol=:diag,
     callback=nothing,
     callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
+    metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_hmc_arguments(
@@ -104,6 +106,7 @@ function hmc(
         adapt_mass_matrix=adapt_mass_matrix,
         mass_matrix_regularization=mass_matrix_regularization,
         mass_matrix_min_samples=mass_matrix_min_samples,
+        metric=metric,
     )
     refind = ScalarStepSizeSearch(model, gradient_cache, args, constraints, rng, position, current_logjoint)
 
@@ -111,7 +114,7 @@ function hmc(
     cumulative_divergences = 0
     for iteration in 1:total_iterations
         hmc_step_size = driver.step_size
-        inverse_mass_matrix = driver.inverse_mass_matrix
+        inverse_mass_matrix = _driver_metric(driver)
         momentum = _sample_momentum(rng, inverse_mass_matrix)
         proposal = _leapfrog(
             model,
@@ -198,6 +201,7 @@ function hmc(
         fill(num_leapfrog_steps, num_samples),
         hmc_target_accept,
         driver.mass_adaptation_windows,
+        driver.metric_kind === :dense ? copy(driver.dense_metric.inverse_mass) : nothing,
     )
 end
 
@@ -217,10 +221,12 @@ function nuts(
     max_delta_energy::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    metric::Symbol=:diag,
     callback=nothing,
     callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
+    metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_nuts_arguments(
@@ -281,6 +287,7 @@ function nuts(
         adapt_mass_matrix=adapt_mass_matrix,
         mass_matrix_regularization=mass_matrix_regularization,
         mass_matrix_min_samples=mass_matrix_min_samples,
+        metric=metric,
     )
     refind = ScalarStepSizeSearch(model, gradient_cache, args, constraints, rng, position, current_logjoint)
 
@@ -289,7 +296,7 @@ function nuts(
     nuts_target = ModelDensityTarget(model, args, constraints, gradient_cache)
     for iteration in 1:total_iterations
         nuts_step_size = driver.step_size
-        inverse_mass_matrix = driver.inverse_mass_matrix
+        inverse_mass_matrix = _driver_metric(driver)
         proposal, accept_stat, tree_depth, integration_steps_used, proposal_energy, energy_error, divergent_step, moved_step =
             _nuts_proposal(
                 nuts_target,
@@ -359,5 +366,6 @@ function nuts(
         integration_steps_per_sample,
         nuts_target_accept,
         driver.mass_adaptation_windows,
+        driver.metric_kind === :dense ? copy(driver.dense_metric.inverse_mass) : nothing,
     )
 end

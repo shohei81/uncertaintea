@@ -2,7 +2,7 @@ function leapfrog_step!(
     destination::NUTSState,
     target::AbstractDensityTarget,
     state::NUTSState,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
     step_size::Float64,
 )
     q = destination.position
@@ -11,7 +11,7 @@ function leapfrog_step!(
     copyto!(q, state.position)
     copyto!(p, state.momentum)
     p .+= (step_size / 2) .* state.gradient
-    q .+= step_size .* (inverse_mass_matrix .* p)
+    q .+= step_size .* _mass_drift(inverse_mass_matrix, p)
     value, proposed_gradient = target_logdensity_and_gradient!(target, q)
     isfinite(value) || return false
     all(isfinite, proposed_gradient) || return false
@@ -25,7 +25,7 @@ function leapfrog_trajectory(
     target::AbstractDensityTarget,
     position::AbstractVector{Float64},
     momentum::AbstractVector{Float64},
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
     step_size::Float64,
     num_steps::Int,
 )
@@ -37,7 +37,7 @@ function leapfrog_trajectory(
     p .+= (step_size / 2) .* gradient
 
     for leapfrog_step in 1:num_steps
-        q .+= step_size .* (inverse_mass_matrix .* p)
+        q .+= step_size .* _mass_drift(inverse_mass_matrix, p)
         gradient = target_gradient!(target, q)
         all(isfinite, gradient) || return nothing
 

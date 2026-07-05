@@ -63,6 +63,10 @@ struct HMCChain
     integration_steps::Vector{Int}
     target_accept::Float64
     mass_adaptation_windows::Vector{HMCMassAdaptationWindowSummary}
+    # Dense metric (metric=:dense single-chain runs): the estimated posterior
+    # covariance Sigma = M^{-1}. `nothing` for diagonal runs; when set, its
+    # diagonal matches `mass_matrix`.
+    dense_mass_matrix::Union{Nothing,Matrix{Float64}}
 end
 
 struct HMCChains{A,C}

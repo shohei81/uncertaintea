@@ -53,23 +53,32 @@ function _warmup_window_start(schedule::WarmupSchedule, window_index::Int)
     return window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index - 1] + 1
 end
 
-function _running_variance_window_progress(state::RunningVarianceState)
-    if state.window_length <= _RUNNING_VARIANCE_CLIP_START
+function _running_variance_window_progress(count::Int, window_length::Int)
+    if window_length <= _RUNNING_VARIANCE_CLIP_START
         return 1.0
     end
     return min(
-        max(state.count - _RUNNING_VARIANCE_CLIP_START, 0) /
-        (state.window_length - _RUNNING_VARIANCE_CLIP_START),
+        max(count - _RUNNING_VARIANCE_CLIP_START, 0) /
+        (window_length - _RUNNING_VARIANCE_CLIP_START),
         1.0,
     )
 end
 
-function _running_variance_clip_scale(state::RunningVarianceState)
-    state.count <= _RUNNING_VARIANCE_CLIP_START && return _RUNNING_VARIANCE_CLIP_SCALE_EARLY
-    progress = _running_variance_window_progress(state)
+_running_variance_window_progress(state::RunningVarianceState) =
+    _running_variance_window_progress(state.count, state.window_length)
+
+_running_variance_window_progress(state::DenseRunningCovarianceState) =
+    _running_variance_window_progress(state.count, state.window_length)
+
+function _running_variance_clip_scale(count::Int, window_length::Int)
+    count <= _RUNNING_VARIANCE_CLIP_START && return _RUNNING_VARIANCE_CLIP_SCALE_EARLY
+    progress = _running_variance_window_progress(count, window_length)
     return _RUNNING_VARIANCE_CLIP_SCALE_EARLY +
         (_RUNNING_VARIANCE_CLIP_SCALE_LATE - _RUNNING_VARIANCE_CLIP_SCALE_EARLY) * progress
 end
+
+_running_variance_clip_scale(state::RunningVarianceState) =
+    _running_variance_clip_scale(state.count, state.window_length)
 
 function _running_variance_sample!(
     state::RunningVarianceState,
@@ -263,7 +272,7 @@ function _proposal_log_accept_ratio(
     current_logjoint::Float64,
     current_momentum::AbstractVector,
     proposal,
-    inverse_mass_matrix::AbstractVector,
+    inverse_mass_matrix::Union{AbstractVector,MassMetric},
 )
     isnothing(proposal) && return -Inf
     _, proposed_momentum, proposed_logjoint = proposal
@@ -276,7 +285,7 @@ function _proposal_diagnostics(
     current_logjoint::Float64,
     current_momentum::AbstractVector,
     proposal,
-    inverse_mass_matrix::AbstractVector,
+    inverse_mass_matrix::Union{AbstractVector,MassMetric},
     divergence_threshold::Float64,
 )
     current_hamiltonian = _hamiltonian(current_logjoint, current_momentum, inverse_mass_matrix)
@@ -490,7 +499,7 @@ function _find_reasonable_step_size(
     position::Vector{Float64},
     current_logjoint::Float64,
     gradient_cache::LogjointGradientCache,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
     args::Tuple,
     constraints::ChoiceMap,
     step_size::Float64,

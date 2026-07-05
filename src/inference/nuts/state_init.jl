@@ -81,7 +81,7 @@ function _initialize_nuts_first_step!(
     valid::Bool,
     direction::Int,
     initial_hamiltonian::Float64,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -143,7 +143,7 @@ function _initialize_nuts_first_trajectory!(
     valid::Bool,
     direction::Int,
     initial_hamiltonian::Float64,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
