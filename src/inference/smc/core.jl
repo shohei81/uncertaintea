@@ -59,6 +59,32 @@ function numstages(result::SMCResult)
     return length(result.stages)
 end
 
+function log_evidence(result::ImportanceSamplingResult)
+    return result.log_evidence_estimate
+end
+
+function log_evidence(result::SMCResult)
+    return log_evidence(result.importance)
+end
+
+function Base.show(io::IO, result::SMCResult)
+    importance = result.importance
+    print(
+        io,
+        "SMCResult(model=",
+        importance.model.name,
+        ", particles=",
+        numsamples(result),
+        ", stages=",
+        numstages(result),
+        ", ess=",
+        round(ess(result); digits=2),
+        ", log_evidence=",
+        round(log_evidence(result); digits=4),
+        ")",
+    )
+end
+
 function _batched_evaluation_backend(model::TeaModel)
     return isnothing(_backend_execution_plan(model)) ? :compiled_cpu : :backend_native
 end
@@ -165,6 +191,115 @@ function _systematic_resample_indices(
         indices[sample_index] = source_index
     end
     return indices
+end
+
+function _stratified_resample_indices(
+    normalized_weights::AbstractVector,
+    num_samples::Int,
+    rng::AbstractRNG,
+)
+    num_samples > 0 || throw(ArgumentError("stratified resampling requires num_samples > 0"))
+    isempty(normalized_weights) && throw(ArgumentError("stratified resampling requires non-empty weights"))
+
+    indices = Vector{Int}(undef, num_samples)
+    step = 1.0 / num_samples
+    cumulative = normalized_weights[1]
+    source_index = 1
+    for sample_index in 1:num_samples
+        position = (sample_index - 1) * step + rand(rng) * step
+        while position > cumulative && source_index < length(normalized_weights)
+            source_index += 1
+            cumulative += normalized_weights[source_index]
+        end
+        indices[sample_index] = source_index
+    end
+    return indices
+end
+
+function _multinomial_resample_indices(
+    normalized_weights::AbstractVector,
+    num_samples::Int,
+    rng::AbstractRNG,
+)
+    num_samples > 0 || throw(ArgumentError("multinomial resampling requires num_samples > 0"))
+    isempty(normalized_weights) && throw(ArgumentError("multinomial resampling requires non-empty weights"))
+
+    indices = Vector{Int}(undef, num_samples)
+    for sample_index in 1:num_samples
+        indices[sample_index] = _inverse_cdf_index(normalized_weights, rand(rng))
+    end
+    return indices
+end
+
+function _residual_resample_indices(
+    normalized_weights::AbstractVector,
+    num_samples::Int,
+    rng::AbstractRNG,
+)
+    num_samples > 0 || throw(ArgumentError("residual resampling requires num_samples > 0"))
+    isempty(normalized_weights) && throw(ArgumentError("residual resampling requires non-empty weights"))
+
+    indices = Vector{Int}(undef, num_samples)
+    position = 1
+    deterministic_total = 0
+    for source_index in eachindex(normalized_weights)
+        copies = floor(Int, num_samples * normalized_weights[source_index])
+        deterministic_total += copies
+        for _ in 1:copies
+            indices[position] = source_index
+            position += 1
+        end
+    end
+
+    remaining = num_samples - deterministic_total
+    if remaining > 0
+        residual = Vector{Float64}(undef, length(normalized_weights))
+        residual_total = 0.0
+        for source_index in eachindex(normalized_weights)
+            value = num_samples * normalized_weights[source_index] -
+                floor(num_samples * normalized_weights[source_index])
+            residual[source_index] = value
+            residual_total += value
+        end
+        for source_index in eachindex(residual)
+            residual[source_index] /= residual_total
+        end
+        for _ in 1:remaining
+            indices[position] = _inverse_cdf_index(residual, rand(rng))
+            position += 1
+        end
+    end
+    return indices
+end
+
+function _inverse_cdf_index(weights::AbstractVector, threshold::Float64)
+    cumulative = 0.0
+    last_index = length(weights)
+    for source_index in eachindex(weights)
+        cumulative += weights[source_index]
+        if threshold <= cumulative
+            return source_index
+        end
+    end
+    return last_index
+end
+
+function _resample_indices(
+    scheme::Symbol,
+    normalized_weights::AbstractVector,
+    num_samples::Int,
+    rng::AbstractRNG,
+)
+    if scheme === :systematic
+        return _systematic_resample_indices(normalized_weights, num_samples, rng)
+    elseif scheme === :stratified
+        return _stratified_resample_indices(normalized_weights, num_samples, rng)
+    elseif scheme === :residual
+        return _residual_resample_indices(normalized_weights, num_samples, rng)
+    elseif scheme === :multinomial
+        return _multinomial_resample_indices(normalized_weights, num_samples, rng)
+    end
+    throw(ArgumentError("unknown resampling scheme :$scheme; expected :systematic, :stratified, :residual, or :multinomial"))
 end
 
 function _resampled_particle_matrix(

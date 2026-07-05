@@ -104,6 +104,17 @@ The current reference inference layer now includes:
   descriptors, dependency tables, buffer lifecycles, resource groups, and
   barrier placements, so its staged control lowering is closer to the
   batched-NUTS backend plan than to an opaque SMC-only helper
+- `batched_sir` and `batched_smc` now accept a `resampling::Symbol` keyword
+  (`:systematic` default, plus `:stratified`, `:residual`, `:multinomial`); the
+  default preserves the previous systematic behavior and RNG consumption
+- `log_evidence(result)` reads the log-evidence estimate off an
+  `ImportanceSamplingResult` or `SMCResult`, and `SMCResult` now prints a
+  one-line summary
+- `predict(model, args, chains::HMCChains; ...)`, `predict(model, args,
+  ::ImportanceSamplingResult; ...)`, and `predict(model, args, ::SMCResult;
+  ...)` produce posterior-predictive `PredictiveDraws`; `predict(model, args;
+  ...)` produces prior-predictive draws. These use the dynamic `generate` path
+  and are CPU-only by design
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:

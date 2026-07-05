@@ -45,7 +45,10 @@ export batched_nuts_package_layout, emit_batched_nuts_package
 export tempered_smc_nuts_codegen_bundle, tempered_smc_nuts_package_layout, emit_tempered_smc_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
 export check_diagnostics, has_warnings
+export pointwise_loglikelihood, observation_addresses, waic, psis_loo, loo, WAICResult, LOOResult
+export map_estimate, laplace_approximation, MAPResult, LaplaceResult
 export variational_mean, variational_samples
+export predict, PredictiveDraws, addresses, log_evidence
 export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
 # binomial is intentionally not exported: it would shadow Base.binomial for users.
 # Inside @tea models the name resolves to UncertainTea.binomial automatically.
@@ -57,6 +60,7 @@ include("distributions.jl")
 include("runtime.jl")
 include("parameters.jl")
 include("evaluator.jl")
+include("evaluator_pointwise.jl")
 include("backend.jl")
 include("batched.jl")
 include("gpu_backend.jl")

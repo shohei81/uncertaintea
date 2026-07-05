@@ -68,6 +68,7 @@ function batched_sir(
     num_samples::Int=num_particles,
     proposal_loc=nothing,
     proposal_log_scale=0.0,
+    resampling::Symbol=:systematic,
     rng::AbstractRNG=Random.default_rng(),
 )
     importance = batched_importance_sampling(
@@ -79,7 +80,7 @@ function batched_sir(
         proposal_log_scale=proposal_log_scale,
         rng=rng,
     )
-    ancestors = _systematic_resample_indices(importance.normalized_weights, num_samples, rng)
+    ancestors = _resample_indices(resampling, importance.normalized_weights, num_samples, rng)
     unconstrained_samples = _resampled_particle_matrix(importance.unconstrained_particles, ancestors)
     constrained_samples = _resampled_particle_matrix(importance.constrained_particles, ancestors)
     return SIRResult(importance, ancestors, unconstrained_samples, constrained_samples)
@@ -103,8 +104,11 @@ function batched_smc(
     move_inverse_mass_matrix=1.0,
     move_max_tree_depth::Int=4,
     move_max_delta_energy::Real=1000.0,
+    resampling::Symbol=:systematic,
     rng::AbstractRNG=Random.default_rng(),
 )
+    resampling in (:systematic, :stratified, :residual, :multinomial) ||
+        throw(ArgumentError("batched_smc resampling must be :systematic, :stratified, :residual, or :multinomial"))
     layout = parameterlayout(model)
     parameter_total = parametercount(layout)
     parameter_total > 0 || throw(ArgumentError("batched_smc requires at least one parameterized latent choice"))
@@ -170,7 +174,7 @@ function batched_smc(
         move_acceptance_rate = 0.0
 
         if resampled
-            ancestors = _systematic_resample_indices(normalized_weights, num_particles, rng)
+            ancestors = _resample_indices(resampling, normalized_weights, num_particles, rng)
             push!(ancestor_history, ancestors)
             particles = _resampled_particle_matrix(particles, ancestors)
             logproposal_values = _resampled_particle_vector(logproposal_values, ancestors)
