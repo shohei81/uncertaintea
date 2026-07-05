@@ -370,6 +370,121 @@ function _find_reasonable_batched_step_size(
     return clamp(reasonable_step_size, min_step_size, max_step_size)
 end
 
+# One-step batched log acceptance ratio per chain, using per-chain step sizes and
+# inverse-mass columns. Shared helper for the per-chain reasonable-step-size search.
+function _batched_reasonable_log_accept_ratio!(
+    workspace::BatchedHMCWorkspace,
+    model::TeaModel,
+    position::Matrix{Float64},
+    current_gradient::Matrix{Float64},
+    inverse_mass_matrices::AbstractMatrix,
+    args,
+    constraints,
+    step_sizes::AbstractVector{Float64},
+    current_hamiltonian::AbstractVector,
+)
+    _, proposal_momentum, proposed_logjoint, _, valid = _batched_leapfrog!(
+        workspace,
+        model,
+        position,
+        current_gradient,
+        inverse_mass_matrices,
+        args,
+        constraints,
+        step_sizes,
+        1,
+    )
+    log_accept_ratio = workspace.log_accept_ratio
+    fill!(log_accept_ratio, -Inf)
+    for chain_index in eachindex(current_hamiltonian)
+        if valid[chain_index]
+            proposed_hamiltonian = _hamiltonian(
+                proposed_logjoint[chain_index],
+                view(proposal_momentum, :, chain_index),
+                view(inverse_mass_matrices, :, chain_index),
+            )
+            log_accept_ratio[chain_index] =
+                current_hamiltonian[chain_index] - proposed_hamiltonian
+        end
+    end
+    return log_accept_ratio
+end
+
+# Per-chain reasonable step-size search: one shared doubling loop, but each chain
+# tracks its own step size, direction, and crossing decision (mirrors the scalar
+# `_find_reasonable_step_size`). Momentum is drawn once in chain-major order.
+function _find_reasonable_batched_step_size_per_chain(
+    workspace::BatchedHMCWorkspace,
+    model::TeaModel,
+    position::Matrix{Float64},
+    current_logjoint::AbstractVector,
+    current_gradient::Matrix{Float64},
+    inverse_mass_matrices::AbstractMatrix,
+    args,
+    constraints,
+    step_size::Float64,
+    rng::AbstractRNG,
+)
+    num_chains = length(current_logjoint)
+    min_step_size = 1e-8
+    max_step_size = 1e3
+    log_target = log(0.5)
+    step_sizes = fill(step_size, num_chains)
+    directions = zeros(Float64, num_chains)
+    done = falses(num_chains)
+
+    _sample_batched_momentum!(workspace.momentum, rng, sqrt.(Float64.(inverse_mass_matrices)))
+    current_hamiltonian = _batched_hamiltonian!(
+        workspace.current_hamiltonian,
+        current_logjoint,
+        workspace.momentum,
+        inverse_mass_matrices,
+    )
+
+    log_accept_ratio = _batched_reasonable_log_accept_ratio!(
+        workspace, model, position, current_gradient, inverse_mass_matrices,
+        args, constraints, step_sizes, current_hamiltonian,
+    )
+    for chain_index in 1:num_chains
+        directions[chain_index] = log_accept_ratio[chain_index] > log_target ? 1.0 : -1.0
+    end
+
+    trial = copy(step_sizes)
+    for _ in 1:20
+        copyto!(trial, step_sizes)
+        any_active = false
+        for chain_index in 1:num_chains
+            done[chain_index] && continue
+            next_step_size = step_sizes[chain_index] * (2.0 ^ directions[chain_index])
+            if next_step_size < min_step_size || next_step_size > max_step_size
+                done[chain_index] = true
+                continue
+            end
+            trial[chain_index] = next_step_size
+            any_active = true
+        end
+        any_active || break
+
+        log_accept_ratio = _batched_reasonable_log_accept_ratio!(
+            workspace, model, position, current_gradient, inverse_mass_matrices,
+            args, constraints, trial, current_hamiltonian,
+        )
+        for chain_index in 1:num_chains
+            done[chain_index] && continue
+            step_sizes[chain_index] = trial[chain_index]
+            if (directions[chain_index] > 0 && log_accept_ratio[chain_index] <= log_target) ||
+               (directions[chain_index] < 0 && log_accept_ratio[chain_index] >= log_target)
+                done[chain_index] = true
+            end
+        end
+    end
+
+    for chain_index in 1:num_chains
+        step_sizes[chain_index] = clamp(step_sizes[chain_index], min_step_size, max_step_size)
+    end
+    return step_sizes
+end
+
 function _find_reasonable_step_size(
     model::TeaModel,
     position::Vector{Float64},

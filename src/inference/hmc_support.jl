@@ -195,6 +195,41 @@ function _sample_batched_momentum!(
     return destination
 end
 
+# Per-chain overload: each destination column is filled from its own sqrt inverse
+# mass column. The (chain-major) draw order matches the scalar overload, so with
+# identical columns it is bitwise identical; used only by the per-chain path.
+function _sample_batched_momentum!(
+    destination::AbstractMatrix,
+    rng::AbstractRNG,
+    sqrt_inverse_mass_matrices::AbstractMatrix,
+)
+    size(destination) == size(sqrt_inverse_mass_matrices) ||
+        throw(DimensionMismatch("expected momentum matrix of size $(size(sqrt_inverse_mass_matrices)), got $(size(destination))"))
+
+    for chain_index in axes(destination, 2)
+        for parameter_index in axes(destination, 1)
+            destination[parameter_index, chain_index] =
+                randn(rng) / sqrt_inverse_mass_matrices[parameter_index, chain_index]
+        end
+    end
+    return destination
+end
+
+# Column selector: shared mode threads a single inverse-mass Vector; per-chain
+# mode threads a Matrix whose columns are the per-chain inverse-mass diagonals.
+_chain_inverse_mass(inverse_mass_matrix::AbstractVector, chain_index::Int) = inverse_mass_matrix
+_chain_inverse_mass(inverse_mass_matrices::AbstractMatrix, chain_index::Int) =
+    view(inverse_mass_matrices, :, chain_index)
+
+# Materialized column selectors for the per-chain continuation path, which reuses
+# the single-chain subtree builder requiring a concrete Vector / scalar. Shared
+# mode returns the same objects it is handed, so it stays bitwise identical.
+_chain_step_size(step_size::Real, chain_index::Int) = Float64(step_size)
+_chain_step_size(step_sizes::AbstractVector, chain_index::Int) = Float64(step_sizes[chain_index])
+_chain_inverse_mass_vector(inverse_mass_matrix::Vector{Float64}, chain_index::Int) = inverse_mass_matrix
+_chain_inverse_mass_vector(inverse_mass_matrices::AbstractMatrix, chain_index::Int) =
+    collect(Float64, view(inverse_mass_matrices, :, chain_index))
+
 function _update_sqrt_inverse_mass_matrix!(
     destination::AbstractVector,
     inverse_mass_matrix::AbstractVector,
@@ -236,6 +271,28 @@ function _batched_kinetic_energy!(
     return destination
 end
 
+# Per-chain overload: each chain's kinetic energy uses its own inverse-mass column.
+function _batched_kinetic_energy!(
+    destination::AbstractVector,
+    momentum::AbstractMatrix,
+    inverse_mass_matrices::AbstractMatrix,
+)
+    size(momentum) == size(inverse_mass_matrices) ||
+        throw(DimensionMismatch("expected inverse-mass matrix of size $(size(momentum)), got $(size(inverse_mass_matrices))"))
+    size(momentum, 2) == length(destination) ||
+        throw(DimensionMismatch("expected kinetic-energy destination of length $(size(momentum, 2)), got $(length(destination))"))
+
+    for chain_index in axes(momentum, 2)
+        kinetic_energy = 0.0
+        for parameter_index in axes(momentum, 1)
+            momentum_value = momentum[parameter_index, chain_index]
+            kinetic_energy += momentum_value^2 * inverse_mass_matrices[parameter_index, chain_index]
+        end
+        destination[chain_index] = kinetic_energy / 2
+    end
+    return destination
+end
+
 function _batched_hamiltonian(
     logjoint_values::AbstractVector,
     momentum::AbstractMatrix,
@@ -243,6 +300,23 @@ function _batched_hamiltonian(
 )
     hamiltonian = Vector{Float64}(undef, length(logjoint_values))
     return _batched_hamiltonian!(hamiltonian, logjoint_values, momentum, inverse_mass_matrix)
+end
+
+# Per-chain overload of the Hamiltonian assembly.
+function _batched_hamiltonian!(
+    destination::AbstractVector,
+    logjoint_values::AbstractVector,
+    momentum::AbstractMatrix,
+    inverse_mass_matrices::AbstractMatrix,
+)
+    length(logjoint_values) == length(destination) ||
+        throw(DimensionMismatch("expected hamiltonian inputs of length $(length(destination)), got $(length(logjoint_values))"))
+
+    _batched_kinetic_energy!(destination, momentum, inverse_mass_matrices)
+    for chain_index in eachindex(destination)
+        destination[chain_index] -= Float64(logjoint_values[chain_index])
+    end
+    return destination
 end
 
 function _batched_hamiltonian!(
@@ -454,6 +528,35 @@ function _batched_leapfrog!(
         target,
         inverse_mass_matrix,
         step_size,
+        num_leapfrog_steps,
+    )
+end
+
+# Per-chain overload: per-chain step sizes + inverse-mass columns.
+function _batched_leapfrog!(
+    workspace::BatchedHMCWorkspace,
+    model::TeaModel,
+    position::Matrix{Float64},
+    current_gradient::Matrix{Float64},
+    inverse_mass_matrices::AbstractMatrix,
+    args,
+    constraints,
+    step_sizes::AbstractVector{Float64},
+    num_leapfrog_steps::Int,
+)
+    target = BatchedModelDensityTarget(workspace.gradient_cache)
+    return batched_leapfrog_trajectory!(
+        workspace.proposal_position,
+        workspace.proposal_momentum,
+        workspace.proposal_gradient,
+        workspace.proposed_logjoint,
+        workspace.valid,
+        position,
+        workspace.momentum,
+        current_gradient,
+        target,
+        inverse_mass_matrices,
+        step_sizes,
         num_leapfrog_steps,
     )
 end

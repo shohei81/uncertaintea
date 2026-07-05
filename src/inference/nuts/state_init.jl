@@ -168,7 +168,7 @@ function _initialize_batched_nuts_first_step!(
     valid::Bool,
     direction::Int,
     initial_hamiltonian::Float64,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix::AbstractVector{Float64},
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )

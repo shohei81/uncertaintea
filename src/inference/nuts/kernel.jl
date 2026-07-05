@@ -1,7 +1,7 @@
 function _advance_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
     access::BatchedNUTSExpandKernelAccess,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -190,7 +190,7 @@ end
 function _merge_batched_nuts_subtree_cohort!(
     workspace::BatchedNUTSWorkspace,
     access::BatchedNUTSMergeKernelAccess,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     rng::AbstractRNG,
 )
     _merge_batched_nuts_continuation_frontiers!(workspace, workspace.subtree_active)
@@ -217,7 +217,7 @@ function _merge_batched_nuts_subtree_cohort!(
             access.proposal_energy[chain_index] = _hamiltonian(
                 access.tree_proposal_logjoint[chain_index],
                 view(access.tree_proposal_momentum, :, chain_index),
-                inverse_mass_matrix,
+                _chain_inverse_mass(inverse_mass_matrix, chain_index),
             )
             access.proposal_energy_error[chain_index] =
                 access.proposal_energy[chain_index] -
@@ -250,10 +250,10 @@ end
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -275,10 +275,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     ir::AbstractBatchedNUTSControlIR,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -302,10 +302,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     block::AbstractBatchedNUTSControlBlock,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -326,10 +326,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     descriptor::AbstractBatchedNUTSStepDescriptor,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -350,10 +350,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     state::AbstractBatchedNUTSStepState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -374,10 +374,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     access::AbstractBatchedNUTSKernelAccess,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -398,10 +398,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     frame::AbstractBatchedNUTSKernelFrame,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -422,10 +422,10 @@ function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     program::AbstractBatchedNUTSKernelProgram,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -447,10 +447,10 @@ function _execute_batched_nuts_kernel_program!(
     workspace::BatchedNUTSWorkspace,
     program::AbstractBatchedNUTSKernelProgram,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -480,10 +480,10 @@ function _execute_batched_nuts_package_stage!(
     stage_file::BatchedNUTSKernelPackageStageFile,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -532,10 +532,10 @@ function _execute_batched_nuts_kernel_dataflow!(
     dataflow::AbstractBatchedNUTSKernelDataflow,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -585,10 +585,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSReloadControlStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -602,10 +602,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSLeapfrogStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -627,10 +627,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSHamiltonianStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -644,10 +644,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSAdvanceStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -667,10 +667,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSActivateMergeStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -687,10 +687,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSMergeStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -710,10 +710,10 @@ function _execute_batched_nuts_kernel_step!(
     ::BatchedNUTSTransitionPhaseStep,
     execution::BatchedNUTSKernelExecutionState,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
@@ -733,10 +733,10 @@ function _batched_nuts_kernel_leapfrog!(
     workspace::BatchedNUTSWorkspace,
     access::BatchedNUTSExpandKernelAccess,
     model::TeaModel,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
     args,
     constraints,
-    step_size::Float64,
+    step_size,
 )
     _batched_nuts_leapfrog_step_to!(
         workspace,
@@ -760,7 +760,7 @@ end
 
 function _batched_nuts_kernel_hamiltonian!(
     access::BatchedNUTSExpandKernelAccess,
-    inverse_mass_matrix::Vector{Float64},
+    inverse_mass_matrix,
 )
     _batched_hamiltonian!(
         access.proposed_energy,
