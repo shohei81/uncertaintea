@@ -1,3 +1,34 @@
+# Progress-callback contract shared by all samplers:
+#   `callback(info::NamedTuple)` where `info` has at least
+#     phase::Symbol       -- :warmup or :sample (MCMC); :stage (SMC); :step (ADVI)
+#     iteration::Int      -- 1-based index within the phase
+#     total::Int          -- total iterations in the phase
+#     step_size::Float64  -- current step size; NaN where meaningless
+#     divergences::Int    -- cumulative divergences; 0 where untracked
+# The callback fires every `callback_every` iterations and on the phase's final
+# iteration. When `callback === nothing` there is zero overhead (each call site
+# is guarded by `isnothing(callback) ||`). Callbacks never consume the RNG, so
+# default runs remain bitwise reproducible.
+@inline function _invoke_progress_callback(
+    callback,
+    callback_every::Int,
+    phase::Symbol,
+    iteration::Int,
+    total::Int,
+    step_size::Float64,
+    divergences::Int,
+)
+    ((callback_every > 0 && iteration % callback_every == 0) || iteration == total) || return nothing
+    callback((
+        phase=phase,
+        iteration=iteration,
+        total=total,
+        step_size=step_size,
+        divergences=divergences,
+    ))
+    return nothing
+end
+
 function hmc(
     model::TeaModel,
     args::Tuple=(),
@@ -14,6 +45,8 @@ function hmc(
     divergence_threshold::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
@@ -75,6 +108,7 @@ function hmc(
     refind = ScalarStepSizeSearch(model, gradient_cache, args, constraints, rng, position, current_logjoint)
 
     sample_index = 0
+    cumulative_divergences = 0
     for iteration in 1:total_iterations
         hmc_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
@@ -116,6 +150,8 @@ function hmc(
             sample_energy = _hamiltonian(current_logjoint, momentum, inverse_mass_matrix)
         end
 
+        divergent_step && (cumulative_divergences += 1)
+
         if iteration <= num_warmup
             refind.position = position
             refind.current_logjoint = current_logjoint
@@ -124,6 +160,8 @@ function hmc(
             if iteration == num_warmup
                 warmup_finalize!(driver)
             end
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :warmup, iteration, num_warmup, hmc_step_size, cumulative_divergences)
         else
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
@@ -134,6 +172,8 @@ function hmc(
             energy_errors[sample_index] = energy_error
             accepted[sample_index] = accepted_step
             divergent[sample_index] = divergent_step
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :sample, sample_index, num_samples, hmc_step_size, cumulative_divergences)
         end
     end
 
@@ -177,6 +217,8 @@ function nuts(
     max_delta_energy::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
@@ -243,6 +285,7 @@ function nuts(
     refind = ScalarStepSizeSearch(model, gradient_cache, args, constraints, rng, position, current_logjoint)
 
     sample_index = 0
+    cumulative_divergences = 0
     nuts_target = ModelDensityTarget(model, args, constraints, gradient_cache)
     for iteration in 1:total_iterations
         nuts_step_size = driver.step_size
@@ -266,6 +309,8 @@ function nuts(
             current_gradient = proposal.gradient
         end
 
+        divergent_step && (cumulative_divergences += 1)
+
         if iteration <= num_warmup
             refind.position = position
             refind.current_logjoint = current_logjoint
@@ -274,6 +319,8 @@ function nuts(
             if iteration == num_warmup
                 warmup_finalize!(driver)
             end
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :warmup, iteration, num_warmup, nuts_step_size, cumulative_divergences)
         else
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
@@ -286,6 +333,8 @@ function nuts(
             divergent[sample_index] = divergent_step
             tree_depths[sample_index] = tree_depth
             integration_steps_per_sample[sample_index] = integration_steps_used
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :sample, sample_index, num_samples, nuts_step_size, cumulative_divergences)
         end
     end
 

@@ -15,6 +15,8 @@ function hmc_chains(
     divergence_threshold::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     _validate_hmc_chains_arguments(num_chains)
@@ -26,6 +28,7 @@ function hmc_chains(
     for chain_index in 1:num_chains
         chain_rng = MersenneTwister(seeds[chain_index])
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
+        chain_callback = isnothing(callback) ? nothing : info -> callback(merge(info, (chain=chain_index,)))
         chains[chain_index] = hmc(
             model,
             args,
@@ -42,6 +45,8 @@ function hmc_chains(
             divergence_threshold=divergence_threshold,
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
+            callback=chain_callback,
+            callback_every=callback_every,
             rng=chain_rng,
         )
     end
@@ -66,6 +71,8 @@ function nuts_chains(
     max_delta_energy::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     _validate_hmc_chains_arguments(num_chains, "NUTS")
@@ -77,6 +84,7 @@ function nuts_chains(
     for chain_index in 1:num_chains
         chain_rng = MersenneTwister(seeds[chain_index])
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
+        chain_callback = isnothing(callback) ? nothing : info -> callback(merge(info, (chain=chain_index,)))
         chains[chain_index] = nuts(
             model,
             args,
@@ -93,6 +101,8 @@ function nuts_chains(
             max_delta_energy=max_delta_energy,
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
+            callback=chain_callback,
+            callback_every=callback_every,
             rng=chain_rng,
         )
     end

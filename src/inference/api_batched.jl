@@ -15,6 +15,8 @@ function batched_nuts(
     max_delta_energy::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
@@ -115,6 +117,7 @@ function batched_nuts(
     )
 
     sample_index = 0
+    cumulative_divergences = 0
     for iteration in 1:total_iterations
         nuts_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
@@ -141,6 +144,8 @@ function batched_nuts(
             end
         end
 
+        cumulative_divergences += count(workspace.control.divergent_step)
+
         if iteration <= num_warmup
             @inbounds for chain_index in 1:num_chains
                 workspace.mass_adaptation_weights[chain_index] = _mass_adaptation_weight(
@@ -165,6 +170,8 @@ function batched_nuts(
             if iteration == num_warmup
                 warmup_finalize!(driver)
             end
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :warmup, iteration, num_warmup, nuts_step_size, cumulative_divergences)
         else
             sample_index += 1
             for chain_index in 1:num_chains
@@ -187,6 +194,8 @@ function batched_nuts(
                 tree_depths[sample_index, chain_index] = workspace.control.tree_depths[chain_index]
                 integration_steps_values[sample_index, chain_index] = workspace.control.integration_steps[chain_index]
             end
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :sample, sample_index, num_samples, nuts_step_size, cumulative_divergences)
         end
     end
 
@@ -237,6 +246,8 @@ function batched_hmc(
     divergence_threshold::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     num_params = parametercount(parameterlayout(model))
@@ -333,6 +344,7 @@ function batched_hmc(
     )
 
     sample_index = 0
+    cumulative_divergences = 0
     for iteration in 1:total_iterations
         hmc_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
@@ -393,6 +405,8 @@ function batched_hmc(
             end
         end
 
+        cumulative_divergences += count(divergent_step)
+
         if iteration <= num_warmup
             _mass_adaptation_weights!(
                 driver.variance_state,
@@ -413,6 +427,8 @@ function batched_hmc(
             if iteration == num_warmup
                 warmup_finalize!(driver)
             end
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :warmup, iteration, num_warmup, hmc_step_size, cumulative_divergences)
         end
 
         if iteration > num_warmup
@@ -436,6 +452,8 @@ function batched_hmc(
                 accepted[sample_index, chain_index] = accepted_step[chain_index]
                 divergent[sample_index, chain_index] = divergent_step[chain_index]
             end
+            isnothing(callback) || _invoke_progress_callback(
+                callback, callback_every, :sample, sample_index, num_samples, hmc_step_size, cumulative_divergences)
         end
     end
 

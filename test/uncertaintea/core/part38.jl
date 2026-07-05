@@ -84,3 +84,123 @@
     @test all(isfinite, map_nuts_chain.unconstrained_samples)
     @test all(isfinite, map_nuts_chain.constrained_samples)
     @test size(map_nuts_chain.unconstrained_samples, 2) == 50
+
+    # ------------------------------------------------------------------
+    # PR: ecosystem-interop chain export (zero-dep core + MCMCChains ext).
+    # ------------------------------------------------------------------
+    @tea static function export_two_latent_model()
+        a ~ normal(0f0, 1f0)
+        b ~ normal(0f0, 1f0)
+        {:y1} ~ normal(a, 1f0)
+        {:y2} ~ normal(b, 1f0)
+    end
+
+    export_constraints = choicemap((:y1, 2.0f0), (:y2, -1.0f0))
+    export_chains = hmc_chains(
+        export_two_latent_model,
+        (),
+        export_constraints;
+        num_chains=2,
+        num_samples=30,
+        num_warmup=20,
+        rng=MersenneTwister(4242),
+    )
+    export_num_params = parametervaluecount(parameterlayout(export_two_latent_model))
+
+    export_arr = posterior_array(export_chains)
+    @test size(export_arr) == (30, 2, export_num_params)
+    # Draw-major layout: arr[s, c, p] == chains[c].constrained_samples[p, s].
+    @test export_arr[1, 1, 1] == export_chains.chains[1].constrained_samples[1, 1]
+    @test export_arr[30, 2, export_num_params] ==
+        export_chains.chains[2].constrained_samples[export_num_params, 30]
+    @test export_arr[15, 2, 1] == export_chains.chains[2].constrained_samples[1, 15]
+
+    export_names = parameter_names(export_chains)
+    @test length(export_names) == export_num_params
+    @test eltype(export_names) == String
+
+    export_unconstrained = posterior_array(export_chains; space=:unconstrained)
+    @test size(export_unconstrained) == (30, 2, export_num_params)
+    @test export_unconstrained[7, 1, 1] ==
+        export_chains.chains[1].unconstrained_samples[1, 7]
+
+    export_dict = to_arviz_dict(export_chains)
+    @test Set(keys(export_dict)) == Set(["posterior", "sample_stats"])
+    export_posterior = export_dict["posterior"]
+    @test Set(keys(export_posterior)) == Set(export_names)
+    @test size(export_posterior[export_names[1]]) == (30, 2)
+    export_stats = export_dict["sample_stats"]
+    @test Set(keys(export_stats)) ==
+        Set(["diverging", "energy", "tree_depth", "acceptance_rate", "lp"])
+    @test size(export_stats["diverging"]) == (30, 2)
+    @test export_stats["diverging"] isa Array{Bool,2}
+    @test export_stats["lp"][3, 1] == export_chains.chains[1].logjoint_values[3]
+    @test export_stats["lp"][10, 2] == export_chains.chains[2].logjoint_values[10]
+
+    # MCMCChains extension is not loaded in the test environment: the core
+    # declares `to_mcmcchains` as a method-less function stub.
+    @test to_mcmcchains isa Function
+    @test length(methods(to_mcmcchains)) == 0
+
+    # ------------------------------------------------------------------
+    # PR: progress callbacks (zero-overhead when nothing; RNG untouched).
+    # ------------------------------------------------------------------
+    cb_events = NamedTuple[]
+    cb_collector = info -> push!(cb_events, info)
+    cb_chain = nuts(
+        export_two_latent_model,
+        (),
+        export_constraints;
+        num_samples=20,
+        num_warmup=20,
+        callback=cb_collector,
+        callback_every=10,
+        rng=MersenneTwister(99),
+    )
+    # Warmup fires at 10, 20; sampling fires at 10, 20 -> exactly 4 invocations.
+    @test length(cb_events) == 4
+    @test [e.phase for e in cb_events] == [:warmup, :warmup, :sample, :sample]
+    @test [e.iteration for e in cb_events] == [10, 20, 10, 20]
+    @test cb_events[end].iteration == cb_events[end].total
+    @test cb_events[end].total == 20
+    @test all(e -> haskey(e, :step_size) && haskey(e, :divergences), cb_events)
+
+    # Callbacks must not consume the RNG: same seed => bitwise-identical samples.
+    cb_baseline = nuts(
+        export_two_latent_model,
+        (),
+        export_constraints;
+        num_samples=20,
+        num_warmup=20,
+        callback=nothing,
+        rng=MersenneTwister(99),
+    )
+    @test cb_chain.unconstrained_samples == cb_baseline.unconstrained_samples
+
+    # batched_smc invokes the callback per stage with phase :stage.
+    cb_smc_events = NamedTuple[]
+    batched_smc(
+        map_gaussian_model,
+        (),
+        map_gaussian_constraints;
+        num_particles=32,
+        callback=info -> push!(cb_smc_events, info),
+        rng=MersenneTwister(11),
+    )
+    @test length(cb_smc_events) >= 1
+    @test all(e -> e.phase === :stage, cb_smc_events)
+
+    # batched_advi invokes the callback per step with phase :step.
+    cb_advi_events = NamedTuple[]
+    batched_advi(
+        map_gaussian_model,
+        (),
+        map_gaussian_constraints;
+        num_steps=25,
+        callback=info -> push!(cb_advi_events, info),
+        callback_every=10,
+        rng=MersenneTwister(12),
+    )
+    @test length(cb_advi_events) >= 1
+    @test all(e -> e.phase === :step, cb_advi_events)
+    @test cb_advi_events[end].iteration == 25

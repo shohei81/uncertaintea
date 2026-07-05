@@ -244,6 +244,8 @@ function batched_advi(
     beta2::Real=0.999,
     adam_epsilon::Real=1e-8,
     gradient_clip::Real=Inf,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     layout = parameterlayout(model)
@@ -356,6 +358,8 @@ function batched_advi(
             beta2_f64,
             adam_epsilon_f64,
         )
+        isnothing(callback) || _invoke_progress_callback(
+            callback, callback_every, :step, iteration, num_steps, NaN, 0)
     end
 
     return ADVIResult(

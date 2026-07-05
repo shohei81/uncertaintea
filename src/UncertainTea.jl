@@ -45,6 +45,7 @@ export batched_nuts_package_layout, emit_batched_nuts_package
 export tempered_smc_nuts_codegen_bundle, tempered_smc_nuts_package_layout, emit_tempered_smc_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
 export check_diagnostics, has_warnings
+export posterior_array, parameter_names, to_arviz_dict, to_mcmcchains
 export pointwise_loglikelihood, observation_addresses, waic, psis_loo, loo, WAICResult, LOOResult
 export map_estimate, laplace_approximation, MAPResult, LaplaceResult
 export variational_mean, variational_samples

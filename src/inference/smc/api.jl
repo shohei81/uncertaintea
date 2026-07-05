@@ -105,6 +105,8 @@ function batched_smc(
     move_max_tree_depth::Int=4,
     move_max_delta_energy::Real=1000.0,
     resampling::Symbol=:systematic,
+    callback=nothing,
+    callback_every::Int=10,
     rng::AbstractRNG=Random.default_rng(),
 )
     resampling in (:systematic, :stratified, :residual, :multinomial) ||
@@ -264,6 +266,15 @@ function batched_smc(
                 move_acceptance_rate,
             ),
         )
+
+        # SMC invokes the callback once per stage; callback_every is ignored.
+        isnothing(callback) || callback((
+            phase=:stage,
+            iteration=stage_index,
+            total=max_stages,
+            step_size=NaN,
+            divergences=0,
+        ))
 
         beta = beta_next
         beta >= 1.0 - 1e-12 && break
