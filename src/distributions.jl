@@ -214,6 +214,33 @@ struct TruncatedStudentTDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+# Finite marginalized mixture of AbstractTeaDistribution components. `weights` is
+# kept generic (rather than pinned to Float64) so a latent simplex fed in through a
+# dirichlet parameter slot arrives as ForwardDiff Duals and stays differentiable.
+struct MixtureDist{W<:Real,C<:Tuple} <: AbstractTeaDistribution
+    weights::Vector{W}
+    components::C
+
+    function MixtureDist(weights::Vector{W}, components::C) where {W<:Real,C<:Tuple}
+        isempty(components) && throw(ArgumentError("mixture requires at least one component"))
+        length(weights) == length(components) || throw(ArgumentError(
+            "mixture requires one weight per component (got $(length(weights)) weights for $(length(components)) components)",
+        ))
+        total = zero(W)
+        for w in weights
+            w >= zero(W) || throw(ArgumentError("mixture weights must be nonnegative"))
+            total += w
+        end
+        abs(total - one(W)) <= oftype(total, 1e-8) ||
+            throw(ArgumentError("mixture weights must sum to 1 (within 1e-8)"))
+        for comp in components
+            comp isa AbstractTeaDistribution ||
+                throw(ArgumentError("mixture components must be UncertainTea distributions"))
+        end
+        return new{W,C}(weights, components)
+    end
+end
+
 function normal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return NormalDist(promoted_mu, promoted_sigma)
@@ -345,6 +372,11 @@ function truncatedstudentt(nu, mu, sigma, lower, upper)
         promoted_lower,
         promoted_upper,
     )
+end
+
+function mixture(weights, components...)
+    isempty(components) && throw(ArgumentError("mixture requires at least one component"))
+    return MixtureDist(collect(weights), components)
 end
 
 function Random.rand(rng::AbstractRNG, dist::NormalDist{T}) where {T<:AbstractFloat}
@@ -574,6 +606,20 @@ function Random.rand(rng::AbstractRNG, dist::TruncatedStudentTDist)
     end
 end
 
+function Random.rand(rng::AbstractRNG, dist::MixtureDist)
+    threshold = rand(rng, Float64)
+    cumulative = 0.0
+    index = length(dist.components)
+    for (k, w) in enumerate(dist.weights)
+        cumulative += w
+        if threshold <= cumulative
+            index = k
+            break
+        end
+    end
+    return rand(rng, dist.components[index])
+end
+
 function logpdf(dist::NormalDist, x)
     xx, mu, sigma = promote(x, dist.mu, dist.sigma)
     z = (xx - mu) / sigma
@@ -783,4 +829,24 @@ function logpdf(dist::TruncatedStudentTDist, x)
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
     return base - log(_std_t_cdf(zb, nu) - _std_t_cdf(za, nu))
+end
+
+# Per-component terms log(w_k) + logpdf(component_k, x) as a tuple. A zero weight
+# yields log(0) = -Inf, which drops out of the max-shifted logsumexp below, so no
+# explicit skipping is needed. Recursion keeps the tuple type-stable.
+function _mixture_log_terms(weights, components::Tuple, x, index::Int)
+    isempty(components) && return ()
+    term = log(weights[index]) + logpdf(first(components), x)
+    return (term, _mixture_log_terms(weights, Base.tail(components), x, index + 1)...)
+end
+
+function logpdf(dist::MixtureDist, x)
+    terms = _mixture_log_terms(dist.weights, dist.components, x, 1)
+    m = maximum(terms)
+    isfinite(m) || return oftype(m, -Inf)
+    total = zero(m)
+    for term in terms
+        total += exp(term - m)
+    end
+    return m + log(total)
 end

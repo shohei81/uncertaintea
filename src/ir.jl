@@ -457,6 +457,33 @@ function _truncated_bound_transform(lower::Real, upper::Real)
     return IdentityTransform()
 end
 
+const _MIXTURE_REAL_LINE_FAMILIES = (:normal, :laplace, :studentt)
+
+# Collect the callee symbols of a mixture's component constructor calls. `arguments`
+# is the full mixture argument list (first entry is the weights expression, the rest
+# are components). Returns `nothing` if any component is not a plain constructor call.
+function _mixture_component_callees(arguments)
+    length(arguments) >= 2 || return nothing
+    callees = Symbol[]
+    for component in arguments[2:end]
+        if component isa Expr && component.head == :call && !isempty(component.args) &&
+           component.args[1] isa Symbol
+            push!(callees, component.args[1])
+        else
+            return nothing
+        end
+    end
+    return callees
+end
+
+# A mixture is eligible for a latent parameter slot only when every component is one of
+# the real-line location-scale families, so an IdentityTransform is exact.
+function _mixture_latent_eligible(arguments)
+    callees = _mixture_component_callees(arguments)
+    isnothing(callees) && return false
+    return all(callee -> callee in _MIXTURE_REAL_LINE_FAMILIES, callees)
+end
+
 function _parameter_transform(rhs::DistributionSpec)
     if rhs.family === :normal || rhs.family === :laplace || rhs.family === :studentt
         return IdentityTransform()
@@ -475,6 +502,9 @@ function _parameter_transform(rhs::DistributionSpec)
         bounds = _truncated_static_bounds(rhs.family, rhs.arguments)
         isnothing(bounds) && return nothing
         return _truncated_bound_transform(bounds[1], bounds[2])
+    elseif rhs.family === :mixture
+        _mixture_latent_eligible(rhs.arguments) && return IdentityTransform()
+        return nothing
     end
     return nothing
 end

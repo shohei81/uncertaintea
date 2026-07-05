@@ -202,6 +202,7 @@ The initial GPU-targeted distribution set should stay small:
 - `categorical`
 - `truncatednormal`
 - `truncatedstudentt`
+- `mixture`
 - a restricted diagonal `mvnormal`
 - simple transformed distributions
 
@@ -233,6 +234,19 @@ Requirements:
   bound uses `LowerBoundedTransform`/`UpperBoundedTransform`, and two infinite
   bounds degrade to `IdentityTransform`. Declaring a truncated latent with a
   dynamic (non-literal) bound raises an `ArgumentError` at macro-expansion time.
+- `mixture(weights, components...)` marginalizes a finite mixture with
+  `logpdf(mix, x) = logsumexp_k(log(w_k) + logpdf(component_k, x))`. The `weights`
+  argument may be a literal tuple/vector or any runtime expression — including a
+  latent simplex supplied by a `dirichlet` slot — and is validated (nonnegative,
+  summing to 1 within `1e-8`, one per component). Components are inline
+  distribution constructor calls with fixed families. Mixtures are CPU-reference
+  only (honestly reported unsupported by `backend_report`, but they still run
+  through the compiled CPU logjoint and the batched ForwardDiff fallback). As
+  **observations** the components may be any families. As **latents** (parameter
+  slots sampled by HMC/NUTS) every component must be a real-line location-scale
+  family (`normal`, `laplace`, `studentt`) so an `IdentityTransform` is exact;
+  declaring a latent mixture with any other component family raises an
+  `ArgumentError` at macro-expansion time.
 
 ## Inference-Oriented Consequences
 

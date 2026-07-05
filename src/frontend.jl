@@ -45,6 +45,7 @@ function _qualify_builtin_distribution(name)
         :categorical,
         :truncatednormal,
         :truncatedstudentt,
+        :mixture,
     )
         return _qualify(name)
     end
@@ -166,6 +167,7 @@ function _rhs_spec_expr(rhs)
             :mvnormal,
             :truncatednormal,
             :truncatedstudentt,
+            :mixture,
         )
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
         end
@@ -240,6 +242,13 @@ function _supported_distribution_family(rhs)
         ))
         return family
     end
+    if family === :mixture
+        _mixture_latent_eligible(rhs.args[2:end]) || throw(ArgumentError(
+            "mixture latents require every component to be a real-line location-scale family " *
+            "(normal, laplace, studentt); use the mixture as an observation for other component families",
+        ))
+        return family
+    end
     return nothing
 end
 
@@ -304,6 +313,8 @@ function _parameter_transform_expr(rhs)
         elseif isfinite(upper)
             return :($(_qualify(:UpperBoundedTransform))($upper))
         end
+        return :($(_qualify(:IdentityTransform))())
+    elseif family === :mixture
         return :($(_qualify(:IdentityTransform))())
     end
 
