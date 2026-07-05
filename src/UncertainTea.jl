@@ -37,13 +37,14 @@ export gpu_backend_argument_signature, gpu_backend_stub_source_lines, gpu_backen
 export gpu_backend_stage_preamble_lines, gpu_backend_stage_source_lines, gpu_backend_stage_source_blob
 export gpu_backend_bundle_layout, gpu_backend_package_layout, gpu_backend_codegen_bundle, gpu_backend_codegen_package_layout
 export emit_gpu_backend_package
-export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSummary, HMCDiagnosticsSummary, HMCParameterSummary, HMCSummary
+export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSummary, HMCDiagnosticsSummary, HMCParameterSummary, HMCSummary, SamplerWarnings
 export ADVIResult, ImportanceSamplingResult, SIRResult, SMCStageSummary, SMCResult
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts, batched_advi
 export batched_importance_sampling, batched_sir, batched_smc
 export batched_nuts_package_layout, emit_batched_nuts_package
 export tempered_smc_nuts_codegen_bundle, tempered_smc_nuts_package_layout, emit_tempered_smc_nuts_package
 export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
+export check_diagnostics, has_warnings
 export variational_mean, variational_samples
 export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
 # binomial is intentionally not exported: it would shadow Base.binomial for users.

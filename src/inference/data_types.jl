@@ -81,6 +81,19 @@ struct HMCParameterSummary
     quantiles::Vector{Float64}
     rhat::Float64
     ess::Float64
+    mcse_mean::Float64
+    ess_tail::Float64
+    mcse_quantiles::Vector{Float64}
+    per_chain_means::Union{Nothing,Vector{Float64}}
+    per_chain_sds::Union{Nothing,Vector{Float64}}
+end
+
+struct SamplerWarnings
+    num_divergent::Vector{Int}
+    ebfmi::Vector{Float64}
+    treedepth_hits::Vector{Int}
+    low_ess_parameters::Vector{String}
+    high_rhat_parameters::Vector{String}
 end
 
 struct HMCSummary
@@ -89,6 +102,7 @@ struct HMCSummary
     quantile_probs::Vector{Float64}
     diagnostics::HMCDiagnosticsSummary
     parameters::Vector{HMCParameterSummary}
+    warnings::SamplerWarnings
 end
 
 mutable struct DualAveragingState

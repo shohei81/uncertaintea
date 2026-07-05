@@ -1,5 +1,7 @@
 include("data_types.jl")
 include("diagnostics.jl")
+include("summaries.jl")
+include("warnings.jl")
 include("targets.jl")
 include("integrator.jl")
 include("warmup.jl")

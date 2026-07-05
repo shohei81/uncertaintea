@@ -237,14 +237,15 @@ function Base.show(io::IO, ::MIME"text/plain", summary::HMCSummary)
     )
     println(io)
     if isempty(summary.diagnostics.mass_adaptation_windows)
-        print(io, "    mass_adaptation_windows: none")
-        return nothing
+        println(io, "    mass_adaptation_windows: none")
+    else
+        println(io, "    mass_adaptation_windows:")
+        for window_summary in summary.diagnostics.mass_adaptation_windows
+            _show_mass_adaptation_summary_line(io, window_summary; indent="      ")
+            println(io)
+        end
     end
-    println(io, "    mass_adaptation_windows:")
-    for window_summary in summary.diagnostics.mass_adaptation_windows
-        _show_mass_adaptation_summary_line(io, window_summary; indent="      ")
-        println(io)
-    end
+    _show_sampler_warnings(io, summary.warnings; indent="  ")
     return nothing
 end
 
@@ -580,7 +581,7 @@ function ess(chains::HMCChains; space::Symbol=:constrained)
     return values
 end
 
-function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.05, 0.5, 0.95))
+function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.05, 0.5, 0.95), per_chain::Bool=false)
     num_params, _ = _validate_hmc_diagnostics(chains, space)
     quantile_probs = _validate_summary_quantiles(quantiles)
     rhats = rhat(chains; space=space)
@@ -594,18 +595,35 @@ function summarize(chains::HMCChains; space::Symbol=:constrained, quantiles=(0.0
     parameters = Vector{HMCParameterSummary}(undef, num_params)
     for (parameter_index, binding, address) in summary_entries
         draws = _pooled_parameter_draws(chains, parameter_index, space)
+        sorted_draws = sort(draws)
         mean_value = _sample_mean(draws)
+        sd_value = _sample_sd(draws, mean_value)
+        ess_bulk = ess_values[parameter_index]
+        quantile_values = Float64[_quantile(sorted_draws, probability) for probability in quantile_probs]
+        q05 = _quantile(sorted_draws, 0.05)
+        q95 = _quantile(sorted_draws, 0.95)
+        per_chain_means = nothing
+        per_chain_sds = nothing
+        if per_chain
+            per_chain_means, per_chain_sds = _per_chain_parameter_statistics(chains, parameter_index, space)
+        end
         parameters[parameter_index] = HMCParameterSummary(
             parameter_index,
             binding,
             address,
             mean_value,
-            _sample_sd(draws, mean_value),
-            _quantiles(draws, quantile_probs),
+            sd_value,
+            quantile_values,
             rhats[parameter_index],
-            ess_values[parameter_index],
+            ess_bulk,
+            _mcse_mean_value(sd_value, ess_bulk),
+            _summary_tail_ess(chains, parameter_index, space, q05, q95),
+            _summary_mcse_quantiles(chains, parameter_index, space, sorted_draws, quantile_probs, quantile_values),
+            per_chain_means,
+            per_chain_sds,
         )
     end
 
-    return HMCSummary(chains.model, space, quantile_probs, diagnostics, parameters)
+    warnings = check_diagnostics(chains; space=space)
+    return HMCSummary(chains.model, space, quantile_probs, diagnostics, parameters, warnings)
 end
