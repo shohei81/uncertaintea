@@ -1,14 +1,7 @@
-# Standalone environment for the manual Metal GPU smoke test. This is intentionally
-# NOT part of the package test target (test/runtests.jl) and never runs in CI, since
-# it requires a functional Metal (Apple Silicon) GPU.
-#
-# To run it locally:
-#   julia --project=test/gpu -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
-#   julia --project=test/gpu test/gpu/runtests.jl
-#
-# The `Pkg.develop(path=".")` call wires the in-tree UncertainTea into this env; run
-# it from the repository root (so "." is the package directory).
 [deps]
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 UncertainTea = "9b1291ec-f7ff-476f-9e6f-459056809ae0"
+
+[sources]
+UncertainTea = {path = "../.."}
