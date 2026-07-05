@@ -29,7 +29,7 @@
         rng=MersenneTwister(404),
     )
     warmup_driver_bn_chain = warmup_driver_bn.chains[1]
-    @test warmup_driver_bn_chain.step_size ≈ 0.66267958253521475 atol = 1e-12
+    @test warmup_driver_bn_chain.step_size ≈ 1.4269329081220101 atol = 1e-12
     @test length(warmup_driver_bn_chain.mass_matrix) == 1
     @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.54987846326449419 atol = 1e-12
 end

@@ -943,4 +943,8 @@
     @test robust_variance_state.count == 5
     @test robust_variance_state.mean[1] < 1.0
     @test robust_variance_state.m2[1] < 1.0
-    @test UncertainTea._inverse_mass_matrix(robust_variance_state, 1e-3)[1] > 1.0
+    # `_inverse_mass_matrix` returns the regularized VARIANCE as M^{-1} (Stan
+    # convention), not its reciprocal. The robustified variance is small and shrinks
+    # toward 1, so the entry stays within the (regularization, 1) band.
+    @test UncertainTea._inverse_mass_matrix(robust_variance_state, 1e-3)[1] ≈
+        0.5282291666666666 atol = 1e-12

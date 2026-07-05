@@ -219,7 +219,7 @@ function _inverse_mass_matrix(state::RunningVarianceState, regularization::Float
     variance = state.m2 ./ variance_denom
     shrinkage = effective_count / (effective_count + 5.0)
     regularized_variance = shrinkage .* variance .+ (1 - shrinkage)
-    return 1 ./ max.(regularized_variance, regularization)
+    return max.(regularized_variance, regularization)
 end
 
 function _mass_adaptation_weight(

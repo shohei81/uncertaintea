@@ -242,7 +242,7 @@ function batched_nuts(
         end
     end
 
-    mass_matrix = 1 ./ driver.inverse_mass_matrix
+    mass_matrix = copy(driver.inverse_mass_matrix)
     chains = Vector{HMCChain}(undef, num_chains)
     for chain_index in 1:num_chains
         chains[chain_index] = HMCChain(
@@ -542,7 +542,7 @@ function batched_hmc(
         end
     end
 
-    mass_matrix = 1 ./ driver.inverse_mass_matrix
+    mass_matrix = copy(driver.inverse_mass_matrix)
     chains = Vector{HMCChain}(undef, num_chains)
     for chain_index in 1:num_chains
         chains[chain_index] = HMCChain(
@@ -757,7 +757,7 @@ function _batched_nuts_per_chain!(
 
     chains = Vector{HMCChain}(undef, num_chains)
     for chain_index in 1:num_chains
-        mass_matrix = 1 ./ drivers[chain_index].inverse_mass_matrix
+        mass_matrix = copy(drivers[chain_index].inverse_mass_matrix)
         chains[chain_index] = HMCChain(
             :nuts,
             model,
@@ -1001,7 +1001,7 @@ function _batched_hmc_per_chain!(
 
     chains = Vector{HMCChain}(undef, num_chains)
     for chain_index in 1:num_chains
-        mass_matrix = 1 ./ drivers[chain_index].inverse_mass_matrix
+        mass_matrix = copy(drivers[chain_index].inverse_mass_matrix)
         chains[chain_index] = HMCChain(
             :hmc,
             model,

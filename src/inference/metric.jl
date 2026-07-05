@@ -197,9 +197,9 @@ end
 # Dense analogue of `_inverse_mass_matrix`: estimate the posterior covariance,
 # shrink it toward the identity with the same n/(n+5) weight, floor the spectrum
 # at `regularization`, and return M^{-1} = Sigma. On diagonal data this reduces
-# to `Diagonal(shrink*var + (1-shrink))` = the diagonal path's *mass* matrix (the
-# diagonal path additionally inverts to precision; the dense metric keeps the
-# covariance, i.e. the standard Euclidean-HMC choice).
+# to `Diagonal(shrink*var + (1-shrink))`, which matches the diagonal path exactly
+# (both store the regularized variance as M^{-1}, i.e. the standard windowed /
+# Euclidean-HMC choice).
 function _dense_inverse_mass_matrix(state::DenseRunningCovarianceState, regularization::Float64)
     n = length(state.mean)
     identity = Matrix{Float64}(I, n, n)

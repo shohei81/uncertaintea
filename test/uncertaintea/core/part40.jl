@@ -158,3 +158,44 @@
         @test_throws ArgumentError hmc(
             dm_corr_model, (), dm_corr_constraints; num_samples=10, metric=:bogus)
     end
+
+    # --- diagonal mass-matrix preconditioning regression --------------------
+    # Guards the `_inverse_mass_matrix` fix: windowed adaptation must store the
+    # estimated VARIANCE as M^{-1} (Stan/Euclidean-HMC convention), not its
+    # reciprocal. On an anisotropic target the adapted diagonal metric preconditions
+    # toward isotropy and improves mixing; the buggy (precision) convention
+    # anti-preconditions and makes adaptation WORSE than the identity metric.
+    @testset "mmfix_diagonal_preconditioning" begin
+        # Two independent latents with prior scales 1 and 10 (variances 1 and 100).
+        @tea static function mmfix_aniso_model()
+            a ~ normal(0.0f0, 1.0f0)
+            b ~ normal(0.0f0, 10.0f0)
+            return (a, b)
+        end
+        mmfix_no_data = choicemap()
+
+        mmfix_ess_min(chain) = minimum(
+            UncertainTea._split_ess(reshape(chain.unconstrained_samples[i, :], 1, :))
+            for i in 1:size(chain.unconstrained_samples, 1)
+        )
+
+        mmfix_adapted = nuts(
+            mmfix_aniso_model, (), mmfix_no_data;
+            num_samples=200, num_warmup=300, rng=MersenneTwister(7),
+        )
+        mmfix_identity = nuts(
+            mmfix_aniso_model, (), mmfix_no_data;
+            num_samples=200, num_warmup=300, adapt_mass_matrix=false, rng=MersenneTwister(7),
+        )
+
+        # (a) Variance convention: the wide (sd=10) coordinate carries the LARGER
+        # M^{-1} entry. Its variance (~100) dwarfs the tight coordinate's (~1).
+        mmfix_mass = mmfix_adapted.mass_matrix
+        @test length(mmfix_mass) == 2
+        @test mmfix_mass[2] > mmfix_mass[1]
+        @test mmfix_mass[2] / mmfix_mass[1] > 5.0
+
+        # (b) Preconditioning helps: adapted min-ESS beats the identity metric on
+        # the same sampling budget (the pre-fix precision convention reversed this).
+        @test mmfix_ess_min(mmfix_adapted) >= mmfix_ess_min(mmfix_identity)
+    end
