@@ -43,6 +43,8 @@ function _qualify_builtin_distribution(name)
         :poisson,
         :studentt,
         :categorical,
+        :truncatednormal,
+        :truncatedstudentt,
     )
         return _qualify(name)
     end
@@ -162,6 +164,8 @@ function _rhs_spec_expr(rhs)
             :studentt,
             :categorical,
             :mvnormal,
+            :truncatednormal,
+            :truncatedstudentt,
         )
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
         end
@@ -229,6 +233,13 @@ function _supported_distribution_family(rhs)
     if family === :mvnormal && !isnothing(_mvnormal_static_size(rhs))
         return family
     end
+    if family === :truncatednormal || family === :truncatedstudentt
+        isnothing(_truncated_static_bounds(family, rhs.args[2:end])) && throw(ArgumentError(
+            "$family latents require literal (static) bounds; use static Number/Inf lower and upper bounds, " *
+            "or provide the value as an observation for dynamic bounds",
+        ))
+        return family
+    end
     return nothing
 end
 
@@ -281,6 +292,18 @@ function _parameter_transform_expr(rhs)
         isnothing(size) && throw(ArgumentError("dirichlet parameter slots require a statically known simplex size"))
         return :($(_qualify(:SimplexTransform))($size))
     elseif family === :studentt
+        return :($(_qualify(:IdentityTransform))())
+    elseif family === :truncatednormal || family === :truncatedstudentt
+        bounds = _truncated_static_bounds(family, rhs.args[2:end])
+        isnothing(bounds) && throw(ArgumentError("$family parameter slots require literal (static) bounds"))
+        lower, upper = bounds
+        if isfinite(lower) && isfinite(upper)
+            return :($(_qualify(:BoundedTransform))($lower, $upper))
+        elseif isfinite(lower)
+            return :($(_qualify(:LowerBoundedTransform))($lower))
+        elseif isfinite(upper)
+            return :($(_qualify(:UpperBoundedTransform))($upper))
+        end
         return :($(_qualify(:IdentityTransform))())
     end
 

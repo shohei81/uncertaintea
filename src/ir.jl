@@ -56,6 +56,30 @@ struct SimplexTransform <: AbstractParameterTransform
     end
 end
 
+struct BoundedTransform{T<:Real} <: AbstractParameterTransform
+    lower::T
+    upper::T
+
+    function BoundedTransform(lower::Real, upper::Real)
+        promoted_lower, promoted_upper = promote(float(lower), float(upper))
+        promoted_lower < promoted_upper ||
+            throw(ArgumentError("bounded transform requires lower < upper"))
+        return new{typeof(promoted_lower)}(promoted_lower, promoted_upper)
+    end
+end
+
+struct LowerBoundedTransform{T<:Real} <: AbstractParameterTransform
+    lower::T
+
+    LowerBoundedTransform(lower::Real) = new{typeof(float(lower))}(float(lower))
+end
+
+struct UpperBoundedTransform{T<:Real} <: AbstractParameterTransform
+    upper::T
+
+    UpperBoundedTransform(upper::Real) = new{typeof(float(upper))}(float(upper))
+end
+
 struct ChoiceSpec
     binding::Union{Nothing,Symbol}
     address::AddressSpec
@@ -388,6 +412,51 @@ function _merge_loop_steps(steps::Vector{AbstractPlanStep})
     return merged
 end
 
+function _static_bound_value(expr)
+    if expr isa Number
+        return float(expr)
+    elseif expr === :Inf || expr === :Inf64 || expr === :Inf32 || expr === :Inf16
+        return Inf
+    elseif expr isa Expr && expr.head == :call && length(expr.args) == 2 && expr.args[1] === :-
+        inner = _static_bound_value(expr.args[2])
+        return isnothing(inner) ? nothing : -inner
+    end
+    return nothing
+end
+
+function _truncated_bound_exprs(family::Symbol, arguments)
+    if family === :truncatednormal
+        length(arguments) == 4 || return nothing
+        return arguments[3], arguments[4]
+    elseif family === :truncatedstudentt
+        length(arguments) == 5 || return nothing
+        return arguments[4], arguments[5]
+    end
+    return nothing
+end
+
+function _truncated_static_bounds(family::Symbol, arguments)
+    bound_exprs = _truncated_bound_exprs(family, arguments)
+    isnothing(bound_exprs) && return nothing
+    lower = _static_bound_value(bound_exprs[1])
+    upper = _static_bound_value(bound_exprs[2])
+    (isnothing(lower) || isnothing(upper)) && return nothing
+    return (lower, upper)
+end
+
+function _truncated_bound_transform(lower::Real, upper::Real)
+    lower_finite = isfinite(lower)
+    upper_finite = isfinite(upper)
+    if lower_finite && upper_finite
+        return BoundedTransform(lower, upper)
+    elseif lower_finite
+        return LowerBoundedTransform(lower)
+    elseif upper_finite
+        return UpperBoundedTransform(upper)
+    end
+    return IdentityTransform()
+end
+
 function _parameter_transform(rhs::DistributionSpec)
     if rhs.family === :normal || rhs.family === :laplace || rhs.family === :studentt
         return IdentityTransform()
@@ -402,6 +471,10 @@ function _parameter_transform(rhs::DistributionSpec)
     elseif rhs.family === :dirichlet
         size = _dirichlet_static_size(rhs.arguments)
         isnothing(size) || return SimplexTransform(size)
+    elseif rhs.family === :truncatednormal || rhs.family === :truncatedstudentt
+        bounds = _truncated_static_bounds(rhs.family, rhs.arguments)
+        isnothing(bounds) && return nothing
+        return _truncated_bound_transform(bounds[1], bounds[2])
     end
     return nothing
 end
@@ -413,6 +486,9 @@ _parameter_dimensions(transform::VectorIdentityTransform) = (transform.size, tra
 _parameter_dimensions(::LogTransform) = (1, 1)
 _parameter_dimensions(::LogitTransform) = (1, 1)
 _parameter_dimensions(transform::SimplexTransform) = (transform.size - 1, transform.size)
+_parameter_dimensions(::BoundedTransform) = (1, 1)
+_parameter_dimensions(::LowerBoundedTransform) = (1, 1)
+_parameter_dimensions(::UpperBoundedTransform) = (1, 1)
 
 function _static_length(expr)
     if expr isa Expr

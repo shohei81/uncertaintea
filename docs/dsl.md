@@ -200,6 +200,8 @@ The initial GPU-targeted distribution set should stay small:
 - `poisson`
 - `studentt`
 - `categorical`
+- `truncatednormal`
+- `truncatedstudentt`
 - a restricted diagonal `mvnormal`
 - simple transformed distributions
 
@@ -218,6 +220,19 @@ Requirements:
   reference path and unconstrained HMC/NUTS through a vector-valued identity
   transform, and restricted diagonal forms now lower to the backend-native
   subset as the first vector-valued built-in family
+- `truncatednormal(mu, sigma, lower, upper)` and
+  `truncatedstudentt(nu, mu, sigma, lower, upper)` renormalize the base density
+  over `[lower, upper]` (infinite bounds are allowed on either side). They are
+  CPU-reference only: they are honestly reported as unsupported by
+  `backend_report`, but models still run through the compiled CPU logjoint and
+  the batched ForwardDiff fallback. As **observations** the bounds may be any
+  expression (model arguments, deterministic bindings, etc.). As **latents**
+  (parameter slots sampled by HMC/NUTS) both bounds must be literal statics —
+  a `Number` or `Inf`/`-Inf` — so the unconstraining transform is fixed at model
+  build time: both finite uses a scaled-logit `BoundedTransform`, a single finite
+  bound uses `LowerBoundedTransform`/`UpperBoundedTransform`, and two infinite
+  bounds degrade to `IdentityTransform`. Declaring a truncated latent with a
+  dynamic (non-literal) bound raises an `ArgumentError` at macro-expansion time.
 
 ## Inference-Oriented Consequences
 

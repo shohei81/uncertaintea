@@ -23,6 +23,26 @@ function logabsdetjac(::LogitTransform, value)
     return log(constrained) + log1p(-constrained)
 end
 
+_bounded_sigmoid(value) = inv(one(value) + exp(-value))
+to_constrained(transform::BoundedTransform, value) =
+    transform.lower + (transform.upper - transform.lower) * _bounded_sigmoid(value)
+function to_unconstrained(transform::BoundedTransform, value)
+    scaled = (value - transform.lower) / (transform.upper - transform.lower)
+    return log(scaled) - log1p(-scaled)
+end
+function logabsdetjac(transform::BoundedTransform, value)
+    sigmoid = _bounded_sigmoid(value)
+    return log(transform.upper - transform.lower) + log(sigmoid) + log1p(-sigmoid)
+end
+
+to_constrained(transform::LowerBoundedTransform, value) = transform.lower + exp(value)
+to_unconstrained(transform::LowerBoundedTransform, value) = log(value - transform.lower)
+logabsdetjac(::LowerBoundedTransform, value) = value
+
+to_constrained(transform::UpperBoundedTransform, value) = transform.upper - exp(value)
+to_unconstrained(transform::UpperBoundedTransform, value) = log(transform.upper - value)
+logabsdetjac(::UpperBoundedTransform, value) = value
+
 function _simplex_logabsdet(constrained::AbstractVector)
     total = zero(eltype(constrained))
     for value in constrained
@@ -148,6 +168,13 @@ function _transform_slot_to_constrained!(
         constrained_value = to_constrained(slot.transform, unconstrained_value)
         destination[slot.value_index] = constrained_value
         return logabsdetjac(slot.transform, unconstrained_value)
+    elseif slot.transform isa BoundedTransform ||
+           slot.transform isa LowerBoundedTransform ||
+           slot.transform isa UpperBoundedTransform
+        unconstrained_value = params[slot.index]
+        constrained_value = to_constrained(slot.transform, unconstrained_value)
+        destination[slot.value_index] = constrained_value
+        return logabsdetjac(slot.transform, unconstrained_value)
     elseif slot.transform isa SimplexTransform
         unconstrained = view(params, parameterindices(slot))
         constrained = view(destination, parametervalueindices(slot))
@@ -170,6 +197,10 @@ function _transform_slot_to_unconstrained!(
     elseif slot.transform isa LogTransform
         destination[slot.index] = log(params[slot.value_index])
     elseif slot.transform isa LogitTransform
+        destination[slot.index] = to_unconstrained(slot.transform, params[slot.value_index])
+    elseif slot.transform isa BoundedTransform ||
+           slot.transform isa LowerBoundedTransform ||
+           slot.transform isa UpperBoundedTransform
         destination[slot.index] = to_unconstrained(slot.transform, params[slot.value_index])
     elseif slot.transform isa SimplexTransform
         unconstrained = view(destination, parameterindices(slot))
