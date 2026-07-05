@@ -1,20 +1,20 @@
 function _accumulate_laplace_gradient!(
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-    value_values::AbstractVector{Float64},
-    value_gradients::AbstractMatrix{Float64},
-    mu_values::AbstractVector{Float64},
-    mu_gradients::AbstractMatrix{Float64},
-    scale_values::AbstractVector{Float64},
-    scale_gradients::AbstractMatrix{Float64},
-)
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    value_values::AbstractVector{T},
+    value_gradients::AbstractMatrix{T},
+    mu_values::AbstractVector{T},
+    mu_gradients::AbstractMatrix{T},
+    scale_values::AbstractVector{T},
+    scale_gradients::AbstractMatrix{T},
+) where {T<:AbstractFloat}
     for batch_index in eachindex(totals)
         value = value_values[batch_index]
         mu = mu_values[batch_index]
         scale = scale_values[batch_index]
         totals[batch_index] += _backend_laplace_logpdf(mu, scale, value)
         delta = value - mu
-        sign_delta = delta > 0 ? 1.0 : (delta < 0 ? -1.0 : 0.0)
+        sign_delta = delta > 0 ? one(T) : (delta < 0 ? -one(T) : zero(T))
         dvalue = -sign_delta / scale
         dmu = sign_delta / scale
         dscale = -1 / scale + abs(delta) / (scale * scale)
@@ -29,12 +29,12 @@ function _accumulate_laplace_gradient!(
 end
 
 function _accumulate_geometric_gradient!(
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-    probability_values::AbstractVector{Float64},
-    probability_gradients::AbstractMatrix{Float64},
-    value_values::AbstractVector{Float64},
-)
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    probability_values::AbstractVector{T},
+    probability_gradients::AbstractMatrix{T},
+    value_values::AbstractVector{T},
+) where {T<:AbstractFloat}
     for batch_index in eachindex(totals)
         probability = probability_values[batch_index]
         value = value_values[batch_index]
@@ -50,14 +50,14 @@ function _accumulate_geometric_gradient!(
 end
 
 function _accumulate_negativebinomial_gradient!(
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-    successes_values::AbstractVector{Float64},
-    successes_gradients::AbstractMatrix{Float64},
-    probability_values::AbstractVector{Float64},
-    probability_gradients::AbstractMatrix{Float64},
-    value_values::AbstractVector{Float64},
-)
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    successes_values::AbstractVector{T},
+    successes_gradients::AbstractMatrix{T},
+    probability_values::AbstractVector{T},
+    probability_gradients::AbstractMatrix{T},
+    value_values::AbstractVector{T},
+) where {T<:AbstractFloat}
     for batch_index in eachindex(totals)
         successes = successes_values[batch_index]
         probability = probability_values[batch_index]
@@ -77,15 +77,15 @@ function _accumulate_negativebinomial_gradient!(
 end
 
 function _accumulate_mvnormal_gradient!(
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     value_values::AbstractVector{<:AbstractVector},
     value_gradients::AbstractVector{<:AbstractMatrix},
     mu_values::AbstractVector{<:AbstractVector},
     mu_gradients::AbstractVector{<:AbstractMatrix},
     sigma_values::AbstractVector{<:AbstractVector},
     sigma_gradients::AbstractVector{<:AbstractMatrix},
-)
+) where {T<:AbstractFloat}
     for batch_index in eachindex(totals)
         for component_index in eachindex(value_values)
             value = value_values[component_index][batch_index]
@@ -112,19 +112,19 @@ function _accumulate_mvnormal_gradient!(
 end
 
 function _accumulate_dirichlet_gradient!(
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     parameter_index::Union{Nothing,Int},
     value_values::AbstractVector{<:AbstractVector},
     alpha_values::AbstractVector{<:AbstractVector},
     alpha_gradients::AbstractVector{<:AbstractMatrix},
-)
+) where {T<:AbstractFloat}
     value_length = length(value_values)
-    choice_gradients = Vector{Float64}(undef, value_length)
-    alpha_derivatives = Vector{Float64}(undef, value_length)
+    choice_gradients = Vector{T}(undef, value_length)
+    alpha_derivatives = Vector{T}(undef, value_length)
     for batch_index in eachindex(totals)
-        total_alpha = 0.0
-        accumulator = 0.0
+        total_alpha = zero(T)
+        accumulator = zero(T)
         for component_index in 1:value_length
             alpha = alpha_values[component_index][batch_index]
             alpha > 0 || throw(ArgumentError("dirichlet requires alpha > 0 in every dimension"))
@@ -133,9 +133,9 @@ function _accumulate_dirichlet_gradient!(
         end
         accumulator += loggamma(total_alpha)
 
-        total = 0.0
+        total = zero(T)
         valid = true
-        weighted_choice_gradient = 0.0
+        weighted_choice_gradient = zero(T)
         for component_index in 1:value_length
             value = value_values[component_index][batch_index]
             value > 0 || begin
@@ -152,7 +152,7 @@ function _accumulate_dirichlet_gradient!(
         end
 
         if !valid || abs(total - 1) > sqrt(eps(total)) * value_length * 16
-            totals[batch_index] += -Inf
+            totals[batch_index] += -T(Inf)
             continue
         end
 
@@ -177,12 +177,12 @@ function _accumulate_dirichlet_gradient!(
 end
 
 function _assign_backend_choice_vector_value!(
-    env::BatchedPlanEnvironment{Float64},
-    slot_gradients::Array{Float64,3},
+    env::BatchedPlanEnvironment{T},
+    slot_gradients::Array{T,3},
     slot::Int,
     values::AbstractVector{<:AbstractVector},
     gradients::AbstractVector{<:AbstractMatrix},
-)
+) where {T<:AbstractFloat}
     env.generic_slots[slot] || throw(BatchedBackendFallback("mvnormal backend binding slot $slot must be generic"))
     storage = env.generic_values[slot]
     for batch_index in 1:env.batch_size
@@ -194,13 +194,13 @@ end
 
 function _score_backend_step_and_gradient!(
     step::BackendLaplaceChoicePlanStep,
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
-    params::AbstractMatrix{Float64},
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
     constraints,
-)
+) where {T<:AbstractFloat}
     value_values = env.observed_values
     value_gradients = _batched_backend_gradient_scratch!(cache, 1)
     mu_values = _batched_numeric_scratch!(env, 1)
@@ -220,13 +220,13 @@ end
 
 function _score_backend_step_and_gradient!(
     step::BackendMvNormalChoicePlanStep,
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
-    params::AbstractMatrix{Float64},
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
     constraints,
-)
+) where {T<:AbstractFloat}
     choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
     choice_gradients = [_batched_backend_gradient_scratch!(cache, index) for index in 1:step.value_length]
     mu_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
@@ -274,13 +274,13 @@ end
 
 function _score_backend_step_and_gradient!(
     step::BackendDirichletChoicePlanStep,
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
-    params::AbstractMatrix{Float64},
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
     constraints,
-)
+) where {T<:AbstractFloat}
     choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
     alpha_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
     alpha_gradients = [
@@ -316,13 +316,13 @@ end
 
 function _score_backend_step_and_gradient!(
     step::BackendGeometricChoicePlanStep,
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
-    params::AbstractMatrix{Float64},
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
     constraints,
-)
+) where {T<:AbstractFloat}
     isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Geometric latent parameters"))
     value_values = env.observed_values
     probability_values = _batched_numeric_scratch!(env, 1)
@@ -347,13 +347,13 @@ end
 
 function _score_backend_step_and_gradient!(
     step::BackendNegativeBinomialChoicePlanStep,
-    totals::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
-    params::AbstractMatrix{Float64},
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
     constraints,
-)
+) where {T<:AbstractFloat}
     isnothing(step.parameter_slot) ||
         throw(BatchedBackendFallback("batched backend gradient does not support NegativeBinomial latent parameters"))
     value_values = env.observed_values

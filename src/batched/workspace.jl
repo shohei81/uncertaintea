@@ -318,7 +318,7 @@ function _fallback_batched_logjoint!(
     constraints,
 )
     batch_size = size(params, 2)
-    values = Vector{Float64}(undef, batch_size)
+    values = Vector{float(eltype(params))}(undef, batch_size)
     for batch_index in 1:batch_size
         values[batch_index] = _logjoint_with_workspace!(
             workspace,
@@ -342,7 +342,7 @@ function _logjoint_unconstrained_with_workspace!(
 
     layout = parameterlayout(model)
     constrained = _constrained_buffer!(workspace, params)
-    logabsdet = workspace.parameter_count == 0 ? 0.0 : zero(params[firstindex(params)])
+    logabsdet = workspace.parameter_count == 0 ? zero(float(eltype(params))) : zero(params[firstindex(params)])
     for slot in layout.slots
         logabsdet += _transform_slot_to_constrained!(constrained, slot, params)
     end

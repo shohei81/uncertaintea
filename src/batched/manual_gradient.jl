@@ -153,29 +153,30 @@ end
 
 function _batched_backend_gradient_scratch!(cache::BatchedBackendGradientCache, depth::Int)
     depth > 0 || throw(ArgumentError("batched backend gradient scratch depth must be positive"))
+    element_type = eltype(cache.slot_gradients)
     parameter_count = size(cache.slot_gradients, 1)
     batch_size = size(cache.slot_gradients, 3)
     while length(cache.gradient_scratch) < depth
-        push!(cache.gradient_scratch, Matrix{Float64}(undef, parameter_count, batch_size))
+        push!(cache.gradient_scratch, Matrix{element_type}(undef, parameter_count, batch_size))
     end
     buffer = cache.gradient_scratch[depth]
     if size(buffer) != (parameter_count, batch_size)
-        buffer = Matrix{Float64}(undef, parameter_count, batch_size)
+        buffer = Matrix{element_type}(undef, parameter_count, batch_size)
         cache.gradient_scratch[depth] = buffer
     end
     return buffer
 end
 
-function _zero_gradient!(destination::AbstractMatrix{Float64})
-    fill!(destination, 0.0)
+function _zero_gradient!(destination::AbstractMatrix{T}) where {T<:AbstractFloat}
+    fill!(destination, zero(T))
     return destination
 end
 
 function _copy_slot_gradient!(
-    destination::AbstractMatrix{Float64},
-    slot_gradients::Array{Float64,3},
+    destination::AbstractMatrix{T},
+    slot_gradients::Array{T,3},
     slot::Int,
-)
+) where {T<:AbstractFloat}
     for batch_index in axes(destination, 2), parameter_index in axes(destination, 1)
         destination[parameter_index, batch_index] = slot_gradients[parameter_index, slot, batch_index]
     end
@@ -183,10 +184,10 @@ function _copy_slot_gradient!(
 end
 
 function _store_slot_gradient!(
-    slot_gradients::Array{Float64,3},
+    slot_gradients::Array{T,3},
     slot::Int,
-    source::AbstractMatrix{Float64},
-)
+    source::AbstractMatrix{T},
+) where {T<:AbstractFloat}
     for batch_index in axes(source, 2), parameter_index in axes(source, 1)
         slot_gradients[parameter_index, slot, batch_index] = source[parameter_index, batch_index]
     end
@@ -194,37 +195,37 @@ function _store_slot_gradient!(
 end
 
 function _fill_choice_gradient!(
-    destination::AbstractMatrix{Float64},
+    destination::AbstractMatrix{T},
     parameter_slot::Union{Nothing,Int},
-)
-    fill!(destination, 0.0)
+) where {T<:AbstractFloat}
+    fill!(destination, zero(T))
     isnothing(parameter_slot) && return destination
     for batch_index in axes(destination, 2)
-        destination[parameter_slot, batch_index] = 1.0
+        destination[parameter_slot, batch_index] = one(T)
     end
     return destination
 end
 
 function _fill_choice_vector_gradient!(
-    destination::AbstractMatrix{Float64},
+    destination::AbstractMatrix{T},
     value_index::Union{Nothing,Int},
     component_index::Int,
-)
-    fill!(destination, 0.0)
+) where {T<:AbstractFloat}
+    fill!(destination, zero(T))
     isnothing(value_index) && return destination
     parameter_index = value_index + component_index - 1
     for batch_index in axes(destination, 2)
-        destination[parameter_index, batch_index] = 1.0
+        destination[parameter_index, batch_index] = one(T)
     end
     return destination
 end
 
 function _apply_backend_numeric_gradient_unary!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-    env::BatchedPlanEnvironment{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    env::BatchedPlanEnvironment{T},
     op::Symbol,
-)
+) where {T<:AbstractFloat}
     if op === :-
         for batch_index in eachindex(values)
             values[batch_index] = -values[batch_index]
@@ -270,7 +271,7 @@ function _apply_backend_numeric_gradient_unary!(
         for batch_index in eachindex(values)
             original = values[batch_index]
             values[batch_index] = abs(original)
-            factor = original > 0 ? 1.0 : (original < 0 ? -1.0 : 0.0)
+            factor = original > 0 ? one(T) : (original < 0 ? -one(T) : zero(T))
             for parameter_index in axes(gradients, 1)
                 gradients[parameter_index, batch_index] *= factor
             end
@@ -282,13 +283,13 @@ function _apply_backend_numeric_gradient_unary!(
 end
 
 function _apply_backend_numeric_gradient_binary!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-    env::BatchedPlanEnvironment{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    env::BatchedPlanEnvironment{T},
     op::Symbol,
-    rhs_values::AbstractVector{Float64},
-    rhs_gradients::AbstractMatrix{Float64},
-)
+    rhs_values::AbstractVector{T},
+    rhs_gradients::AbstractMatrix{T},
+) where {T<:AbstractFloat}
     if op === :+
         for batch_index in eachindex(values, rhs_values)
             values[batch_index] += rhs_values[batch_index]
@@ -356,7 +357,7 @@ function _apply_backend_numeric_gradient_binary!(
                 values[batch_index] = lhs_value
                 for parameter_index in axes(gradients, 1)
                     gradients[parameter_index, batch_index] =
-                        0.5 * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
+                        T(0.5) * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
                 end
             end
         end
@@ -375,7 +376,7 @@ function _apply_backend_numeric_gradient_binary!(
                 values[batch_index] = lhs_value
                 for parameter_index in axes(gradients, 1)
                     gradients[parameter_index, batch_index] =
-                        0.5 * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
+                        T(0.5) * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
                 end
             end
         end
@@ -386,15 +387,15 @@ function _apply_backend_numeric_gradient_binary!(
 end
 
 function _apply_backend_numeric_gradient_ternary!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-    env::BatchedPlanEnvironment{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    env::BatchedPlanEnvironment{T},
     op::Symbol,
-    middle_values::AbstractVector{Float64},
-    middle_gradients::AbstractMatrix{Float64},
-    rhs_values::AbstractVector{Float64},
-    rhs_gradients::AbstractMatrix{Float64},
-)
+    middle_values::AbstractVector{T},
+    middle_gradients::AbstractMatrix{T},
+    rhs_values::AbstractVector{T},
+    rhs_gradients::AbstractMatrix{T},
+) where {T<:AbstractFloat}
     if op === :clamp
         for batch_index in eachindex(values, middle_values, rhs_values)
             lhs_value = values[batch_index]
@@ -423,13 +424,13 @@ function _apply_backend_numeric_gradient_ternary!(
                 values[batch_index] = lhs_value
                 for parameter_index in axes(gradients, 1)
                     gradients[parameter_index, batch_index] =
-                        0.5 * (gradients[parameter_index, batch_index] + middle_gradients[parameter_index, batch_index])
+                        T(0.5) * (gradients[parameter_index, batch_index] + middle_gradients[parameter_index, batch_index])
                 end
             elseif lhs_value == rhs_value
                 values[batch_index] = lhs_value
                 for parameter_index in axes(gradients, 1)
                     gradients[parameter_index, batch_index] =
-                        0.5 * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
+                        T(0.5) * (gradients[parameter_index, batch_index] + rhs_gradients[parameter_index, batch_index])
                 end
             else
                 values[batch_index] = lhs_value
@@ -442,26 +443,26 @@ function _apply_backend_numeric_gradient_ternary!(
 end
 
 function _eval_backend_numeric_expr_and_gradient!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
+    env::BatchedPlanEnvironment{T},
     expr::BackendLiteralExpr,
     depth::Int=1,
-)
-    fill!(values, _require_numeric_value(env, expr.value, "batched backend numeric expression"))
-    fill!(gradients, 0.0)
+) where {T<:AbstractFloat}
+    fill!(values, T(_require_numeric_value(env, expr.value, "batched backend numeric expression")))
+    fill!(gradients, zero(T))
     return values, gradients
 end
 
 function _eval_backend_numeric_expr_and_gradient!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
+    env::BatchedPlanEnvironment{T},
     expr::BackendSlotExpr,
     depth::Int=1,
-)
+) where {T<:AbstractFloat}
     env.assigned[expr.slot] || throw(BatchedBackendFallback("environment slot $(expr.slot) is not assigned"))
     if env.numeric_slots[expr.slot]
         copyto!(values, view(env.numeric_values, expr.slot, :))
@@ -469,22 +470,22 @@ function _eval_backend_numeric_expr_and_gradient!(
         return values, gradients
     elseif env.index_slots[expr.slot]
         for batch_index in eachindex(values)
-            values[batch_index] = Float64(env.index_values[expr.slot, batch_index])
+            values[batch_index] = T(env.index_values[expr.slot, batch_index])
         end
-        fill!(gradients, 0.0)
+        fill!(gradients, zero(T))
         return values, gradients
     end
     _backend_numeric_error(env, "batched backend gradient slot $(expr.slot) is not numeric")
 end
 
 function _eval_backend_numeric_expr_and_gradient!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
+    env::BatchedPlanEnvironment{T},
     expr::BackendPrimitiveExpr,
     depth::Int=1,
-)
+) where {T<:AbstractFloat}
     expr.op in BACKEND_GRADIENT_SUPPORTED_PRIMITIVES ||
         _backend_numeric_error(env, "batched backend gradient does not support primitive `$(expr.op)`")
     isempty(expr.arguments) && _backend_numeric_error(env, "batched backend gradient primitive requires arguments")
@@ -523,24 +524,24 @@ function _eval_backend_numeric_expr_and_gradient!(
 end
 
 function _eval_backend_numeric_expr_and_gradient!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
+    env::BatchedPlanEnvironment{T},
     expr::BackendTupleExpr,
     depth::Int=1,
-)
+) where {T<:AbstractFloat}
     _backend_numeric_error(env, "batched backend gradient expression cannot be a tuple")
 end
 
 function _eval_backend_numeric_expr_and_gradient!(
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
     cache::BatchedBackendGradientCache,
-    env::BatchedPlanEnvironment{Float64},
+    env::BatchedPlanEnvironment{T},
     expr::BackendBlockExpr,
     depth::Int=1,
-)
+) where {T<:AbstractFloat}
     for argument in expr.arguments
         _eval_backend_numeric_expr_and_gradient!(values, gradients, cache, env, argument, depth)
     end
@@ -548,12 +549,12 @@ function _eval_backend_numeric_expr_and_gradient!(
 end
 
 function _set_numeric_binding!(
-    env::BatchedPlanEnvironment{Float64},
-    slot_gradients::Array{Float64,3},
+    env::BatchedPlanEnvironment{T},
+    slot_gradients::Array{T,3},
     slot::Int,
-    values::AbstractVector{Float64},
-    gradients::AbstractMatrix{Float64},
-)
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+) where {T<:AbstractFloat}
     copyto!(view(env.numeric_values, slot, :), values)
     _store_slot_gradient!(slot_gradients, slot, gradients)
     env.assigned[slot] = true

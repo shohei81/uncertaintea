@@ -9,15 +9,16 @@ function _batched_backend_gradient_cache(
     isnothing(backend_plan) && return nothing
     _backend_gradient_supported(backend_plan) || return nothing
 
+    element_type = float(eltype(params))
     workspace = BatchedLogjointWorkspace(model)
     cache = BatchedBackendGradientCache(
         workspace,
-        zeros(Float64, size(params, 1), length(workspace.environment.layout.symbols), size(params, 2)),
-        Matrix{Float64}[],
+        zeros(element_type, size(params, 1), length(workspace.environment.layout.symbols), size(params, 2)),
+        Matrix{element_type}[],
         batch_args,
         batch_constraints,
     )
-    totals = _batched_totals_buffer!(workspace, size(params, 2), Float64)
+    totals = _batched_totals_buffer!(workspace, size(params, 2), element_type)
     try
         _batched_backend_logjoint_and_gradient_unconstrained!(totals, gradient_buffer, model, cache, params)
     catch err
@@ -100,7 +101,7 @@ function BatchedLogjointGradientCache(
     batch_args = _validate_batched_args(args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     parameter_count = size(params, 1)
-    gradient_buffer = Matrix{Float64}(undef, parameter_count, batch_size)
+    gradient_buffer = Matrix{float(eltype(params))}(undef, parameter_count, batch_size)
     if batch_size == 0
         return BatchedLogjointGradientCache(model, Any[], nothing, nothing, gradient_buffer, parameter_count, batch_size)
     end
@@ -143,7 +144,7 @@ function batched_logjoint_gradient_unconstrained!(
         throw(DimensionMismatch("expected $(cache.batch_size) batch elements, got $(size(params, 2))"))
 
     if !isnothing(cache.backend_cache)
-        totals = _batched_totals_buffer!(cache.backend_cache.workspace, cache.batch_size, Float64)
+        totals = _batched_totals_buffer!(cache.backend_cache.workspace, cache.batch_size, eltype(cache.gradient_buffer))
         _batched_backend_logjoint_and_gradient_unconstrained!(totals, cache.gradient_buffer, cache.model, cache.backend_cache, params)
         return cache.gradient_buffer
     end
@@ -247,7 +248,7 @@ function batched_logjoint(
     batch_size = _validate_batched_constrained_params(model, params)
     batch_args = _validate_batched_args(args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
-    batch_size == 0 && return Float64[]
+    batch_size == 0 && return float(eltype(params))[]
 
     workspace = BatchedLogjointWorkspace(model)
     if !isnothing(workspace.backend_plan)
@@ -271,10 +272,10 @@ function batched_logjoint_unconstrained(
     batch_size = _validate_batched_unconstrained_params(model, params)
     batch_args = _validate_batched_args(args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
-    batch_size == 0 && return Float64[]
+    batch_size == 0 && return float(eltype(params))[]
 
     workspace = BatchedLogjointWorkspace(model)
-    values = Vector{Float64}(undef, batch_size)
+    values = Vector{float(eltype(params))}(undef, batch_size)
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, batch_args, batch_constraints)
 end
 
