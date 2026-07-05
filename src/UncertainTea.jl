@@ -54,7 +54,9 @@ export variational_mean, variational_samples
 export predict, PredictiveDraws, addresses, log_evidence
 export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
 export truncatednormal, truncatedstudentt
+export mixture
 export device_batched_logjoint, device_batched_logjoint!, device_lowering_report, DeviceBatchedWorkspace, DeviceExecutionPlan
+export device_batched_logjoint_gradient, device_batched_logjoint_gradient!
 # binomial is intentionally not exported: it would shadow Base.binomial for users.
 # Inside @tea models the name resolves to UncertainTea.binomial automatically.
 

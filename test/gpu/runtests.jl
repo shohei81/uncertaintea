@@ -62,3 +62,31 @@ end
     devb = device_batched_logjoint(gpu_bernoulli_model, Float32.(pb), (4,), cmb; backend=backend, precision=Float32)
     @test gpu_check_float32(devb, refb)
 end
+
+@testset "device Metal GPU gradient smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU gradient smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+
+    # gaussian + gamma(log) latent with loop observations.
+    ys = [0.4, -0.7, 1.1, 0.2, 0.9]
+    cm = choicemap((:y => i, ys[i]) for i in 1:5)
+    params = [0.5 -0.3 1.2 0.05; 0.1 0.7 -0.2 0.4]
+    gref = batched_logjoint_gradient_unconstrained(gpu_gauss_model, params, (5,), cm)
+    vref = batched_logjoint_unconstrained(gpu_gauss_model, params, (5,), cm)
+    v, g = device_batched_logjoint_gradient(gpu_gauss_model, Float32.(params), (5,), cm; backend=backend, precision=Float32)
+    @test gpu_check_float32(vec(Float64.(g)), vec(gref))
+    @test gpu_check_float32(Float64.(v), vref)
+
+    # bernoulli + beta(logit) latent.
+    zs = [1.0, 0.0, 1.0, 1.0]
+    cmb = choicemap((:z => i, zs[i]) for i in 1:4)
+    pb = reshape([0.3, -0.8, 1.5], 1, 3)
+    grefb = batched_logjoint_gradient_unconstrained(gpu_bernoulli_model, pb, (4,), cmb)
+    _, gb = device_batched_logjoint_gradient(gpu_bernoulli_model, Float32.(pb), (4,), cmb; backend=backend, precision=Float32)
+    @test gpu_check_float32(vec(Float64.(gb)), vec(grefb))
+end

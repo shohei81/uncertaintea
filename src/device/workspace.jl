@@ -45,6 +45,10 @@ mutable struct DeviceBatchedWorkspace{T,B<:KernelAbstractions.Backend,P<:DeviceE
     totals_device::Any
     trip_counts_device::Any
     loop_starts_device::Any
+    # Gradient buffers (allocated lazily on the first gradient call). `grad_slots_device`
+    # is a `DeviceDual{T}` scratch laid out (slot_count x parameter_count x batch).
+    gradients_device::Any
+    grad_slots_device::Any
 end
 
 function DeviceBatchedWorkspace(
@@ -89,7 +93,30 @@ function DeviceBatchedWorkspace(
         totals_device,
         trip_counts_device,
         loop_starts_device,
+        nothing,
+        nothing,
     )
+end
+
+# Allocates (once) the device buffers the gradient kernel needs: a plain-`T`
+# `parameter_count x batch` gradient matrix and a `DeviceDual{T}` slot scratch laid
+# out `(slot_count, parameter_count, batch)` so each `(parameter, batch)` thread owns
+# its own slot column.
+function _device_ensure_gradient_buffers!(workspace::DeviceBatchedWorkspace{T}) where {T}
+    if isnothing(workspace.gradients_device)
+        workspace.gradients_device =
+            KernelAbstractions.allocate(workspace.backend, T, workspace.parameter_count, workspace.batch_size)
+    end
+    if isnothing(workspace.grad_slots_device)
+        workspace.grad_slots_device = KernelAbstractions.allocate(
+            workspace.backend,
+            DeviceDual{T},
+            workspace.slot_count,
+            workspace.parameter_count,
+            workspace.batch_size,
+        )
+    end
+    return nothing
 end
 
 function _device_upload_params!(workspace::DeviceBatchedWorkspace{T}, params::AbstractMatrix) where {T}
