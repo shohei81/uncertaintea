@@ -1,0 +1,6 @@
+include("device/math.jl")
+include("device/plan.jl")
+include("device/staging.jl")
+include("device/logjoint_kernel.jl")
+include("device/workspace.jl")
+include("device/api.jl")

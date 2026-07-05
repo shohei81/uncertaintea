@@ -1,9 +1,10 @@
 module UncertainTea
 
 using ForwardDiff
+using KernelAbstractions
 using LinearAlgebra
 using Random
-using SpecialFunctions: digamma, loggamma
+using SpecialFunctions: digamma, loggamma, erf, erfc, erfinv, beta_inc
 
 export @tea
 export AddressSpec, ChoiceSpec, ModelSpec
@@ -14,6 +15,7 @@ export ParameterLayout, ParameterSlotSpec
 export ExecutionPlan, ChoicePlanStep
 export DeterministicPlanStep, LoopPlanStep
 export IdentityTransform, VectorIdentityTransform, LogTransform, LogitTransform, SimplexTransform
+export BoundedTransform, LowerBoundedTransform, UpperBoundedTransform
 export ChoiceMap, TeaModel, TeaTrace
 export StaticMode, DynamicMode
 export modelspec, isstaticaddress, isaddresstemplate, isrepeatedchoice, hasrepeatedchoices
@@ -51,6 +53,8 @@ export map_estimate, laplace_approximation, MAPResult, LaplaceResult
 export variational_mean, variational_samples
 export predict, PredictiveDraws, addresses, log_evidence
 export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
+export truncatednormal, truncatedstudentt
+export device_batched_logjoint, device_batched_logjoint!, device_lowering_report, DeviceBatchedWorkspace, DeviceExecutionPlan
 # binomial is intentionally not exported: it would shadow Base.binomial for users.
 # Inside @tea models the name resolves to UncertainTea.binomial automatically.
 
@@ -67,5 +71,6 @@ include("batched.jl")
 include("gpu_backend.jl")
 include("inference.jl")
 include("frontend.jl")
+include("device.jl")
 
 end
