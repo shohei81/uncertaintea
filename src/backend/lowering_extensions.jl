@@ -83,6 +83,64 @@ struct BackendBroadcastNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBa
     parameter_slot::Union{Nothing,Int}
 end
 
+# Backend-native truncated normal: mu/sigma are standard numeric argument
+# expressions; lower/upper are numeric expressions too, but for the common latent
+# case they lower to literal constants (Inf/-Inf via `_static_bound_value`). The
+# scoring subtracts log(Phi(zb) - Phi(za)) from the base normal logpdf, matching
+# the CPU `TruncatedNormalDist` reference exactly.
+struct BackendTruncatedNormalChoicePlanStep{
+    M<:AbstractBackendExpr,
+    S<:AbstractBackendExpr,
+    L<:AbstractBackendExpr,
+    U<:AbstractBackendExpr,
+    AD<:BackendAddressSpec,
+} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    mu::M
+    sigma::S
+    lower::L
+    upper::U
+    parameter_slot::Union{Nothing,Int}
+end
+
+# Backend-native finite marginalized mixture of normal components. `weights` is a
+# tuple of numeric argument expressions (a latent simplex flows in as slot
+# expressions); `mus`/`sigmas` are per-component tuples of numeric expressions.
+# Only all-normal-component mixtures are lowered here; other component families
+# fall back to the compiled logjoint.
+struct BackendMixtureNormalChoicePlanStep{
+    W<:Tuple,
+    M<:Tuple,
+    S<:Tuple,
+    AD<:BackendAddressSpec,
+} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    weights::W
+    mus::M
+    sigmas::S
+    parameter_slot::Union{Nothing,Int}
+    weight_parameter_index::Union{Nothing,Int}
+end
+
+# Backend-native dense-covariance multivariate normal parameterized by a lower
+# triangular Cholesky factor. `mu` is a tuple of numeric expressions (length d);
+# `scale_tril` is a single generic expression evaluating to a whole d x d matrix
+# (a model argument or captured constant — the compiled CPU path never accepts an
+# inline matrix literal, so the factor is treated as constant data with zero
+# gradient). Scoring solves L z = x - mu by forward substitution, matching the CPU
+# `MvNormalDenseDist` reference; gradients flow only through `mu` and the value.
+struct BackendMvNormalDenseChoicePlanStep{M<:Tuple,L<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    mu::M
+    scale_tril::L
+    parameter_slot::Union{Nothing,Int}
+    value_index::Union{Nothing,Int}
+    value_length::Int
+end
+
 # Underlying scalar operator symbol for a (possibly dotted) broadcast operator, e.g.
 # `.*` -> `:*`. Returns `nothing` when the callee is not a supported broadcast op.
 function _backend_broadcast_op(callee)
@@ -233,6 +291,192 @@ function _backend_lower_dirichlet_choice_step(model::TeaModel, layout::Environme
         value_index,
         length(alpha),
     )
+end
+
+# Lower a truncated-family bound expression. Static bounds (numeric literals and
+# `Inf`/`-Inf`, which arrive as the symbol `:Inf` in the captured AST) become
+# literal backend expressions; anything else (a latent-flowing bound) reuses the
+# standard numeric lowering.
+function _backend_lower_bound_expr(model::TeaModel, layout::EnvironmentLayout, expr, issues::Vector{String}, context::String)
+    static_value = _static_bound_value(expr)
+    isnothing(static_value) || return BackendLiteralExpr(float(static_value))
+    return _backend_lower_expr(model, layout, expr, issues, context)
+end
+
+function _backend_lower_truncatednormal_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+    length(step.rhs.arguments) == 4 || begin
+        _backend_issue!(issues, "truncatednormal expects exactly 4 backend arguments")
+        return nothing
+    end
+    # A latent truncatednormal draws through a bounded parameter transform that the
+    # batched backend unconstrained-transform layer does not implement, so fall back
+    # for latents. Observations with latent-flowing arguments stay backend-native.
+    isnothing(step.parameter_slot) || begin
+        _backend_issue!(issues, "latent truncatednormal is not supported in backend lowering (bounded transform)")
+        return nothing
+    end
+    address = _backend_lower_address(model, layout, step.address, issues)
+    mu = _backend_lower_expr(model, layout, step.rhs.arguments[1], issues, "truncatednormal mean")
+    sigma = _backend_lower_expr(model, layout, step.rhs.arguments[2], issues, "truncatednormal scale")
+    lower = _backend_lower_bound_expr(model, layout, step.rhs.arguments[3], issues, "truncatednormal lower bound")
+    upper = _backend_lower_bound_expr(model, layout, step.rhs.arguments[4], issues, "truncatednormal upper bound")
+    (isnothing(address) || isnothing(mu) || isnothing(sigma) || isnothing(lower) || isnothing(upper)) && return nothing
+    return BackendTruncatedNormalChoicePlanStep(
+        step.binding_slot,
+        address,
+        mu,
+        sigma,
+        lower,
+        upper,
+        step.parameter_slot,
+    )
+end
+
+# Lower one `mixture` component constructor call into `(family, mu_expr, sigma_expr)`.
+# Only `normal(mu, sigma)` components are supported for backend lowering.
+function _backend_lower_mixture_component(model::TeaModel, layout::EnvironmentLayout, component, issues::Vector{String})
+    if component isa Expr && component.head == :call && length(component.args) == 3 && component.args[1] === :normal
+        mu = _backend_lower_expr(model, layout, component.args[2], issues, "mixture normal mean")
+        sigma = _backend_lower_expr(model, layout, component.args[3], issues, "mixture normal scale")
+        (isnothing(mu) || isnothing(sigma)) && return nothing
+        return (mu, sigma)
+    end
+    _backend_issue!(issues, "mixture backend lowering only supports normal(mu, sigma) components")
+    return nothing
+end
+
+function _backend_lower_mixture_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+    length(step.rhs.arguments) >= 2 || begin
+        _backend_issue!(issues, "mixture expects a weights argument and at least one component")
+        return nothing
+    end
+    address = _backend_lower_address(model, layout, step.address, issues)
+    weights = _backend_lower_tuple_argument(model, layout, step.rhs.arguments[1], issues, "mixture weights")
+    (isnothing(address) || isnothing(weights)) && return nothing
+    component_count = length(step.rhs.arguments) - 1
+    length(weights) == component_count || begin
+        _backend_issue!(issues, "mixture requires one weight per component in backend lowering")
+        return nothing
+    end
+    components = map(component -> _backend_lower_mixture_component(model, layout, component, issues), step.rhs.arguments[2:end])
+    any(isnothing, components) && return nothing
+    mus = tuple((component[1] for component in components)...)
+    sigmas = tuple((component[2] for component in components)...)
+
+    weight_parameter_index = nothing
+    if !isnothing(step.parameter_slot)
+        # A latent mixture value uses an IdentityTransform over the drawn scalar; the
+        # weights are not a latent simplex in that case. Backend gradients only need
+        # the weight-parameter index when the weights themselves are a latent simplex,
+        # which is not representable through the scalar mixture parameter slot, so
+        # leave it `nothing` and fall back if a genuine latent-weight case arises.
+        weight_parameter_index = nothing
+    end
+    return BackendMixtureNormalChoicePlanStep(
+        step.binding_slot,
+        address,
+        weights,
+        mus,
+        sigmas,
+        step.parameter_slot,
+        weight_parameter_index,
+    )
+end
+
+function _backend_lower_mvnormaldense_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+    length(step.rhs.arguments) == 2 || begin
+        _backend_issue!(issues, "mvnormaldense expects exactly 2 backend arguments")
+        return nothing
+    end
+    address = _backend_lower_address(model, layout, step.address, issues)
+    isnothing(address) && return nothing
+    mu = _backend_lower_tuple_argument(model, layout, step.rhs.arguments[1], issues, "mvnormaldense mean")
+    # scale_tril is a single expression evaluating to a whole matrix (a model
+    # argument slot or captured constant), never an inline element grid.
+    scale_tril = _backend_lower_expr(model, layout, step.rhs.arguments[2], issues, "mvnormaldense scale_tril")
+    (isnothing(mu) || isnothing(scale_tril)) && return nothing
+    scale_tril isa BackendSlotExpr || begin
+        _backend_issue!(issues, "mvnormaldense backend lowering requires a scale_tril model argument or captured matrix")
+        return nothing
+    end
+    dimension = length(mu)
+    dimension >= 1 || begin
+        _backend_issue!(issues, "mvnormaldense requires at least one backend dimension")
+        return nothing
+    end
+
+    value_index = nothing
+    if !isnothing(step.parameter_slot)
+        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot.transform isa VectorIdentityTransform || begin
+            _backend_issue!(issues, "mvnormaldense backend lowering expects a vector identity transform")
+            return nothing
+        end
+        slot.value_length == dimension || begin
+            _backend_issue!(issues, "mvnormaldense backend lowering requires a parameter slot with matching vector length")
+            return nothing
+        end
+        value_index = slot.value_index
+    end
+    return BackendMvNormalDenseChoicePlanStep(
+        step.binding_slot,
+        address,
+        mu,
+        scale_tril,
+        step.parameter_slot,
+        value_index,
+        dimension,
+    )
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendTruncatedNormalChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.lower, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.upper, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendMixtureNormalChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    for expr in step.weights
+        _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
+    end
+    for expr in step.mus
+        _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
+    end
+    for expr in step.sigmas
+        _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
+    end
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendMvNormalDenseChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    for expr in step.mu
+        _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
+    end
+    _mark_backend_generic_expr_slots!(step.scale_tril, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
 end
 
 function _collect_backend_slot_kinds!(

@@ -114,6 +114,25 @@ function _backend_gradient_supported_step(step::BackendMvNormalChoicePlanStep)
            all(_backend_gradient_supported_expr, step.sigma)
 end
 
+function _backend_gradient_supported_step(step::BackendTruncatedNormalChoicePlanStep)
+    return _backend_gradient_supported_expr(step.mu) &&
+           _backend_gradient_supported_expr(step.sigma) &&
+           _backend_gradient_supported_expr(step.lower) &&
+           _backend_gradient_supported_expr(step.upper)
+end
+
+function _backend_gradient_supported_step(step::BackendMixtureNormalChoicePlanStep)
+    return all(_backend_gradient_supported_expr, step.weights) &&
+           all(_backend_gradient_supported_expr, step.mus) &&
+           all(_backend_gradient_supported_expr, step.sigmas)
+end
+
+# scale_tril is a generic constant matrix (zero gradient); only mu must be
+# gradient-differentiable.
+function _backend_gradient_supported_step(step::BackendMvNormalDenseChoicePlanStep)
+    return all(_backend_gradient_supported_expr, step.mu)
+end
+
 function _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep)
     return all(_backend_gradient_supported_expr, step.alpha)
 end
@@ -151,6 +170,9 @@ _backend_gradient_supported_step(step::BackendCategoricalChoicePlanStep, numeric
 _backend_gradient_supported_step(step::BackendPoissonChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendStudentTChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendMvNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendTruncatedNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendMixtureNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendMvNormalDenseChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 

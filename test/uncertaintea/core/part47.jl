@@ -222,16 +222,16 @@ end
         mvd_dyn_expected atol = 1e-10
 end
 
-# --- backend honestly reports the family as unsupported ----------------------
+# --- backend now natively supports the family (see PR 50) --------------------
+# An mvnormaldense observation with a constant (model-argument) scale factor is
+# lowered to a BackendMvNormalDenseChoicePlanStep and scored natively.
 @testset "mvd_backend_report" begin
     @tea static function mvd_report_model(Larg)
         mu ~ normal(0.0f0, 1.0f0)
         {:y} ~ mvnormaldense([mu, mu], Larg)
     end
     mvd_report = backend_report(mvd_report_model)
-    @test mvd_report.supported == false
-    @test any(
-        issue -> occursin("unsupported distribution family `mvnormaldense`", issue),
-        mvd_report.issues,
-    )
+    @test mvd_report.supported == true
+    @test backend_execution_plan(mvd_report_model).steps[2] isa
+        UncertainTea.BackendMvNormalDenseChoicePlanStep
 end

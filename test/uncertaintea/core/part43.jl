@@ -182,13 +182,23 @@
         ) === :mixture
     end
 
-    # --- backend honestly reports the family as unsupported ------------------
+    # --- backend now natively supports all-normal-component mixtures (PR 50) --
     @testset "mix_backend_report" begin
         @tea static function mix_report_model()
             mu ~ normal(0.0f0, 1.0f0)
             {:y} ~ mixture((0.5f0, 0.5f0), normal(mu - 2.0f0, 0.5f0), normal(mu + 2.0f0, 0.5f0))
         end
         mix_report = backend_report(mix_report_model)
-        @test mix_report.supported == false
-        @test any(issue -> occursin("mixture", issue), mix_report.issues)
+        @test mix_report.supported == true
+        @test backend_execution_plan(mix_report_model).steps[2] isa
+            UncertainTea.BackendMixtureNormalChoicePlanStep
+
+        # A mixture with a non-normal component stays on the fallback.
+        @tea static function mix_report_laplace_model()
+            mu ~ normal(0.0f0, 1.0f0)
+            {:y} ~ mixture((0.5f0, 0.5f0), normal(mu, 0.5f0), laplace(mu, 0.5f0))
+        end
+        mix_report_laplace = backend_report(mix_report_laplace_model)
+        @test mix_report_laplace.supported == false
+        @test any(issue -> occursin("mixture", issue), mix_report_laplace.issues)
     end

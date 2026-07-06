@@ -35,6 +35,9 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :studentt,
     :categorical,
     :mvnormal,
+    :truncatednormal,
+    :mixture,
+    :mvnormaldense,
 ]
 
 abstract type AbstractBackendExpr end
@@ -365,6 +368,9 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
     end
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
     step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, step, issues)
+    step.rhs.family === :truncatednormal && return _backend_lower_truncatednormal_choice_step(model, layout, step, issues)
+    step.rhs.family === :mixture && return _backend_lower_mixture_choice_step(model, layout, step, issues)
+    step.rhs.family === :mvnormaldense && return _backend_lower_mvnormaldense_choice_step(model, layout, step, issues)
 
     address = _backend_lower_address(model, layout, step.address, issues)
     arguments = map(arg -> _backend_lower_expr(model, layout, arg, issues, "distribution argument"), step.rhs.arguments)
@@ -922,6 +928,9 @@ function _backend_loop_observed_choice(step::BackendLoopPlanStep)
     choice = first(step.body)
     choice isa BackendChoicePlanStep || return nothing
     choice isa BackendMvNormalChoicePlanStep && return nothing
+    choice isa BackendMvNormalDenseChoicePlanStep && return nothing
+    choice isa BackendTruncatedNormalChoicePlanStep && return nothing
+    choice isa BackendMixtureNormalChoicePlanStep && return nothing
     isnothing(choice.parameter_slot) || return nothing
     isnothing(choice.binding_slot) || return nothing
     _backend_iterator_only_address(choice.address, step.iterator_slot) || return nothing

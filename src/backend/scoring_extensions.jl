@@ -894,3 +894,239 @@ function _score_backend_observed_loop_choice!(
     end
     return totals
 end
+
+# --- truncated normal ---------------------------------------------------------
+
+# Standard normal pdf with an explicit guard so an infinite standardized bound
+# (from an unbounded truncation side) contributes a zero density, keeping the
+# normalizer-gradient terms finite.
+function _std_normal_pdf(z)
+    zz = float(z)
+    isinf(zz) && return zero(zz)
+    return exp(-zz * zz / 2) / sqrt(oftype(zz, 2) * pi)
+end
+
+function _backend_truncatednormal_logpdf(mu, sigma, lower, upper, x)
+    xx, mu_, sigma_, lower_, upper_ = promote(x, mu, sigma, lower, upper)
+    sigma_ > zero(sigma_) || throw(ArgumentError("truncatednormal requires sigma > 0"))
+    (xx < lower_ || xx > upper_) && return oftype(xx, -Inf)
+    base = _backend_normal_logpdf(mu_, sigma_, xx)
+    za = (lower_ - mu_) / sigma_
+    zb = (upper_ - mu_) / sigma_
+    return base - _log_normal_cdf_diff(za, zb)
+end
+
+function _score_backend_step!(
+    step::BackendTruncatedNormalChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    mu = _eval_backend_numeric_expr(env, step.mu)
+    sigma = _eval_backend_numeric_expr(env, step.sigma)
+    lower = _eval_backend_numeric_expr(env, step.lower)
+    upper = _eval_backend_numeric_expr(env, step.upper)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_truncatednormal_logpdf(mu, sigma, lower, upper, value)
+end
+
+function _score_backend_step!(
+    step::BackendTruncatedNormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    lower_values = _batched_numeric_scratch!(env, 3)
+    upper_values = _batched_numeric_scratch!(env, 4)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 5)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 6)
+    _eval_backend_numeric_expr!(lower_values, env, step.lower, 7)
+    _eval_backend_numeric_expr!(upper_values, env, step.upper, 8)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        totals[batch_index] += _backend_truncatednormal_logpdf(
+            mu_values[batch_index],
+            sigma_values[batch_index],
+            lower_values[batch_index],
+            upper_values[batch_index],
+            value,
+        )
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+# --- mixture of normal components ---------------------------------------------
+
+function _backend_mixture_normal_logpdf(weights, mus, sigmas, x)
+    k = length(weights)
+    (length(mus) == k && length(sigmas) == k) ||
+        throw(ArgumentError("mixture requires one weight per normal component"))
+    xf = float(x)
+    T = typeof(xf + float(weights[1]) + float(mus[1]) + float(sigmas[1]))
+    m = T(-Inf)
+    for index in 1:k
+        term = log(weights[index]) + _backend_normal_logpdf(mus[index], sigmas[index], xf)
+        term > m && (m = term)
+    end
+    isfinite(m) || return T(-Inf)
+    total = zero(T)
+    for index in 1:k
+        term = log(weights[index]) + _backend_normal_logpdf(mus[index], sigmas[index], xf)
+        total += exp(term - m)
+    end
+    return m + log(total)
+end
+
+function _score_backend_step!(
+    step::BackendMixtureNormalChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    weights = tuple((_eval_backend_numeric_expr(env, expr) for expr in step.weights)...)
+    mus = tuple((_eval_backend_numeric_expr(env, expr) for expr in step.mus)...)
+    sigmas = tuple((_eval_backend_numeric_expr(env, expr) for expr in step.sigmas)...)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_mixture_normal_logpdf(weights, mus, sigmas, value)
+end
+
+function _score_backend_step!(
+    step::BackendMixtureNormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    k = length(step.weights)
+    choice_values = env.observed_values
+    weight_values = [_batched_numeric_scratch!(env, index) for index in 1:k]
+    mu_values = [_batched_numeric_scratch!(env, k + index) for index in 1:k]
+    sigma_values = [_batched_numeric_scratch!(env, 2 * k + index) for index in 1:k]
+    for index in 1:k
+        _eval_backend_numeric_expr!(weight_values[index], env, step.weights[index], 3 * k + 1)
+        _eval_backend_numeric_expr!(mu_values[index], env, step.mus[index], 3 * k + 2)
+        _eval_backend_numeric_expr!(sigma_values[index], env, step.sigmas[index], 3 * k + 3)
+    end
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index in 1:env.batch_size
+        value = choice_values[batch_index]
+        weights = ntuple(index -> weight_values[index][batch_index], k)
+        mus = ntuple(index -> mu_values[index][batch_index], k)
+        sigmas = ntuple(index -> sigma_values[index][batch_index], k)
+        totals[batch_index] += _backend_mixture_normal_logpdf(weights, mus, sigmas, value)
+        if !isnothing(step.binding_slot)
+            if env.numeric_slots[step.binding_slot]
+                env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), value)
+            elseif env.index_slots[step.binding_slot]
+                env.index_values[step.binding_slot, batch_index] = Int(value)
+            else
+                env.generic_values[step.binding_slot][batch_index] = value
+            end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+# --- dense-covariance multivariate normal -------------------------------------
+
+# Log density of mvnormaldense via forward substitution solving L z = x - mu,
+# reading only the lower triangle of the d x d factor `Lmat`. Matches the CPU
+# `MvNormalDenseDist` reference (returns -Inf on a length mismatch).
+function _backend_mvnormaldense_logpdf(mu, Lmat, x)
+    d = length(mu)
+    (length(x) == d && size(Lmat, 1) == d) || return oftype(float(x[1]), -Inf)
+    z1 = (x[1] - mu[1]) / Lmat[1, 1]
+    solved = Vector{typeof(z1)}(undef, d)
+    solved[1] = z1
+    log_det = log(Lmat[1, 1])
+    quadratic = z1 * z1
+    for row in 2:d
+        residual = x[row] - mu[row]
+        for col in 1:(row - 1)
+            residual -= Lmat[row, col] * solved[col]
+        end
+        z = residual / Lmat[row, row]
+        solved[row] = z
+        log_det += log(Lmat[row, row])
+        quadratic += z * z
+    end
+    return -log_det - quadratic / 2 - d * log(2 * pi) / 2
+end
+
+# Read the whole scale_tril matrix from the generic slot the argument expression
+# resolves to, validating it is a d x d matrix.
+function _backend_mvnormaldense_scale_matrix(matrix, d::Int)
+    matrix isa AbstractMatrix ||
+        throw(ArgumentError("mvnormaldense scale_tril must evaluate to a matrix, got $(typeof(matrix))"))
+    (size(matrix, 1) == d && size(matrix, 2) == d) ||
+        throw(ArgumentError("mvnormaldense scale_tril must be $(d)x$(d), got $(size(matrix))"))
+    return matrix
+end
+
+function _score_backend_step!(
+    step::BackendMvNormalDenseChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_vector_value(step.value_index, step.value_length, params, constraints, address)
+    d = step.value_length
+    mu = [_eval_backend_numeric_expr(env, expr) for expr in step.mu]
+    Lmat = _backend_mvnormaldense_scale_matrix(_environment_value(env, step.scale_tril.slot), d)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_mvnormaldense_logpdf(mu, Lmat, value)
+end
+
+function _score_backend_step!(
+    step::BackendMvNormalDenseChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    d = step.value_length
+    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:d]
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_vector_values!(choice_values, step.value_index, d, params, constraints, address_parts)
+
+    mu_values = [_batched_numeric_scratch!(env, d + index) for index in 1:d]
+    for index in 1:d
+        _eval_backend_numeric_expr!(mu_values[index], env, step.mu[index], 2 * d + 1)
+    end
+
+    env.assigned[step.scale_tril.slot] ||
+        throw(BatchedBackendFallback("mvnormaldense scale_tril slot $(step.scale_tril.slot) is not assigned"))
+    scale_storage = env.generic_values[step.scale_tril.slot]
+    for batch_index in 1:env.batch_size
+        mu = ntuple(index -> mu_values[index][batch_index], d)
+        Lmat = _backend_mvnormaldense_scale_matrix(scale_storage[batch_index], d)
+        x = ntuple(index -> choice_values[index][batch_index], d)
+        totals[batch_index] += _backend_mvnormaldense_logpdf(mu, Lmat, x)
+    end
+
+    isnothing(step.binding_slot) || _assign_backend_choice_vector_value!(env, step.binding_slot, choice_values)
+    return totals
+end

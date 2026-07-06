@@ -530,3 +530,301 @@ function _score_backend_step_and_gradient!(
     end
     return totals, gradients
 end
+
+# --- truncated normal gradient ------------------------------------------------
+
+function _accumulate_truncatednormal_gradient!(
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    value_values::AbstractVector{T},
+    value_gradients::AbstractMatrix{T},
+    mu_values::AbstractVector{T},
+    mu_gradients::AbstractMatrix{T},
+    sigma_values::AbstractVector{T},
+    sigma_gradients::AbstractMatrix{T},
+    lower_values::AbstractVector{T},
+    lower_gradients::AbstractMatrix{T},
+    upper_values::AbstractVector{T},
+    upper_gradients::AbstractMatrix{T},
+) where {T<:AbstractFloat}
+    for batch_index in eachindex(totals)
+        value = value_values[batch_index]
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
+        lower = lower_values[batch_index]
+        upper = upper_values[batch_index]
+        totals[batch_index] += _backend_truncatednormal_logpdf(mu, sigma, lower, upper, value)
+        (value < lower || value > upper) && continue
+        inv_sigma = 1 / sigma
+        zx = (value - mu) * inv_sigma
+        za = (lower - mu) * inv_sigma
+        zb = (upper - mu) * inv_sigma
+        normalizer = exp(_log_normal_cdf_diff(za, zb))
+        phi_a = _std_normal_pdf(za)
+        phi_b = _std_normal_pdf(zb)
+        za_phi_a = isinf(za) ? zero(T) : za * phi_a
+        zb_phi_b = isinf(zb) ? zero(T) : zb * phi_b
+        inv_sz = inv_sigma / normalizer
+        dvalue = -zx * inv_sigma
+        dmu = zx * inv_sigma - (phi_a - phi_b) * inv_sz
+        dsigma = (zx * zx - one(T)) * inv_sigma - (za_phi_a - zb_phi_b) * inv_sz
+        dlower = phi_a * inv_sz
+        dupper = -phi_b * inv_sz
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] +=
+                dvalue * value_gradients[parameter_index, batch_index] +
+                dmu * mu_gradients[parameter_index, batch_index] +
+                dsigma * sigma_gradients[parameter_index, batch_index] +
+                dlower * lower_gradients[parameter_index, batch_index] +
+                dupper * upper_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendTruncatedNormalChoicePlanStep,
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
+    constraints,
+) where {T<:AbstractFloat}
+    value_values = env.observed_values
+    value_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    mu_values = _batched_numeric_scratch!(env, 1)
+    mu_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    sigma_gradients = _batched_backend_gradient_scratch!(cache, 3)
+    lower_values = _batched_numeric_scratch!(env, 3)
+    lower_gradients = _batched_backend_gradient_scratch!(cache, 4)
+    upper_values = _batched_numeric_scratch!(env, 4)
+    upper_gradients = _batched_backend_gradient_scratch!(cache, 5)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 6)
+    _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 7)
+    _eval_backend_numeric_expr_and_gradient!(lower_values, lower_gradients, cache, env, step.lower, 8)
+    _eval_backend_numeric_expr_and_gradient!(upper_values, upper_gradients, cache, env, step.upper, 9)
+    _accumulate_truncatednormal_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        mu_values,
+        mu_gradients,
+        sigma_values,
+        sigma_gradients,
+        lower_values,
+        lower_gradients,
+        upper_values,
+        upper_gradients,
+    )
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    return totals, gradients
+end
+
+# --- mixture-of-normals gradient ----------------------------------------------
+
+function _accumulate_mixture_normal_gradient!(
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    value_values::AbstractVector{T},
+    value_gradients::AbstractMatrix{T},
+    weight_values::AbstractVector{<:AbstractVector},
+    weight_gradients::AbstractVector{<:AbstractMatrix},
+    mu_values::AbstractVector{<:AbstractVector},
+    mu_gradients::AbstractVector{<:AbstractMatrix},
+    sigma_values::AbstractVector{<:AbstractVector},
+    sigma_gradients::AbstractVector{<:AbstractMatrix},
+) where {T<:AbstractFloat}
+    k = length(weight_values)
+    terms = Vector{T}(undef, k)
+    for batch_index in eachindex(totals)
+        value = value_values[batch_index]
+        weights = ntuple(index -> weight_values[index][batch_index], k)
+        mus = ntuple(index -> mu_values[index][batch_index], k)
+        sigmas = ntuple(index -> sigma_values[index][batch_index], k)
+        logpdf = _backend_mixture_normal_logpdf(weights, mus, sigmas, value)
+        totals[batch_index] += logpdf
+        isfinite(logpdf) || continue
+        dvalue = zero(T)
+        for index in 1:k
+            lp = _backend_normal_logpdf(mus[index], sigmas[index], value)
+            terms[index] = lp
+        end
+        for index in 1:k
+            mu = mus[index]
+            sigma = sigmas[index]
+            lp = terms[index]
+            responsibility = exp(log(weights[index]) + lp - logpdf)
+            weight_derivative = exp(lp - logpdf)
+            z = (value - mu) / sigma
+            inv_sigma = 1 / sigma
+            dvalue += responsibility * (-z * inv_sigma)
+            dmu = responsibility * (z * inv_sigma)
+            dsigma = responsibility * ((z * z - one(T)) * inv_sigma)
+            component_weight_gradients = weight_gradients[index]
+            component_mu_gradients = mu_gradients[index]
+            component_sigma_gradients = sigma_gradients[index]
+            for parameter_index in axes(gradients, 1)
+                gradients[parameter_index, batch_index] +=
+                    weight_derivative * component_weight_gradients[parameter_index, batch_index] +
+                    dmu * component_mu_gradients[parameter_index, batch_index] +
+                    dsigma * component_sigma_gradients[parameter_index, batch_index]
+            end
+        end
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] += dvalue * value_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendMixtureNormalChoicePlanStep,
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
+    constraints,
+) where {T<:AbstractFloat}
+    k = length(step.weights)
+    value_values = env.observed_values
+    value_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    weight_values = [_batched_numeric_scratch!(env, index) for index in 1:k]
+    weight_gradients = [_batched_backend_gradient_scratch!(cache, 1 + index) for index in 1:k]
+    mu_values = [_batched_numeric_scratch!(env, k + index) for index in 1:k]
+    mu_gradients = [_batched_backend_gradient_scratch!(cache, k + 1 + index) for index in 1:k]
+    sigma_values = [_batched_numeric_scratch!(env, 2 * k + index) for index in 1:k]
+    sigma_gradients = [_batched_backend_gradient_scratch!(cache, 2 * k + 1 + index) for index in 1:k]
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    for index in 1:k
+        _eval_backend_numeric_expr_and_gradient!(weight_values[index], weight_gradients[index], cache, env, step.weights[index], 3 * k + 2)
+        _eval_backend_numeric_expr_and_gradient!(mu_values[index], mu_gradients[index], cache, env, step.mus[index], 3 * k + 2)
+        _eval_backend_numeric_expr_and_gradient!(sigma_values[index], sigma_gradients[index], cache, env, step.sigmas[index], 3 * k + 2)
+    end
+    _accumulate_mixture_normal_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        weight_values,
+        weight_gradients,
+        mu_values,
+        mu_gradients,
+        sigma_values,
+        sigma_gradients,
+    )
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    return totals, gradients
+end
+
+# --- dense multivariate normal gradient ---------------------------------------
+
+# Solve L z = residual (forward) then Lᵀ w = z (back) so that w = L⁻ᵀ z, giving
+# d logpdf / d mu_i = w_i and d logpdf / d x_i = -w_i (the scale factor is a
+# constant matrix, so it contributes no gradient).
+function _accumulate_mvnormaldense_gradient!(
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    d::Int,
+    choice_values::AbstractVector{<:AbstractVector},
+    choice_gradients::AbstractVector{<:AbstractMatrix},
+    mu_values::AbstractVector{<:AbstractVector},
+    mu_gradients::AbstractVector{<:AbstractMatrix},
+    scale_storage::AbstractVector,
+) where {T<:AbstractFloat}
+    z = Vector{T}(undef, d)
+    w = Vector{T}(undef, d)
+    for batch_index in eachindex(totals)
+        Lmat = _backend_mvnormaldense_scale_matrix(scale_storage[batch_index], d)
+        mu = ntuple(index -> mu_values[index][batch_index], d)
+        x = ntuple(index -> choice_values[index][batch_index], d)
+        totals[batch_index] += _backend_mvnormaldense_logpdf(mu, Lmat, x)
+        # forward substitution: L z = x - mu
+        for row in 1:d
+            residual = x[row] - mu[row]
+            for col in 1:(row - 1)
+                residual -= Lmat[row, col] * z[col]
+            end
+            z[row] = residual / Lmat[row, row]
+        end
+        # back substitution: Lᵀ w = z
+        for row in d:-1:1
+            accumulator = z[row]
+            for col in (row + 1):d
+                accumulator -= Lmat[col, row] * w[col]
+            end
+            w[row] = accumulator / Lmat[row, row]
+        end
+        for component_index in 1:d
+            dmu = w[component_index]
+            dvalue = -w[component_index]
+            component_mu_gradients = mu_gradients[component_index]
+            component_value_gradients = choice_gradients[component_index]
+            for parameter_index in axes(gradients, 1)
+                gradients[parameter_index, batch_index] +=
+                    dmu * component_mu_gradients[parameter_index, batch_index] +
+                    dvalue * component_value_gradients[parameter_index, batch_index]
+            end
+        end
+    end
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendMvNormalDenseChoicePlanStep,
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
+    constraints,
+) where {T<:AbstractFloat}
+    d = step.value_length
+    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:d]
+    choice_gradients = [_batched_backend_gradient_scratch!(cache, index) for index in 1:d]
+    mu_values = [_batched_numeric_scratch!(env, d + index) for index in 1:d]
+    mu_gradients = [_batched_backend_gradient_scratch!(cache, d + index) for index in 1:d]
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_vector_values!(choice_values, step.value_index, d, params, constraints, address_parts)
+    for component_index in 1:d
+        _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index)
+        _eval_backend_numeric_expr_and_gradient!(
+            mu_values[component_index],
+            mu_gradients[component_index],
+            cache,
+            env,
+            step.mu[component_index],
+            2 * d + 1,
+        )
+    end
+
+    env.assigned[step.scale_tril.slot] ||
+        throw(BatchedBackendFallback("mvnormaldense scale_tril slot $(step.scale_tril.slot) is not assigned"))
+    _accumulate_mvnormaldense_gradient!(
+        totals,
+        gradients,
+        d,
+        choice_values,
+        choice_gradients,
+        mu_values,
+        mu_gradients,
+        env.generic_values[step.scale_tril.slot],
+    )
+
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_vector_value!(env, cache.slot_gradients, step.binding_slot, choice_values, choice_gradients)
+    return totals, gradients
+end
