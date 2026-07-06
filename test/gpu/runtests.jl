@@ -90,3 +90,53 @@ end
     _, gb = device_batched_logjoint_gradient(gpu_bernoulli_model, Float32.(pb), (4,), cmb; backend=backend, precision=Float32)
     @test gpu_check_float32(vec(Float64.(gb)), vec(grefb))
 end
+
+# --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
+# Mirrors test/uncertaintea/core/part46.jl on a Metal.MetalBackend at Float32.
+# RNG stays host-side, so results are statistically (not bitwise) equivalent to the
+# CPU path; we only assert finite results and posterior/variational-mean sanity.
+
+@tea static function gpu_conjugate_gauss()
+    mu ~ normal(0.0, 1.0)
+    {:y} ~ normal(mu, 1.0)
+    return mu
+end
+
+@testset "device Metal GPU batched HMC/ADVI smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU HMC/ADVI smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+    constraints = choicemap((:y, 0.3))
+
+    chains = batched_hmc(
+        gpu_conjugate_gauss,
+        (),
+        constraints;
+        num_chains=2,
+        num_samples=300,
+        num_warmup=150,
+        backend=backend,
+        precision=Float32,
+        rng=MersenneTwister(46),
+    )
+    samples = posterior_array(chains)
+    @test all(isfinite, samples)
+    @test isapprox(sum(samples) / length(samples), 0.15; atol=0.15)
+    @test all(<(1.3), rhat(chains))
+
+    result = batched_advi(
+        gpu_conjugate_gauss,
+        (),
+        constraints;
+        num_steps=300,
+        backend=backend,
+        precision=Float32,
+        rng=MersenneTwister(46),
+    )
+    @test all(isfinite, result.elbo_history)
+    @test isapprox(variational_mean(result)[1], 0.15; atol=0.15)
+end

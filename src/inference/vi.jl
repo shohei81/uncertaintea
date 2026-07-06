@@ -246,8 +246,35 @@ function batched_advi(
     gradient_clip::Real=Inf,
     callback=nothing,
     callback_every::Int=10,
+    backend=nothing,
+    precision=nothing,
     rng::AbstractRNG=Random.default_rng(),
 )
+    if backend !== nothing
+        # Device-resident ADVI inner loop. RNG stays host-side; results are
+        # statistically equivalent to the CPU path (untouched when backend===nothing).
+        backend isa KernelAbstractions.Backend ||
+            throw(ArgumentError("batched_advi `backend` must be a KernelAbstractions.Backend or nothing, got $(typeof(backend))"))
+        device_precision = precision === nothing ? default_device_precision(backend) : precision
+        return _run_device_batched_advi(
+            model, args, constraints;
+            num_steps=num_steps,
+            num_particles=num_particles,
+            learning_rate=learning_rate,
+            initial_params=initial_params,
+            initial_log_scale=initial_log_scale,
+            beta1=beta1,
+            beta2=beta2,
+            adam_epsilon=adam_epsilon,
+            gradient_clip=gradient_clip,
+            callback=callback,
+            callback_every=callback_every,
+            backend=backend,
+            precision=device_precision,
+            rng=rng,
+        )
+    end
+
     layout = parameterlayout(model)
     parameter_total = parametercount(layout)
     parameter_total > 0 || throw(ArgumentError("batched_advi requires at least one parameterized latent choice"))

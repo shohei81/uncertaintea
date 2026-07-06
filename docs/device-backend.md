@@ -31,8 +31,36 @@ the transform log-abs-det in-kernel, so the authoritative counterpart is
 `batched_logjoint_unconstrained`. Unsupported models raise a clear `ArgumentError`
 pointing back at `device_lowering_report`; the CPU backend remains authoritative.
 
+## Device-resident inner loops (HMC + ADVI)
+
+`batched_hmc` and `batched_advi` accept a `backend::KernelAbstractions.Backend`
+(plus optional `precision`) keyword. When `backend === nothing` the existing CPU
+path is used unchanged (bitwise identical to before). When a backend is supplied,
+the per-iteration inner loop runs on the device:
+
+- **HMC:** momenta and the accept/reject uniforms are drawn on the HOST (matching
+  the CPU draw shape) and uploaded; the leapfrog integration, per-column validity
+  folds, and the Hamiltonians run in KernelAbstractions kernels
+  (`src/device/hmc_kernels.jl`); accept/reject decisions happen on the host from two
+  downloaded length-`num_chains` Hamiltonian vectors plus the validity mask, and the
+  accepted columns are copied on-device via an accept-mask kernel. Warmup dual
+  averaging and running-variance mass adaptation stay on the host (they need accept
+  statistics and positions), so warmup iterations additionally download the
+  position/gradient matrices. Diagonal mass only; `per_chain_adaptation=true` with a
+  backend raises an `ArgumentError`.
+- **ADVI:** the host draws the reparameterized particles and uploads them; the fused
+  device gradient kernel scores them and a reduction kernel
+  (`src/device/advi_kernels.jl`) produces the mean location gradient and the
+  noise-weighted scale-gradient accumulator on-device, so only two length-P vectors
+  (plus the per-particle values) return each step. Adam + ELBO bookkeeping stay on
+  the host.
+
+Because the RNG stays host-side but gradients are computed via device forward-mode
+duals, device results are **statistically equivalent** to the CPU path, not bitwise
+identical. Unsupported models raise the same `device_lowering_report`-pointing
+`ArgumentError`.
+
 ## What follows
 
-Device-resident gradients (reverse-mode over the same fused kernel) and full
-HMC/NUTS integration loops build on this device logjoint; they are out of scope
-for this phase.
+Device-resident NUTS integration (dynamic trajectory lengths) and on-device warmup
+adaptation build on these inner loops; they are out of scope for this phase.

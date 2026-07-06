@@ -293,8 +293,44 @@ function batched_hmc(
     mass_matrix_min_samples::Int=10,
     callback=nothing,
     callback_every::Int=10,
+    backend=nothing,
+    precision=nothing,
     rng::AbstractRNG=Random.default_rng(),
 )
+    if backend !== nothing
+        # Device-resident inner loop. RNG stays host-side, so results are statistically
+        # equivalent to (not bitwise identical to) the CPU path. The CPU path below is
+        # untouched when `backend === nothing`.
+        backend isa KernelAbstractions.Backend ||
+            throw(ArgumentError("batched_hmc `backend` must be a KernelAbstractions.Backend or nothing, got $(typeof(backend))"))
+        per_chain_adaptation && throw(ArgumentError(
+            "batched_hmc per-chain adaptation is not supported on the device backend; " *
+            "run with backend=nothing or per_chain_adaptation=false",
+        ))
+        device_precision = precision === nothing ? default_device_precision(backend) : precision
+        return _run_device_batched_hmc(
+            model, args, constraints;
+            num_chains=num_chains,
+            num_samples=num_samples,
+            num_warmup=num_warmup,
+            step_size=step_size,
+            num_leapfrog_steps=num_leapfrog_steps,
+            initial_params=initial_params,
+            target_accept=target_accept,
+            adapt_step_size=adapt_step_size,
+            adapt_mass_matrix=adapt_mass_matrix,
+            find_reasonable_step_size=find_reasonable_step_size,
+            divergence_threshold=divergence_threshold,
+            mass_matrix_regularization=mass_matrix_regularization,
+            mass_matrix_min_samples=mass_matrix_min_samples,
+            callback=callback,
+            callback_every=callback_every,
+            backend=backend,
+            precision=device_precision,
+            rng=rng,
+        )
+    end
+
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_batched_hmc_arguments(
