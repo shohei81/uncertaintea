@@ -70,6 +70,65 @@ struct BackendDirichletChoicePlanStep{A<:Tuple,AD<:BackendAddressSpec} <: Backen
     value_length::Int
 end
 
+# Backend-native broadcast (vectorized) normal observation: one dense per-element
+# scoring op over the observed vector instead of N loop-addressed choices. `mu` and
+# `sigma` are broadcast argument expressions (scalar or vector-valued); the observed
+# vector length is resolved at scoring time from the constraint value.
+struct BackendBroadcastNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
+       BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    mu::M
+    sigma::S
+    parameter_slot::Union{Nothing,Int}
+end
+
+# Underlying scalar operator symbol for a (possibly dotted) broadcast operator, e.g.
+# `.*` -> `:*`. Returns `nothing` when the callee is not a supported broadcast op.
+function _backend_broadcast_op(callee)
+    callee isa Symbol || return nothing
+    name = string(callee)
+    base = (length(name) >= 2 && name[1] == '.') ? Symbol(name[2:end]) : callee
+    return _supported_backend_primitive(base) ? base : nothing
+end
+
+# Lower a broadcast argument expression. Dotted operators are mapped to their scalar
+# base op; leaves (slots, literals) reuse the standard backend lowering. Referenced
+# vector model arguments stay generic environment slots (never forced numeric).
+function _backend_lower_broadcast_arg(model::TeaModel, layout::EnvironmentLayout, expr, issues::Vector{String}, context::String)
+    if expr isa Expr && expr.head == :call && !isempty(expr.args)
+        op = _backend_broadcast_op(expr.args[1])
+        if isnothing(op)
+            _backend_issue!(issues, "unsupported broadcast argument call `$(expr.args[1])` in $context")
+            return nothing
+        end
+        arguments = map(arg -> _backend_lower_broadcast_arg(model, layout, arg, issues, context), expr.args[2:end])
+        any(isnothing, arguments) && return nothing
+        return BackendPrimitiveExpr(op, tuple(arguments...))
+    end
+    return _backend_lower_expr(model, layout, expr, issues, context)
+end
+
+function _backend_lower_broadcast_normal_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+    step.rhs.family === :normal || begin
+        _backend_issue!(issues, "broadcast observations only support the normal family in backend lowering")
+        return nothing
+    end
+    length(step.rhs.arguments) == 2 || begin
+        _backend_issue!(issues, "broadcast normal expects exactly 2 backend arguments")
+        return nothing
+    end
+    isnothing(step.parameter_slot) || begin
+        _backend_issue!(issues, "broadcast normal latents are not supported in backend lowering")
+        return nothing
+    end
+    address = _backend_lower_address(model, layout, step.address, issues)
+    mu = _backend_lower_broadcast_arg(model, layout, step.rhs.arguments[1], issues, "broadcast normal mean")
+    sigma = _backend_lower_broadcast_arg(model, layout, step.rhs.arguments[2], issues, "broadcast normal scale")
+    (isnothing(address) || isnothing(mu) || isnothing(sigma)) && return nothing
+    return BackendBroadcastNormalChoicePlanStep(step.binding_slot, address, mu, sigma, step.parameter_slot)
+end
+
 function _backend_lower_tuple_argument(model::TeaModel, layout::EnvironmentLayout, expr, issues::Vector{String}, context::String)
     if expr isa Expr && expr.head in (:vect, :tuple)
         lowered = map(arg -> _backend_lower_expr(model, layout, arg, issues, context), expr.args)
@@ -280,6 +339,21 @@ function _collect_backend_slot_kinds!(
     for expr in step.alpha
         _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
     end
+    isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendBroadcastNormalChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    # Broadcast mu/sigma slots are intentionally left unmarked here: scalar latents
+    # receive their numeric marking from their own defining steps, while vector model
+    # arguments must stay generic (stored as whole vectors), so they default to the
+    # generic environment storage. The broadcast evaluators read either kind.
     isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
     return nothing
 end

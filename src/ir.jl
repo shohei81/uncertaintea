@@ -24,6 +24,14 @@ struct GenerativeCallSpec <: AbstractChoiceRhsSpec
     arguments::Vector{Any}
 end
 
+# A dot-call distribution observation, e.g. `{:y} ~ normal.(mu, sigma)`. `arguments`
+# holds the broadcast-elementwise argument expressions (mirrors `DistributionSpec`).
+# Only `family === :normal` is supported initially.
+struct BroadcastDistributionSpec <: AbstractChoiceRhsSpec
+    family::Symbol
+    arguments::Vector{Any}
+end
+
 struct RawChoiceRhsSpec <: AbstractChoiceRhsSpec
     expr::Any
 end
@@ -47,6 +55,25 @@ struct VectorIdentityTransform <: AbstractParameterTransform
 end
 struct LogTransform <: AbstractParameterTransform end
 struct LogitTransform <: AbstractParameterTransform end
+# Per-element unconstrained -> positive transform for `iid` latents over families
+# whose scalar transform is `LogTransform` (lognormal/exponential/gamma/...).
+struct VectorLogTransform <: AbstractParameterTransform
+    size::Int
+
+    function VectorLogTransform(size::Int)
+        size >= 1 || throw(ArgumentError("vector log transform requires size >= 1"))
+        return new(size)
+    end
+end
+# Per-element unconstrained -> (0, 1) transform for `iid` latents over `beta`.
+struct VectorLogitTransform <: AbstractParameterTransform
+    size::Int
+
+    function VectorLogitTransform(size::Int)
+        size >= 1 || throw(ArgumentError("vector logit transform requires size >= 1"))
+        return new(size)
+    end
+end
 struct SimplexTransform <: AbstractParameterTransform
     size::Int
 
@@ -337,6 +364,10 @@ function _substitute_rhs(rhs::GenerativeCallSpec, substitutions::Dict{Symbol,Any
     return GenerativeCallSpec(callee, arguments)
 end
 
+function _substitute_rhs(rhs::BroadcastDistributionSpec, substitutions::Dict{Symbol,Any})
+    return BroadcastDistributionSpec(rhs.family, Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments])
+end
+
 _substitute_rhs(rhs::RawChoiceRhsSpec, substitutions::Dict{Symbol,Any}) = RawChoiceRhsSpec(_substitute_expr(rhs.expr, substitutions))
 
 function _substitute_loop_scopes(scopes::Vector{LoopScopeSpec}, substitutions::Dict{Symbol,Any})
@@ -505,16 +536,51 @@ function _parameter_transform(rhs::DistributionSpec)
     elseif rhs.family === :mixture
         _mixture_latent_eligible(rhs.arguments) && return IdentityTransform()
         return nothing
+    elseif rhs.family === :iid
+        return _iid_parameter_transform(rhs.arguments)
     end
     return nothing
 end
 
 _parameter_transform(::AbstractChoiceRhsSpec) = nothing
 
+# Base family of an `iid(base_call, n)` right-hand side, or `nothing` if the first
+# argument is not a plain distribution constructor call.
+function _iid_base_family(arguments)
+    length(arguments) == 2 || return nothing
+    base = arguments[1]
+    base isa Expr && base.head == :call && !isempty(base.args) && base.args[1] isa Symbol || return nothing
+    return base.args[1]
+end
+
+function _iid_static_size(arguments)
+    length(arguments) == 2 || return nothing
+    n = arguments[2]
+    n isa Integer || return nothing
+    return Int(n)
+end
+
+function _iid_parameter_transform(arguments)
+    family = _iid_base_family(arguments)
+    size = _iid_static_size(arguments)
+    (isnothing(family) || isnothing(size)) && return nothing
+    if family === :normal || family === :laplace || family === :studentt
+        return VectorIdentityTransform(size)
+    elseif family === :lognormal || family === :exponential || family === :gamma ||
+           family === :inversegamma || family === :weibull
+        return VectorLogTransform(size)
+    elseif family === :beta
+        return VectorLogitTransform(size)
+    end
+    return nothing
+end
+
 _parameter_dimensions(::IdentityTransform) = (1, 1)
 _parameter_dimensions(transform::VectorIdentityTransform) = (transform.size, transform.size)
 _parameter_dimensions(::LogTransform) = (1, 1)
 _parameter_dimensions(::LogitTransform) = (1, 1)
+_parameter_dimensions(transform::VectorLogTransform) = (transform.size, transform.size)
+_parameter_dimensions(transform::VectorLogitTransform) = (transform.size, transform.size)
 _parameter_dimensions(transform::SimplexTransform) = (transform.size - 1, transform.size)
 _parameter_dimensions(::BoundedTransform) = (1, 1)
 _parameter_dimensions(::LowerBoundedTransform) = (1, 1)
@@ -672,7 +738,7 @@ function _inline_plan_step(step::LoopPlanStep)
 end
 
 function _inline_plan_step(step::ChoicePlanStep)
-    if step.rhs isa DistributionSpec || step.rhs isa RawChoiceRhsSpec
+    if step.rhs isa DistributionSpec || step.rhs isa RawChoiceRhsSpec || step.rhs isa BroadcastDistributionSpec
         return _wrap_steps_with_scopes(AbstractPlanStep[ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, LoopScopeSpec[], step.parameter_slot)], step.scopes)
     elseif step.rhs isa GenerativeCallSpec
         callee = step.rhs.callee

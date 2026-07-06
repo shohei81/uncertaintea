@@ -23,6 +23,29 @@ function logabsdetjac(::LogitTransform, value)
     return log(constrained) + log1p(-constrained)
 end
 
+to_constrained(::VectorLogTransform, value::AbstractVector) = map(exp, value)
+to_unconstrained(::VectorLogTransform, value::AbstractVector) = map(log, value)
+function logabsdetjac(::VectorLogTransform, value::AbstractVector)
+    isempty(value) && return 0.0
+    total = zero(value[firstindex(value)])
+    for element in value
+        total += element
+    end
+    return total
+end
+
+to_constrained(::VectorLogitTransform, value::AbstractVector) = map(v -> inv(one(v) + exp(-v)), value)
+to_unconstrained(::VectorLogitTransform, value::AbstractVector) = map(v -> log(v) - log1p(-v), value)
+function logabsdetjac(::VectorLogitTransform, value::AbstractVector)
+    isempty(value) && return 0.0
+    total = zero(value[firstindex(value)])
+    for element in value
+        constrained = inv(one(element) + exp(-element))
+        total += log(constrained) + log1p(-constrained)
+    end
+    return total
+end
+
 _bounded_sigmoid(value) = inv(one(value) + exp(-value))
 to_constrained(transform::BoundedTransform, value) =
     transform.lower + (transform.upper - transform.lower) * _bounded_sigmoid(value)
@@ -159,6 +182,23 @@ function _transform_slot_to_constrained!(
     elseif slot.transform isa VectorIdentityTransform
         copyto!(view(destination, parametervalueindices(slot)), view(params, parameterindices(slot)))
         return zero(params[first(parameterindices(slot))])
+    elseif slot.transform isa VectorLogTransform
+        logabsdet = zero(params[first(parameterindices(slot))])
+        for (parameter_index, value_index) in zip(parameterindices(slot), parametervalueindices(slot))
+            unconstrained_value = params[parameter_index]
+            destination[value_index] = exp(unconstrained_value)
+            logabsdet += unconstrained_value
+        end
+        return logabsdet
+    elseif slot.transform isa VectorLogitTransform
+        logabsdet = zero(params[first(parameterindices(slot))])
+        for (parameter_index, value_index) in zip(parameterindices(slot), parametervalueindices(slot))
+            unconstrained_value = params[parameter_index]
+            constrained_value = _bounded_sigmoid(unconstrained_value)
+            destination[value_index] = constrained_value
+            logabsdet += log(constrained_value) + log1p(-constrained_value)
+        end
+        return logabsdet
     elseif slot.transform isa LogTransform
         unconstrained_value = params[slot.index]
         destination[slot.value_index] = exp(unconstrained_value)
@@ -194,6 +234,15 @@ function _transform_slot_to_unconstrained!(
         destination[slot.index] = params[slot.value_index]
     elseif slot.transform isa VectorIdentityTransform
         copyto!(view(destination, parameterindices(slot)), view(params, parametervalueindices(slot)))
+    elseif slot.transform isa VectorLogTransform
+        for (parameter_index, value_index) in zip(parameterindices(slot), parametervalueindices(slot))
+            destination[parameter_index] = log(params[value_index])
+        end
+    elseif slot.transform isa VectorLogitTransform
+        for (parameter_index, value_index) in zip(parameterindices(slot), parametervalueindices(slot))
+            constrained_value = params[value_index]
+            destination[parameter_index] = log(constrained_value) - log1p(-constrained_value)
+        end
     elseif slot.transform isa LogTransform
         destination[slot.index] = log(params[slot.value_index])
     elseif slot.transform isa LogitTransform

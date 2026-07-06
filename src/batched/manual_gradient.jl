@@ -118,6 +118,12 @@ function _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep)
     return all(_backend_gradient_supported_expr, step.alpha)
 end
 
+function _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep)
+    return isnothing(step.binding_slot) &&
+           _backend_gradient_supported_expr(step.mu) &&
+           _backend_gradient_supported_expr(step.sigma)
+end
+
 function _backend_gradient_supported_step(step::BackendDeterministicPlanStep, numeric_slots::BitVector)
     return numeric_slots[step.binding_slot] ? _backend_gradient_supported_expr(step.expr) : true
 end
@@ -146,6 +152,7 @@ _backend_gradient_supported_step(step::BackendPoissonChoicePlanStep, numeric_slo
 _backend_gradient_supported_step(step::BackendStudentTChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendMvNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 
 function _backend_gradient_supported(plan::BackendExecutionPlan)
     return all(step -> _backend_gradient_supported_step(step, plan.numeric_slots), plan.steps)

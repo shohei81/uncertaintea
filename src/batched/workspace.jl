@@ -371,6 +371,23 @@ function _logjoint_unconstrained_batched_backend!(
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa VectorIdentityTransform
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
+        elseif slot.transform isa VectorLogTransform
+            for batch_index in 1:batch_size
+                for (source_index, destination_index) in zip(source_indices, destination_indices)
+                    unconstrained_value = params[source_index, batch_index]
+                    constrained[destination_index, batch_index] = exp(unconstrained_value)
+                    logabsdet[batch_index] += unconstrained_value
+                end
+            end
+        elseif slot.transform isa VectorLogitTransform
+            for batch_index in 1:batch_size
+                for (source_index, destination_index) in zip(source_indices, destination_indices)
+                    unconstrained_value = params[source_index, batch_index]
+                    constrained_value = to_constrained(LogitTransform(), unconstrained_value)
+                    constrained[destination_index, batch_index] = constrained_value
+                    logabsdet[batch_index] += logabsdetjac(LogitTransform(), unconstrained_value)
+                end
+            end
         elseif slot.transform isa LogTransform
             for batch_index in 1:batch_size
                 unconstrained_value = params[first(source_indices), batch_index]

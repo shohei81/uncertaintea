@@ -116,6 +116,19 @@ struct CompiledExecutionPlan{S<:Tuple}
     steps::S
 end
 
+# If `callee` is a dotted operator symbol (e.g. `.*`, `.+`), return the underlying
+# scalar operator function; otherwise `nothing`. Used to lower broadcast argument
+# expressions of broadcast (dot-call) distribution observations.
+function _broadcast_operator_function(callee)
+    callee isa Symbol || return nothing
+    name = string(callee)
+    (length(name) >= 2 && name[1] == '.') || return nothing
+    base = Symbol(name[2:end])
+    isdefined(Base, base) || return nothing
+    value = getfield(Base, base)
+    return value isa Function ? value : nothing
+end
+
 function _resolve_compile_symbol(model::TeaModel, layout::EnvironmentLayout, sym::Symbol)
     slot = _environment_slot(layout, sym)
     if !isnothing(slot)
@@ -147,6 +160,16 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
         return CompiledLiteralExpr(getfield(expr.mod, expr.name))
     elseif expr isa Expr
         if expr.head == :call
+            base_op = _broadcast_operator_function(expr.args[1])
+            if !isnothing(base_op)
+                # A dotted operator like `.*`: evaluate as `broadcast(op, args...)` so
+                # scalar/vector broadcast arguments combine with standard rules.
+                arguments = tuple(
+                    CompiledLiteralExpr(base_op),
+                    (_compile_plan_expr(model, layout, arg) for arg in expr.args[2:end])...,
+                )
+                return CompiledCallExpr(CompiledLiteralExpr(broadcast), arguments)
+            end
             callee = _compile_plan_expr(model, layout, expr.args[1])
             arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args[2:end])...)
             return CompiledCallExpr(callee, arguments)
@@ -161,6 +184,10 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
         elseif expr.head == :vect
             arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args)...)
             return CompiledVectorExpr(arguments)
+        elseif expr.head == :ref
+            callee = CompiledLiteralExpr(getindex)
+            arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args)...)
+            return CompiledCallExpr(callee, arguments)
         end
 
         throw(ArgumentError("unsupported expression in lower-level logjoint compilation: $expr"))
@@ -186,10 +213,11 @@ function _compile_plan_step(
     parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
 )
-    step.rhs isa DistributionSpec ||
+    step.rhs isa DistributionSpec || step.rhs isa BroadcastDistributionSpec ||
         throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
     arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments)...)
-    constructor = getfield(@__MODULE__, step.rhs.family)
+    constructor = step.rhs isa BroadcastDistributionSpec ?
+        getfield(@__MODULE__, :BroadcastNormalDist) : getfield(@__MODULE__, step.rhs.family)
     parameter_value_indices = isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
     return CompiledChoicePlanStep(step.binding_slot, _compile_address(layout, model, step.address), constructor, arguments, parameter_value_indices)
 end

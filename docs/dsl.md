@@ -81,6 +81,66 @@ This is intentionally closer to Gen than the earlier `@plate`-based draft.
 In the static GPU path, the loop extent `n` must be compile-time constant or part of
 the shape-specialized execution cache.
 
+### Broadcast (Vectorized) Observations
+
+A dot-call on the right-hand side of `~` scores N observations as ONE dense vector
+choice instead of N loop-addressed choices — this is the flagship GPU-lowering form:
+
+```julia
+@tea (static) function regression(xs)
+    slope ~ normal(0.0, 10.0)
+    sigma ~ lognormal(0.0, 1.0)
+    {:y} ~ normal.(slope .* xs, sigma)
+end
+
+constraints = choicemap(:y => ys)          # ONE vector value at address (:y,)
+(trace, logw) = generate(regression, (xs,), constraints)
+```
+
+Semantics:
+
+- The choice has a single address; its value is a `Vector`.
+- Each element scores against the broadcast-elementwise arguments. Arguments may be
+  real scalars or vectors of the observation's length (scalar-or-N broadcast only);
+  a length mismatch throws at scoring time.
+- Only `normal.(...)` is currently supported. Dot-calling any other distribution
+  family throws an `ArgumentError` at macro-expansion time.
+- **Generate requires a length source**: sampling the choice (i.e. running the model
+  with the observation unconstrained) needs at least one vector argument to infer
+  the sample length. With all-scalar arguments the observation must be constrained,
+  otherwise `generate` throws an informative `ArgumentError`.
+- Backend lowering emits a native `BackendBroadcastNormalChoicePlanStep`, so
+  `backend_report(model).supported == true` and the batched logjoint / manual
+  gradient paths score the vector observation densely per batch column.
+
+### `iid` Latent Vectors
+
+`iid(dist_call, n)` declares a latent vector of `n` independent draws from a scalar
+distribution under a single address (and a single `n`-wide parameter slot):
+
+```julia
+@tea (static) function factors()
+    eps ~ iid(normal(0.0f0, 1.0f0), 12)      # 12-wide slot, VectorIdentityTransform
+    scales ~ iid(lognormal(0.0f0, 1.0f0), 3) # 3-wide slot, VectorLogTransform
+    return eps
+end
+```
+
+Rules:
+
+- **`n` must be a literal `Int`** — a non-literal count throws an `ArgumentError`
+  at macro-expansion time. This holds for latents and observations alike (kept
+  literal-only for simplicity).
+- The per-element transform follows the base family: `normal`/`laplace`/`studentt`
+  use `VectorIdentityTransform(n)`; `lognormal`/`exponential`/`gamma`/
+  `inversegamma`/`weibull` use `VectorLogTransform(n)`; `beta` uses
+  `VectorLogitTransform(n)`.
+- `iid` may also appear as an observation (constrain a length-`n` vector at the
+  address; no parameter slot is created for observations).
+- `iid` latents currently run through the compiled/AD fallback rather than the
+  backend-native batched path; `backend_report` reports them honestly as
+  unsupported.
+
 ### Nested Calls
 
 ```julia

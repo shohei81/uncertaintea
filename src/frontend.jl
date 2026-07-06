@@ -46,10 +46,38 @@ function _qualify_builtin_distribution(name)
         :truncatednormal,
         :truncatedstudentt,
         :mixture,
+        :iid,
     )
         return _qualify(name)
     end
     return name
+end
+
+# Distribution families that may be dot-called as broadcast observations, e.g.
+# `{:y} ~ normal.(mu, sigma)`. Any known distribution family other than these is
+# rejected at macro time.
+const _BROADCAST_DISTRIBUTION_FAMILIES = (:normal,)
+
+const _KNOWN_DISTRIBUTION_FAMILIES = (
+    :normal, :lognormal, :laplace, :exponential, :gamma, :inversegamma, :weibull,
+    :beta, :dirichlet, :mvnormal, :bernoulli, :binomial, :geometric, :negativebinomial,
+    :poisson, :studentt, :categorical, :truncatednormal, :truncatedstudentt, :mixture,
+)
+
+# Detects a dot-call distribution observation `family.(args...)` on the RHS of `~`.
+# Returns the runtime broadcast-distribution construction expression, or `nothing`
+# when `rhs` is not a distribution dot-call. Throws for unsupported dot-called families.
+function _rewrite_broadcast_rhs(rhs, ctxsym)
+    (rhs isa Expr && rhs.head == :. && length(rhs.args) == 2) || return nothing
+    family = rhs.args[1]
+    argtuple = rhs.args[2]
+    (family isa Symbol && argtuple isa Expr && argtuple.head == :tuple) || return nothing
+    family in _KNOWN_DISTRIBUTION_FAMILIES || return nothing
+    family in _BROADCAST_DISTRIBUTION_FAMILIES || throw(ArgumentError(
+        "broadcast (dot-call) observations currently support only `normal.(...)`, got `$(family).(...)`",
+    ))
+    arguments = Any[_rewrite_tea_expr(arg, ctxsym) for arg in argtuple.args]
+    return Expr(:call, _qualify(:BroadcastNormalDist), arguments...)
 end
 
 function _rewrite_tea_expr(expr, ctxsym)
@@ -59,7 +87,8 @@ function _rewrite_tea_expr(expr, ctxsym)
 
     if expr.head == :call && !isempty(expr.args) && expr.args[1] === :~
         lhs = expr.args[2]
-        rhs = _rewrite_tea_expr(expr.args[3], ctxsym)
+        broadcast_rhs = _rewrite_broadcast_rhs(expr.args[3], ctxsym)
+        rhs = isnothing(broadcast_rhs) ? _rewrite_tea_expr(expr.args[3], ctxsym) : broadcast_rhs
 
         if lhs isa Symbol
             return Expr(:(=), lhs, Expr(:call, _qualify(:choice), ctxsym, QuoteNode(lhs), rhs))
@@ -142,6 +171,30 @@ function _choice_spec_expr(expr, loop_scopes, binding_override=nothing)
 end
 
 function _rhs_spec_expr(rhs)
+    if rhs isa Expr && rhs.head == :. && length(rhs.args) == 2 &&
+       rhs.args[1] isa Symbol && rhs.args[2] isa Expr && rhs.args[2].head == :tuple &&
+       rhs.args[1] in _KNOWN_DISTRIBUTION_FAMILIES
+        family = rhs.args[1]
+        family in _BROADCAST_DISTRIBUTION_FAMILIES || throw(ArgumentError(
+            "broadcast (dot-call) observations currently support only `normal.(...)`, got `$(family).(...)`",
+        ))
+        arguments = Expr(:vect, map(QuoteNode, rhs.args[2].args)...)
+        return :($(_qualify(:BroadcastDistributionSpec))($(QuoteNode(family)), $arguments))
+    end
+
+    if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :iid
+        length(rhs.args) == 3 ||
+            throw(ArgumentError("iid expects `iid(distribution_call, n)`"))
+        base = rhs.args[2]
+        n = rhs.args[3]
+        n isa Integer ||
+            throw(ArgumentError("iid requires a literal Int count `n`, got `$(n)`"))
+        (base isa Expr && base.head == :call && !isempty(base.args) && base.args[1] isa Symbol) ||
+            throw(ArgumentError("iid first argument must be a distribution constructor call"))
+        arguments = Expr(:vect, QuoteNode(base), QuoteNode(n))
+        return :($(_qualify(:DistributionSpec))($(QuoteNode(:iid)), $arguments))
+    end
+
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args)
         callee = rhs.args[1]
         arguments = Expr(:vect, map(QuoteNode, rhs.args[2:end])...)

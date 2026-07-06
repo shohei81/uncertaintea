@@ -88,3 +88,229 @@ function _score_backend_step!(
     isnothing(step.binding_slot) || _assign_backend_choice_vector_value!(env, step.binding_slot, choice_values)
     return totals
 end
+
+# --- broadcast (vectorized) normal observation -------------------------------
+
+# Scalar (single-column) element-aware evaluation of a broadcast argument. A vector
+# environment value contributes its `element_index`-th entry; scalars broadcast.
+function _eval_backend_broadcast_element(env::PlanEnvironment, expr::BackendLiteralExpr, element_index::Int)
+    return _require_numeric_value(env, expr.value, "broadcast argument")
+end
+
+function _eval_backend_broadcast_element(env::PlanEnvironment, expr::BackendSlotExpr, element_index::Int)
+    value = _environment_value(env, expr.slot)
+    scalar = value isa AbstractVector ? value[element_index] : value
+    return _require_numeric_value(env, scalar, "broadcast argument slot")
+end
+
+function _eval_backend_broadcast_element(env::PlanEnvironment, expr::BackendPrimitiveExpr, element_index::Int)
+    (expr.op === Symbol(":") || expr.op === Symbol("=>")) &&
+        _backend_numeric_error(env, "broadcast argument cannot use `$(expr.op)`")
+    arguments = tuple((_eval_backend_broadcast_element(env, arg, element_index) for arg in expr.arguments)...)
+    return _require_numeric_value(env, _backend_primitive(expr.op, arguments...), "broadcast primitive")
+end
+
+function _eval_backend_broadcast_element(env::PlanEnvironment, expr::BackendBlockExpr, element_index::Int)
+    value = nothing
+    for arg in expr.arguments
+        value = _eval_backend_broadcast_element(env, arg, element_index)
+    end
+    return value
+end
+
+function _backend_broadcast_observed_vector(value)
+    values = value isa Tuple ? collect(value) : value
+    values isa AbstractVector ||
+        throw(ArgumentError("broadcast normal expects a vector or tuple observation value"))
+    return values
+end
+
+function _score_backend_step!(
+    step::BackendBroadcastNormalChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    values = _backend_broadcast_observed_vector(_backend_observed_choice_value(constraints, address))
+    n = length(values)
+    n >= 1 || throw(ArgumentError("broadcast normal requires a non-empty observation at $(address)"))
+    mu1 = _eval_backend_broadcast_element(env, step.mu, 1)
+    sigma1 = _eval_backend_broadcast_element(env, step.sigma, 1)
+    total = _backend_normal_logpdf(mu1, sigma1, float(values[1]))
+    for element_index in 2:n
+        mu = _eval_backend_broadcast_element(env, step.mu, element_index)
+        sigma = _eval_backend_broadcast_element(env, step.sigma, element_index)
+        total += _backend_normal_logpdf(mu, sigma, float(values[element_index]))
+    end
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, values)
+    return total
+end
+
+# Batched element-aware evaluation of a broadcast argument, reusing the numeric
+# vectorized primitive kernels for a fixed data element.
+function _eval_backend_broadcast_numeric!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendLiteralExpr,
+    element_index::Int,
+    depth::Int,
+)
+    fill!(destination, _require_numeric_value(env, expr.value, "batched broadcast argument"))
+    return destination
+end
+
+function _eval_backend_broadcast_numeric!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendSlotExpr,
+    element_index::Int,
+    depth::Int,
+)
+    env.assigned[expr.slot] || throw(BatchedBackendFallback("environment slot $(expr.slot) is not assigned"))
+    if env.numeric_slots[expr.slot]
+        copyto!(destination, view(env.numeric_values, expr.slot, :))
+        return destination
+    elseif env.index_slots[expr.slot]
+        for batch_index in eachindex(destination)
+            destination[batch_index] = convert(eltype(destination), env.index_values[expr.slot, batch_index])
+        end
+        return destination
+    end
+    storage = env.generic_values[expr.slot]
+    for batch_index in eachindex(destination)
+        value = storage[batch_index]
+        scalar = value isa AbstractVector ? value[element_index] : value
+        destination[batch_index] = _require_numeric_value(env, scalar, "batched broadcast slot")
+    end
+    return destination
+end
+
+function _eval_backend_broadcast_numeric!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendPrimitiveExpr,
+    element_index::Int,
+    depth::Int,
+)
+    (expr.op === Symbol(":") || expr.op === Symbol("=>")) &&
+        _backend_numeric_error(env, "batched broadcast argument cannot use `$(expr.op)`")
+    isempty(expr.arguments) && _backend_numeric_error(env, "batched broadcast primitive requires arguments")
+
+    _eval_backend_broadcast_numeric!(destination, env, first(expr.arguments), element_index, depth + 1)
+    if length(expr.arguments) == 1
+        return _apply_backend_numeric_unary!(destination, env, expr.op)
+    elseif expr.op === :clamp
+        length(expr.arguments) == 3 ||
+            _backend_numeric_error(env, "batched broadcast `clamp` expects exactly 3 arguments")
+        middle = _batched_numeric_scratch!(env, depth)
+        rhs = _batched_numeric_scratch!(env, depth + 1)
+        _eval_backend_broadcast_numeric!(middle, env, expr.arguments[2], element_index, depth + 2)
+        _eval_backend_broadcast_numeric!(rhs, env, expr.arguments[3], element_index, depth + 2)
+        return _apply_backend_numeric_ternary!(destination, env, expr.op, middle, rhs)
+    end
+
+    temp = _batched_numeric_scratch!(env, depth)
+    for argument in Base.tail(expr.arguments)
+        _eval_backend_broadcast_numeric!(temp, env, argument, element_index, depth + 1)
+        _apply_backend_numeric_binary!(destination, env, expr.op, temp)
+    end
+    return destination
+end
+
+function _eval_backend_broadcast_numeric!(
+    destination::AbstractVector,
+    env::BatchedPlanEnvironment,
+    expr::BackendBlockExpr,
+    element_index::Int,
+    depth::Int,
+)
+    for argument in expr.arguments
+        _eval_backend_broadcast_numeric!(destination, env, argument, element_index, depth)
+    end
+    return destination
+end
+
+# Fetch the observed broadcast vectors for every batch column (as element-typed
+# vectors), then validate a shared length across the batch.
+function _batched_broadcast_observed_values(
+    env::BatchedPlanEnvironment,
+    address_parts::Tuple,
+    constraints::ChoiceMap,
+)
+    T = eltype(env.numeric_values)
+    observed = Vector{Vector{T}}(undef, env.batch_size)
+    for batch_index in 1:env.batch_size
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, value = _choice_tryget_normalized(constraints, address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        values = _backend_broadcast_observed_vector(value)
+        observed[batch_index] = T[convert(T, float(item)) for item in values]
+    end
+    return observed
+end
+
+function _batched_broadcast_observed_values(
+    env::BatchedPlanEnvironment,
+    address_parts::Tuple,
+    constraints::AbstractVector,
+)
+    length(constraints) == env.batch_size ||
+        throw(DimensionMismatch("expected $(env.batch_size) batched constraints, got $(length(constraints))"))
+    T = eltype(env.numeric_values)
+    observed = Vector{Vector{T}}(undef, env.batch_size)
+    for batch_index in 1:env.batch_size
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, value = _choice_tryget_normalized(constraints[batch_index], address)
+        found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
+        values = _backend_broadcast_observed_vector(value)
+        observed[batch_index] = T[convert(T, float(item)) for item in values]
+    end
+    return observed
+end
+
+function _broadcast_uniform_length(observed::AbstractVector{<:AbstractVector})
+    isempty(observed) && return 0
+    n = length(observed[1])
+    n >= 1 || throw(BatchedBackendFallback("broadcast normal requires a non-empty observation"))
+    for values in observed
+        length(values) == n ||
+            throw(BatchedBackendFallback("broadcast normal requires a shared observation length across the batch"))
+    end
+    return n
+end
+
+function _score_backend_step!(
+    step::BackendBroadcastNormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    observed = _batched_broadcast_observed_values(env, address_parts, constraints)
+    n = _broadcast_uniform_length(observed)
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    for element_index in 1:n
+        _eval_backend_broadcast_numeric!(mu_values, env, step.mu, element_index, 3)
+        _eval_backend_broadcast_numeric!(sigma_values, env, step.sigma, element_index, 5)
+        for batch_index in 1:env.batch_size
+            totals[batch_index] += _backend_normal_logpdf(
+                mu_values[batch_index],
+                sigma_values[batch_index],
+                observed[batch_index][element_index],
+            )
+        end
+    end
+    if !isnothing(step.binding_slot)
+        env.generic_slots[step.binding_slot] ||
+            throw(BatchedBackendFallback("broadcast normal binding slot must be generic"))
+        storage = env.generic_values[step.binding_slot]
+        for batch_index in 1:env.batch_size
+            storage[batch_index] = observed[batch_index]
+        end
+        env.assigned[step.binding_slot] = true
+    end
+    return totals
+end

@@ -272,6 +272,149 @@ function _score_backend_step_and_gradient!(
     return totals, gradients
 end
 
+# Element-aware value+gradient evaluation of a broadcast argument for a fixed data
+# element, reusing the scalar numeric-gradient primitive kernels. Vector generic slots
+# contribute their element and carry zero gradient (data); numeric latents carry their
+# accumulated slot gradient.
+function _eval_backend_broadcast_numeric_and_gradient!(
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    expr::BackendLiteralExpr,
+    element_index::Int,
+    depth::Int,
+) where {T<:AbstractFloat}
+    fill!(values, T(_require_numeric_value(env, expr.value, "batched broadcast argument")))
+    fill!(gradients, zero(T))
+    return values, gradients
+end
+
+function _eval_backend_broadcast_numeric_and_gradient!(
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    expr::BackendSlotExpr,
+    element_index::Int,
+    depth::Int,
+) where {T<:AbstractFloat}
+    env.assigned[expr.slot] || throw(BatchedBackendFallback("environment slot $(expr.slot) is not assigned"))
+    if env.numeric_slots[expr.slot]
+        copyto!(values, view(env.numeric_values, expr.slot, :))
+        _copy_slot_gradient!(gradients, cache.slot_gradients, expr.slot)
+        return values, gradients
+    elseif env.index_slots[expr.slot]
+        for batch_index in eachindex(values)
+            values[batch_index] = T(env.index_values[expr.slot, batch_index])
+        end
+        fill!(gradients, zero(T))
+        return values, gradients
+    end
+    storage = env.generic_values[expr.slot]
+    for batch_index in eachindex(values)
+        value = storage[batch_index]
+        scalar = value isa AbstractVector ? value[element_index] : value
+        values[batch_index] = T(_require_numeric_value(env, scalar, "batched broadcast slot"))
+    end
+    fill!(gradients, zero(T))
+    return values, gradients
+end
+
+function _eval_backend_broadcast_numeric_and_gradient!(
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    expr::BackendPrimitiveExpr,
+    element_index::Int,
+    depth::Int,
+) where {T<:AbstractFloat}
+    expr.op in BACKEND_GRADIENT_SUPPORTED_PRIMITIVES ||
+        _backend_numeric_error(env, "batched broadcast gradient does not support primitive `$(expr.op)`")
+    isempty(expr.arguments) && _backend_numeric_error(env, "batched broadcast gradient primitive requires arguments")
+
+    _eval_backend_broadcast_numeric_and_gradient!(values, gradients, cache, env, first(expr.arguments), element_index, depth + 1)
+    if length(expr.arguments) == 1
+        return _apply_backend_numeric_gradient_unary!(values, gradients, env, expr.op)
+    elseif expr.op === :clamp
+        length(expr.arguments) == 3 ||
+            _backend_numeric_error(env, "batched broadcast gradient `clamp` expects exactly 3 arguments")
+        middle_values = _batched_numeric_scratch!(env, depth)
+        middle_gradients = _batched_backend_gradient_scratch!(cache, depth)
+        rhs_values = _batched_numeric_scratch!(env, depth + 1)
+        rhs_gradients = _batched_backend_gradient_scratch!(cache, depth + 1)
+        _eval_backend_broadcast_numeric_and_gradient!(middle_values, middle_gradients, cache, env, expr.arguments[2], element_index, depth + 2)
+        _eval_backend_broadcast_numeric_and_gradient!(rhs_values, rhs_gradients, cache, env, expr.arguments[3], element_index, depth + 2)
+        return _apply_backend_numeric_gradient_ternary!(
+            values, gradients, env, expr.op, middle_values, middle_gradients, rhs_values, rhs_gradients,
+        )
+    end
+
+    temp_values = _batched_numeric_scratch!(env, depth)
+    temp_gradients = _batched_backend_gradient_scratch!(cache, depth)
+    for argument in Base.tail(expr.arguments)
+        _eval_backend_broadcast_numeric_and_gradient!(temp_values, temp_gradients, cache, env, argument, element_index, depth + 1)
+        _apply_backend_numeric_gradient_binary!(values, gradients, env, expr.op, temp_values, temp_gradients)
+    end
+    return values, gradients
+end
+
+function _eval_backend_broadcast_numeric_and_gradient!(
+    values::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    expr::BackendBlockExpr,
+    element_index::Int,
+    depth::Int,
+) where {T<:AbstractFloat}
+    for argument in expr.arguments
+        _eval_backend_broadcast_numeric_and_gradient!(values, gradients, cache, env, argument, element_index, depth)
+    end
+    return values, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendBroadcastNormalChoicePlanStep,
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
+    constraints,
+) where {T<:AbstractFloat}
+    isnothing(step.binding_slot) ||
+        throw(BatchedBackendFallback("batched backend gradient does not support broadcast normal bindings"))
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    observed = _batched_broadcast_observed_values(env, address_parts, constraints)
+    n = _broadcast_uniform_length(observed)
+    mu_values = _batched_numeric_scratch!(env, 1)
+    mu_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    sigma_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    for element_index in 1:n
+        _eval_backend_broadcast_numeric_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, element_index, 3)
+        _eval_backend_broadcast_numeric_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, element_index, 5)
+        for batch_index in eachindex(totals)
+            value = observed[batch_index][element_index]
+            mu = mu_values[batch_index]
+            sigma = sigma_values[batch_index]
+            totals[batch_index] += _backend_normal_logpdf(mu, sigma, value)
+            z = (value - mu) / sigma
+            inv_sigma = 1 / sigma
+            dmu = z * inv_sigma
+            dsigma = (z * z - 1) * inv_sigma
+            for parameter_index in axes(gradients, 1)
+                gradients[parameter_index, batch_index] +=
+                    dmu * mu_gradients[parameter_index, batch_index] +
+                    dsigma * sigma_gradients[parameter_index, batch_index]
+            end
+        end
+    end
+    return totals, gradients
+end
+
 function _score_backend_step_and_gradient!(
     step::BackendDirichletChoicePlanStep,
     totals::AbstractVector{T},

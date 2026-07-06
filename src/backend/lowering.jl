@@ -352,6 +352,9 @@ function _backend_lower_address(model::TeaModel, layout::EnvironmentLayout, addr
 end
 
 function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+    if step.rhs isa BroadcastDistributionSpec
+        return _backend_lower_broadcast_normal_choice_step(model, layout, step, issues)
+    end
     step.rhs isa DistributionSpec || begin
         _backend_issue!(issues, "unsupported choice RHS $(typeof(step.rhs)) in backend lowering")
         return nothing

@@ -246,6 +246,61 @@ function normal(mu, sigma)
     return NormalDist(promoted_mu, promoted_sigma)
 end
 
+# Broadcast (vectorized) normal observation. `mu` and `sigma` may each be a real
+# scalar or an `AbstractVector`; a single vector-valued choice scores every element
+# elementwise. This is the runtime counterpart of the `{:y} ~ normal.(mu, sigma)`
+# dot-call DSL syntax and of the backend `BackendBroadcastNormalChoicePlanStep`.
+struct BroadcastNormalDist{M,S} <: AbstractTeaDistribution
+    mu::M
+    sigma::S
+end
+
+BroadcastNormalDist(mu::Union{Real,AbstractVector}, sigma::Union{Real,AbstractVector}) =
+    BroadcastNormalDist{typeof(mu),typeof(sigma)}(mu, sigma)
+
+_broadcast_arg_length(::Real) = nothing
+_broadcast_arg_length(v::AbstractVector) = length(v)
+_broadcast_arg_getindex(x::Real, ::Int) = x
+_broadcast_arg_getindex(v::AbstractVector, i::Int) = v[i]
+
+function _broadcast_normal_length(mu, sigma)
+    mu_length = _broadcast_arg_length(mu)
+    sigma_length = _broadcast_arg_length(sigma)
+    if !isnothing(mu_length) && !isnothing(sigma_length)
+        mu_length == sigma_length ||
+            throw(DimensionMismatch("broadcast normal requires vector arguments of equal length, got $(mu_length) and $(sigma_length)"))
+        return mu_length
+    end
+    return something(mu_length, sigma_length, Some(nothing))
+end
+
+function _broadcast_normal_check_length(mu, sigma, n::Int)
+    for arg in (mu, sigma)
+        arg_length = _broadcast_arg_length(arg)
+        isnothing(arg_length) && continue
+        arg_length == n ||
+            throw(DimensionMismatch("broadcast normal argument length $(arg_length) does not match value length $n"))
+    end
+    return nothing
+end
+
+function iid(base::AbstractTeaDistribution, n::Integer)
+    n >= 1 || throw(ArgumentError("iid requires n >= 1"))
+    return IIDDist(base, Int(n))
+end
+
+# `n` independent-and-identically-distributed draws from `base` under a single
+# address. Runtime counterpart of the `eps ~ iid(dist_call, n)` DSL sugar.
+struct IIDDist{D<:AbstractTeaDistribution} <: AbstractTeaDistribution
+    base::D
+    n::Int
+
+    function IIDDist(base::D, n::Int) where {D<:AbstractTeaDistribution}
+        n >= 1 || throw(ArgumentError("iid requires n >= 1"))
+        return new{D}(base, n)
+    end
+end
+
 function laplace(mu, scale)
     promoted_mu, promoted_scale = promote(mu, scale)
     return LaplaceDist(promoted_mu, promoted_scale)
@@ -459,6 +514,34 @@ function Random.rand(rng::AbstractRNG, dist::MvNormalDist{T}) where {T<:Abstract
     draws = Vector{T}(undef, length(dist.mu))
     for index in eachindex(draws)
         draws[index] = dist.mu[index] + dist.sigma[index] * randn(rng, T)
+    end
+    return draws
+end
+
+function Random.rand(rng::AbstractRNG, dist::BroadcastNormalDist)
+    n = _broadcast_normal_length(dist.mu, dist.sigma)
+    isnothing(n) && throw(ArgumentError(
+        "broadcast normal with all-scalar arguments cannot infer a sample length; " *
+        "constrain the observation or supply at least one vector argument",
+    ))
+    mu1 = float(_broadcast_arg_getindex(dist.mu, 1))
+    sigma1 = float(_broadcast_arg_getindex(dist.sigma, 1))
+    T = float(promote_type(typeof(mu1), typeof(sigma1)))
+    draws = Vector{T}(undef, n)
+    for index in 1:n
+        mu = _broadcast_arg_getindex(dist.mu, index)
+        sigma = _broadcast_arg_getindex(dist.sigma, index)
+        draws[index] = mu + sigma * randn(rng, T)
+    end
+    return draws
+end
+
+function Random.rand(rng::AbstractRNG, dist::IIDDist)
+    first_draw = rand(rng, dist.base)
+    draws = Vector{typeof(first_draw)}(undef, dist.n)
+    draws[1] = first_draw
+    for index in 2:dist.n
+        draws[index] = rand(rng, dist.base)
     end
     return draws
 end
@@ -697,6 +780,37 @@ function logpdf(dist::MvNormalDist, x)
     accumulator = logpdf(normal(dist.mu[1], dist.sigma[1]), values[1])
     for index in 2:length(values)
         accumulator += logpdf(normal(dist.mu[index], dist.sigma[index]), values[index])
+    end
+    return accumulator
+end
+
+function logpdf(dist::BroadcastNormalDist, x)
+    values = x isa Tuple ? collect(x) : x
+    values isa AbstractVector || throw(ArgumentError("broadcast normal logpdf expects a vector or tuple value"))
+    n = length(values)
+    n >= 1 || throw(ArgumentError("broadcast normal requires a non-empty value"))
+    _broadcast_normal_check_length(dist.mu, dist.sigma, n)
+    accumulator = logpdf(
+        normal(_broadcast_arg_getindex(dist.mu, 1), _broadcast_arg_getindex(dist.sigma, 1)),
+        values[1],
+    )
+    for index in 2:n
+        accumulator += logpdf(
+            normal(_broadcast_arg_getindex(dist.mu, index), _broadcast_arg_getindex(dist.sigma, index)),
+            values[index],
+        )
+    end
+    return accumulator
+end
+
+function logpdf(dist::IIDDist, x)
+    values = x isa Tuple ? collect(x) : x
+    values isa AbstractVector || throw(ArgumentError("iid logpdf expects a vector or tuple value"))
+    length(values) == dist.n ||
+        throw(DimensionMismatch("iid expects a value of length $(dist.n), got $(length(values))"))
+    accumulator = logpdf(dist.base, values[1])
+    for index in 2:dist.n
+        accumulator += logpdf(dist.base, values[index])
     end
     return accumulator
 end

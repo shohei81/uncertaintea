@@ -264,6 +264,19 @@ function _backend_step_stub(step::BackendMvNormalChoicePlanStep)
     )
 end
 
+function _backend_step_stub(step::BackendBroadcastNormalChoicePlanStep)
+    return string(
+        "choice broadcast_normal address=",
+        _backend_address_stub(step.address),
+        " mu=",
+        _backend_expr_stub(step.mu),
+        " sigma=",
+        _backend_expr_stub(step.sigma),
+        " parameter_slot=",
+        repr(step.parameter_slot),
+    )
+end
+
 function _backend_step_stub(step::BackendDirichletChoicePlanStep)
     return string(
         "choice dirichlet address=",
