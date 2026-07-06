@@ -7,12 +7,18 @@ The intended user experience is Gen-like syntax with a static backend that compi
 
 ## Current Phase
 
-This repository is in the design and documentation phase.
-Before adding runtime code, read these files:
+The CPU reference runtime is implemented: the static DSL, compiled `logjoint`
+and gradients, HMC/NUTS/SMC/ADVI inference, batched scoring with analytic
+gradients, and a range of distributions and transforms. GPU work has moved from
+source emission to a real device backend — KernelAbstractions kernels (with a
+Metal extension) for the batched logjoint, gradient, and HMC/ADVI inner loops.
+
+Before making changes, read these files:
 
 - [docs/research.md](docs/research.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/dsl.md](docs/dsl.md)
+- [docs/device-backend.md](docs/device-backend.md) — the KernelAbstractions device path
 
 ## Working Rules
 
