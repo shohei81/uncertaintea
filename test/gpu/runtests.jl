@@ -7,6 +7,7 @@
 # Metal.MetalBackend at Float32, and compares against the authoritative CPU
 # `batched_logjoint_unconstrained` reference computed in Float64.
 
+using Random
 using Test
 using UncertainTea
 using Metal
