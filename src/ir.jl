@@ -83,6 +83,27 @@ struct SimplexTransform <: AbstractParameterTransform
     end
 end
 
+# Unconstrained -> Cholesky factor of a correlation matrix (Stan's canonical
+# partial correlation parameterization). The constrained value is the PACKED
+# column-major lower triangle of the factor, length size*(size+1)/2 (diagonal
+# included); the unconstrained vector holds one entry per below-diagonal
+# element, length size*(size-1)/2, consumed in row-major below-diagonal order
+# ((2,1), (3,1), (3,2), ...).
+struct CholeskyCorrTransform <: AbstractParameterTransform
+    size::Int
+
+    function CholeskyCorrTransform(size::Int)
+        size >= 2 || throw(ArgumentError("cholesky correlation transform requires size >= 2"))
+        return new(size)
+    end
+end
+
+# Position of entry (row, col), row >= col, inside the column-major packed
+# lower triangle of a `size` x `size` matrix (diagonal included).
+function _packed_lower_index(size::Int, row::Integer, col::Integer)
+    return (col - 1) * size - ((col - 1) * (col - 2)) ÷ 2 + (row - col + 1)
+end
+
 struct BoundedTransform{T<:Real} <: AbstractParameterTransform
     lower::T
     upper::T
@@ -532,6 +553,9 @@ function _parameter_transform(rhs::DistributionSpec)
     elseif rhs.family === :dirichlet
         size = _dirichlet_static_size(rhs.arguments)
         isnothing(size) || return SimplexTransform(size)
+    elseif rhs.family === :lkjcholesky
+        size = _lkjcholesky_static_size(rhs.arguments)
+        isnothing(size) || return CholeskyCorrTransform(size)
     elseif rhs.family === :truncatednormal || rhs.family === :truncatedstudentt
         bounds = _truncated_static_bounds(rhs.family, rhs.arguments)
         isnothing(bounds) && return nothing
@@ -585,6 +609,8 @@ _parameter_dimensions(::LogitTransform) = (1, 1)
 _parameter_dimensions(transform::VectorLogTransform) = (transform.size, transform.size)
 _parameter_dimensions(transform::VectorLogitTransform) = (transform.size, transform.size)
 _parameter_dimensions(transform::SimplexTransform) = (transform.size - 1, transform.size)
+_parameter_dimensions(transform::CholeskyCorrTransform) =
+    ((transform.size * (transform.size - 1)) ÷ 2, (transform.size * (transform.size + 1)) ÷ 2)
 _parameter_dimensions(::BoundedTransform) = (1, 1)
 _parameter_dimensions(::LowerBoundedTransform) = (1, 1)
 _parameter_dimensions(::UpperBoundedTransform) = (1, 1)
@@ -622,6 +648,21 @@ function _mvnormal_static_size(arguments::Vector)
         return mu_size
     end
     return something(mu_size, sigma_size)
+end
+
+# Static dimension of `lkjcholesky(d, eta)`. The frontend enforces a literal
+# integer `d` at macro time, but the runtime `DistributionSpec` argument vector
+# is built from a `[d, eta]` literal, so an integer `d` may arrive promoted to
+# a Float64 (e.g. `lkjcholesky(2, 2.0)` stores `Any[2.0, 2.0]`); accept any
+# integer-valued literal number.
+function _lkjcholesky_static_size(arguments::Vector)
+    length(arguments) == 2 || return nothing
+    d = arguments[1]
+    d isa Real || return nothing
+    isinteger(d) || return nothing
+    dimension = Int(d)
+    dimension >= 2 || return nothing
+    return dimension
 end
 
 # Static size of `mvnormaldense(mu, scale_tril)` from the mu argument only; the

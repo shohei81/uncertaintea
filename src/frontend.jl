@@ -37,6 +37,7 @@ function _qualify_builtin_distribution(name)
         :dirichlet,
         :mvnormal,
         :mvnormaldense,
+        :lkjcholesky,
         :bernoulli,
         :binomial,
         :geometric,
@@ -61,8 +62,8 @@ const _BROADCAST_DISTRIBUTION_FAMILIES = (:normal,)
 
 const _KNOWN_DISTRIBUTION_FAMILIES = (
     :normal, :lognormal, :laplace, :exponential, :gamma, :inversegamma, :weibull,
-    :beta, :dirichlet, :mvnormal, :mvnormaldense, :bernoulli, :binomial, :geometric, :negativebinomial,
-    :poisson, :studentt, :categorical, :truncatednormal, :truncatedstudentt, :mixture,
+    :beta, :dirichlet, :mvnormal, :mvnormaldense, :lkjcholesky, :bernoulli, :binomial, :geometric,
+    :negativebinomial, :poisson, :studentt, :categorical, :truncatednormal, :truncatedstudentt, :mixture,
 )
 
 # Detects a dot-call distribution observation `family.(args...)` on the RHS of `~`.
@@ -200,6 +201,15 @@ function _rhs_spec_expr(rhs)
         callee = rhs.args[1]
         arguments = Expr(:vect, map(QuoteNode, rhs.args[2:end])...)
 
+        if callee === :lkjcholesky
+            spec_arguments = rhs.args[2:end]
+            (length(spec_arguments) == 2 && spec_arguments[1] isa Integer && spec_arguments[1] >= 2) ||
+                throw(ArgumentError(
+                    "lkjcholesky requires a literal integer dimension `d >= 2` as its first argument " *
+                    "(for latents and observations alike), got `$rhs`",
+                ))
+        end
+
         if callee isa Symbol &&
            callee in (
             :normal,
@@ -220,6 +230,7 @@ function _rhs_spec_expr(rhs)
             :categorical,
             :mvnormal,
             :mvnormaldense,
+            :lkjcholesky,
             :truncatednormal,
             :truncatedstudentt,
             :mixture,
@@ -293,6 +304,12 @@ function _supported_distribution_family(rhs)
     if family === :mvnormaldense && !isnothing(_mvnormaldense_static_size(rhs))
         return family
     end
+    if family === :lkjcholesky
+        isnothing(_lkjcholesky_static_dim(rhs)) && throw(ArgumentError(
+            "lkjcholesky latents require a literal integer dimension `d >= 2` as the first argument",
+        ))
+        return family
+    end
     if family === :truncatednormal || family === :truncatedstudentt
         isnothing(_truncated_static_bounds(family, rhs.args[2:end])) && throw(ArgumentError(
             "$family latents require literal (static) bounds; use static Number/Inf lower and upper bounds, " *
@@ -329,6 +346,11 @@ function _mvnormaldense_static_size(rhs)
     return _mvnormaldense_static_size(rhs.args[2:end])
 end
 
+function _lkjcholesky_static_dim(rhs)
+    rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :lkjcholesky || return nothing
+    return _lkjcholesky_static_size(rhs.args[2:end])
+end
+
 function _parameter_layout_sizes(rhs)
     family = _supported_distribution_family(rhs)
     isnothing(family) && throw(ArgumentError("unsupported parameter layout size for $rhs"))
@@ -344,6 +366,10 @@ function _parameter_layout_sizes(rhs)
         size = _mvnormaldense_static_size(rhs)
         isnothing(size) && throw(ArgumentError("mvnormaldense parameter slots require a statically known mean vector size"))
         return size, size
+    elseif family === :lkjcholesky
+        size = _lkjcholesky_static_dim(rhs)
+        isnothing(size) && throw(ArgumentError("lkjcholesky parameter slots require a literal integer dimension"))
+        return (size * (size - 1)) ÷ 2, (size * (size + 1)) ÷ 2
     end
     return 1, 1
 end
@@ -362,6 +388,10 @@ function _parameter_transform_expr(rhs)
         size = _mvnormaldense_static_size(rhs)
         isnothing(size) && throw(ArgumentError("mvnormaldense parameter slots require a statically known mean vector size"))
         return :($(_qualify(:VectorIdentityTransform))($size))
+    elseif family === :lkjcholesky
+        size = _lkjcholesky_static_dim(rhs)
+        isnothing(size) && throw(ArgumentError("lkjcholesky parameter slots require a literal integer dimension"))
+        return :($(_qualify(:CholeskyCorrTransform))($size))
     elseif family === :lognormal || family === :exponential || family === :gamma ||
            family === :inversegamma || family === :weibull
         return :($(_qualify(:LogTransform))())

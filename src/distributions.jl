@@ -268,6 +268,22 @@ struct MvNormalDenseDist{M<:AbstractVector,S<:AbstractMatrix} <: AbstractTeaDist
     end
 end
 
+# LKJ prior over the Cholesky factor of a d x d correlation matrix, scored on
+# the column-major PACKED lower triangle (length d*(d+1)/2, diagonal included) —
+# the same layout `CholeskyCorrTransform` produces. `eta` stays generic so a
+# latent-dependent concentration remains differentiable.
+struct LKJCholeskyDist{T<:Real} <: AbstractTeaDistribution
+    d::Int
+    eta::T
+
+    function LKJCholeskyDist(d::Int, eta::Real)
+        d >= 2 || throw(ArgumentError("lkjcholesky requires a dimension d >= 2"))
+        eta > 0 || throw(ArgumentError("lkjcholesky requires a concentration eta > 0"))
+        promoted_eta = float(eta)
+        return new{typeof(promoted_eta)}(d, promoted_eta)
+    end
+end
+
 function normal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return NormalDist(promoted_mu, promoted_sigma)
@@ -406,6 +422,61 @@ function mvnormaldense(mu, scale_tril)
     # element type so downstream arithmetic stays differentiable.
     mu_values = map(identity, collect(mu))
     return MvNormalDenseDist(mu_values, scale_tril)
+end
+
+# `d` accepts any integer-valued number: the compiled evaluator reconstructs the
+# distribution from the `DistributionSpec` argument vector, where an integer
+# literal may arrive promoted to Float64 (see `_lkjcholesky_static_size`).
+function lkjcholesky(d, eta)
+    (d isa Real && isinteger(d)) ||
+        throw(ArgumentError("lkjcholesky requires an integer dimension d"))
+    return LKJCholeskyDist(Int(d), eta)
+end
+
+# Log of the LKJ normalizing constant over correlation matrices (Lewandowski,
+# Kurowicka & Joe 2009, cvine construction): the density over the free
+# below-diagonal Cholesky coordinates is
+#   prod_{i=2..d} L[i,i]^(d - i + 2*eta - 2) / c_d(eta)
+# with
+#   log c_d(eta) = sum_{k=1}^{d-1} (d - k) * [(2*eta - 2 + d - k) * log(2)
+#                                             + log Beta(a_k, a_k)],
+#   a_k = eta + (d - 1 - k) / 2,
+# i.e. one symmetric Beta factor (rescaled to (-1, 1)) per canonical partial
+# correlation at cvine tree level k, replicated (d - k) times.
+function _lkj_log_normalizing_constant(d::Int, eta)
+    eta_f = float(eta)
+    log_c = zero(eta_f)
+    for k in 1:(d - 1)
+        a = eta_f + (d - 1 - k) / 2
+        log_beta = loggamma(a) + loggamma(a) - loggamma(2 * a)
+        log_c += (d - k) * ((2 * eta_f - 2 + d - k) * log(oftype(eta_f, 2)) + log_beta)
+    end
+    return -log_c
+end
+
+# Un-pack a column-major packed correlation Cholesky factor and scale row i by
+# `scales[i]`, producing the dense d x d lower-triangular `scale_tril` for
+# `mvnormaldense` (covariance = diag(scales) * Omega * diag(scales)). Plain
+# loops keep ForwardDiff Duals flowing through, and `map(identity, collect(...))`
+# narrows `Vector{Any}` inputs from compiled expressions (mirroring
+# `mvnormaldense`).
+function scale_cholesky(scales::AbstractVector, packed_corr_chol::AbstractVector)
+    isempty(scales) && throw(ArgumentError("scale_cholesky requires at least one scale"))
+    scale_values = map(identity, collect(scales))
+    packed_values = map(identity, collect(packed_corr_chol))
+    d = length(scale_values)
+    expected = (d * (d + 1)) ÷ 2
+    length(packed_values) == expected || throw(DimensionMismatch(
+        "scale_cholesky expected a packed lower triangle of length $expected for $d scales, got $(length(packed_values))",
+    ))
+    T = promote_type(eltype(scale_values), eltype(packed_values))
+    result = zeros(T, d, d)
+    for col in 1:d
+        for row in col:d
+            result[row, col] = scale_values[row] * packed_values[_packed_lower_index(d, row, col)]
+        end
+    end
+    return result
 end
 
 function lognormal(mu, sigma)
@@ -572,6 +643,30 @@ function Random.rand(rng::AbstractRNG, dist::MvNormalDenseDist)
         draws[row] = accumulator
     end
     return draws
+end
+
+# LKJ cvine construction (Lewandowski, Kurowicka & Joe 2009): the canonical
+# partial correlation feeding below-diagonal entry (i, j) sits at cvine tree
+# level j and is distributed as w = 2 * Beta(a_j, a_j) - 1 with
+# a_j = eta + (d - 1 - j) / 2; running Stan's `cholesky_corr_constrain` forward
+# recursion on those w values yields the packed correlation Cholesky factor.
+function Random.rand(rng::AbstractRNG, dist::LKJCholeskyDist)
+    d = dist.d
+    eta = Float64(dist.eta)
+    packed = Vector{Float64}(undef, (d * (d + 1)) ÷ 2)
+    packed[_packed_lower_index(d, 1, 1)] = 1.0
+    for row in 2:d
+        sum_sqs = 0.0
+        for col in 1:(row - 1)
+            a = eta + (d - 1 - col) / 2
+            w = 2.0 * rand(rng, BetaDist(a, a)) - 1.0
+            entry = w * sqrt(1 - sum_sqs)
+            packed[_packed_lower_index(d, row, col)] = entry
+            sum_sqs += entry * entry
+        end
+        packed[_packed_lower_index(d, row, row)] = sqrt(1 - sum_sqs)
+    end
+    return packed
 end
 
 function Random.rand(rng::AbstractRNG, dist::BroadcastNormalDist)
@@ -867,6 +962,36 @@ function logpdf(dist::MvNormalDenseDist, x)
         quadratic += z * z
     end
     return -log_det - quadratic / 2 - dimension * log(2 * pi) / 2
+end
+
+# LKJ log density over the free (below-diagonal) coordinates of the packed
+# correlation Cholesky factor:
+#   lpdf = sum_{i=2..d} (d - i + 2*eta - 2) * log(L[i,i]) + log(1 / c_d(eta)).
+# Support: packed length d*(d+1)/2, strictly positive diagonal entries, and
+# every row of the unpacked factor a unit-or-shorter vector (else -Inf).
+function logpdf(dist::LKJCholeskyDist, x)
+    values = x isa Tuple ? collect(x) : x
+    values isa AbstractVector || throw(ArgumentError("lkjcholesky logpdf expects a vector or tuple value"))
+    d = dist.d
+    expected = (d * (d + 1)) ÷ 2
+    length(values) == expected || return -Inf
+
+    accumulator = _lkj_log_normalizing_constant(d, dist.eta) + zero(float(values[firstindex(values)]))
+    tolerance = sqrt(eps(Float64)) * d * 16
+    for row in 1:d
+        diagonal = values[_packed_lower_index(d, row, row)]
+        diagonal > zero(diagonal) || return oftype(accumulator, -Inf)
+        sum_sqs = zero(float(diagonal))
+        for col in 1:row
+            entry = values[_packed_lower_index(d, row, col)]
+            sum_sqs += entry * entry
+        end
+        sum_sqs <= 1 + tolerance || return oftype(accumulator, -Inf)
+        if row >= 2
+            accumulator += (d - row + 2 * dist.eta - 2) * log(diagonal)
+        end
+    end
+    return accumulator
 end
 
 function logpdf(dist::BroadcastNormalDist, x)

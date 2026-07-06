@@ -265,6 +265,7 @@ The initial GPU-targeted distribution set should stay small:
 - `mixture`
 - a restricted diagonal `mvnormal`
 - `mvnormaldense` (dense covariance via a Cholesky factor)
+- `lkjcholesky` (LKJ prior over correlation Cholesky factors)
 - simple transformed distributions
 
 Requirements:
@@ -292,6 +293,33 @@ Requirements:
   **latent** (parameter slot sampled by HMC/NUTS) the mean must have a
   statically known length (vector literal/tuple), mirroring the diagonal
   `mvnormal` rule; with a non-static mean it is observation-only (no slot).
+- `lkjcholesky(d, eta)` is the LKJ prior over the Cholesky factor of a `d`×`d`
+  correlation matrix, scored on the column-major **packed** lower triangle
+  (length `d*(d+1)/2`, diagonal included) so the value stays a flat vector. The
+  dimension `d` must be a literal integer `>= 2` — for latents and observations
+  alike; a non-literal `d` raises an `ArgumentError` at macro-expansion time.
+  `eta` may be any expression. Latents flow through `CholeskyCorrTransform`
+  (Stan's canonical partial correlation parameterization, `d*(d-1)/2`
+  unconstrained coordinates), so HMC/NUTS explores exactly the below-diagonal
+  free coordinates. The family is CPU-reference only (honestly reported
+  unsupported by `backend_report`; batched calls use the ForwardDiff fallback).
+  The `scale_cholesky(scales, packed_corr_chol)` helper un-packs the factor and
+  scales row `i` by `scales[i]`, producing the dense lower-triangular
+  `scale_tril` for `mvnormaldense`; it is a plain function usable as a
+  deterministic binding inside `@tea`. A hierarchical covariance prior then
+  reads:
+
+  ```julia
+  @tea static function hierarchical_cov_model(zero_mean, n)
+      Omega ~ lkjcholesky(3, 2.0)              # packed correlation Cholesky
+      tau ~ iid(lognormal(0.0f0, 0.3f0), 3)    # per-dimension scales
+      Ltril = scale_cholesky(tau, Omega)       # dense scale_tril = diag(tau) * L
+      for i in 1:n
+          {:y => i} ~ mvnormaldense(zero_mean, Ltril)
+      end
+      return Omega
+  end
+  ```
 - `truncatednormal(mu, sigma, lower, upper)` and
   `truncatedstudentt(nu, mu, sigma, lower, upper)` renormalize the base density
   over `[lower, upper]` (infinite bounds are allowed on either side). They are

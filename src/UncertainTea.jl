@@ -14,7 +14,7 @@ export LoopScopeSpec
 export ParameterLayout, ParameterSlotSpec
 export ExecutionPlan, ChoicePlanStep
 export DeterministicPlanStep, LoopPlanStep
-export IdentityTransform, VectorIdentityTransform, LogTransform, LogitTransform, SimplexTransform
+export IdentityTransform, VectorIdentityTransform, LogTransform, LogitTransform, SimplexTransform, CholeskyCorrTransform
 export VectorLogTransform, VectorLogitTransform
 export BoundedTransform, LowerBoundedTransform, UpperBoundedTransform
 export ChoiceMap, TeaModel, TeaTrace
@@ -57,6 +57,7 @@ export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, be
 export truncatednormal, truncatedstudentt
 export mixture
 export mvnormaldense
+export lkjcholesky, scale_cholesky
 export iid
 export device_batched_logjoint, device_batched_logjoint!, device_lowering_report, DeviceBatchedWorkspace, DeviceExecutionPlan
 export device_batched_logjoint_gradient, device_batched_logjoint_gradient!

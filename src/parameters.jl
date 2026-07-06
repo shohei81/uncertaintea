@@ -144,6 +144,113 @@ function logabsdetjac(transform::SimplexTransform, value::AbstractVector)
     return _simplex_logabsdet(constrained)
 end
 
+# Numerically stable log(1 - tanh(z)^2) = log(sech(z)^2); symmetric in z, so
+# the |z| form never overflows exp for large magnitudes.
+function _log1m_tanh_sq(z)
+    zf = float(z)
+    magnitude = abs(zf)
+    return 2 * (log(oftype(magnitude, 2)) - magnitude - log1p(exp(-2 * magnitude)))
+end
+
+# Stan's `cholesky_corr_constrain`: map a d*(d-1)/2 unconstrained vector to the
+# column-major PACKED lower-triangular Cholesky factor of a correlation matrix
+# (length d*(d+1)/2, diagonal included). Unconstrained entries are consumed in
+# row-major below-diagonal order ((2,1), (3,1), (3,2), ...): row i uses canonical
+# partial correlations w_j = tanh(z_j), sets L[i,j] = w_j * sqrt(1 - sum_{k<j}
+# L[i,k]^2), and closes the row with L[i,i] = sqrt(1 - sum_{k<i} L[i,k]^2) so
+# every row is a unit vector.
+#
+# Returns the log-abs-det of the Jacobian of the *below-diagonal* map
+# z -> (L[i,j])_{i>j}. That Jacobian is triangular in the consumption order, so
+# its log-determinant is the sum over below-diagonal entries of
+#   log(1 - tanh(z)^2) + 0.5 * log(1 - sum_{k<j} L[i,k]^2),
+# the tanh derivative times the sqrt scaling factor. The diagonal entries are
+# determined by the rows' unit norms and are not free coordinates.
+function _to_constrained_cholesky_corr!(
+    destination::AbstractVector,
+    transform::CholeskyCorrTransform,
+    values::AbstractVector,
+)
+    d = transform.size
+    length(values) == (d * (d - 1)) ÷ 2 ||
+        throw(DimensionMismatch("expected $((d * (d - 1)) ÷ 2) unconstrained cholesky correlation values, got $(length(values))"))
+    length(destination) == (d * (d + 1)) ÷ 2 ||
+        throw(DimensionMismatch("expected packed cholesky correlation destination of length $((d * (d + 1)) ÷ 2), got $(length(destination))"))
+
+    first_value = float(values[firstindex(values)])
+    logabsdet = zero(first_value)
+    destination[_packed_lower_index(d, 1, 1)] = one(first_value)
+    z_position = firstindex(values)
+    for row in 2:d
+        sum_sqs = zero(first_value)
+        for col in 1:(row - 1)
+            z = values[z_position]
+            z_position += 1
+            w = tanh(z)
+            logabsdet += _log1m_tanh_sq(z) + log1p(-sum_sqs) / 2
+            entry = w * sqrt(1 - sum_sqs)
+            destination[_packed_lower_index(d, row, col)] = entry
+            sum_sqs += entry * entry
+        end
+        destination[_packed_lower_index(d, row, row)] = sqrt(1 - sum_sqs)
+    end
+    return logabsdet
+end
+
+# Inverse of `_to_constrained_cholesky_corr!`: recover w_j = L[i,j] /
+# sqrt(1 - sum_{k<j} L[i,k]^2) and z_j = atanh(w_j) per below-diagonal entry.
+function _to_unconstrained_cholesky_corr!(
+    destination::AbstractVector,
+    transform::CholeskyCorrTransform,
+    values::AbstractVector,
+)
+    d = transform.size
+    length(values) == (d * (d + 1)) ÷ 2 ||
+        throw(DimensionMismatch("expected packed cholesky correlation values of length $((d * (d + 1)) ÷ 2), got $(length(values))"))
+    length(destination) == (d * (d - 1)) ÷ 2 ||
+        throw(DimensionMismatch("expected cholesky correlation unconstrained destination of length $((d * (d - 1)) ÷ 2), got $(length(destination))"))
+
+    for row in 1:d
+        diagonal = values[_packed_lower_index(d, row, row)]
+        diagonal > zero(diagonal) ||
+            throw(ArgumentError("cholesky correlation values require strictly positive diagonal entries"))
+    end
+
+    z_position = firstindex(destination)
+    for row in 2:d
+        sum_sqs = zero(float(values[firstindex(values)]))
+        for col in 1:(row - 1)
+            entry = values[_packed_lower_index(d, row, col)]
+            remaining = 1 - sum_sqs
+            remaining > zero(remaining) ||
+                throw(ArgumentError("cholesky correlation rows must have norm at most 1"))
+            w = entry / sqrt(remaining)
+            -1 < w < 1 ||
+                throw(ArgumentError("cholesky correlation rows must have norm at most 1"))
+            destination[z_position] = atanh(w)
+            z_position += 1
+            sum_sqs += entry * entry
+        end
+    end
+    return destination
+end
+
+function to_constrained(transform::CholeskyCorrTransform, value::AbstractVector)
+    destination = similar(collect(value), (transform.size * (transform.size + 1)) ÷ 2)
+    _to_constrained_cholesky_corr!(destination, transform, value)
+    return destination
+end
+
+function to_unconstrained(transform::CholeskyCorrTransform, value::AbstractVector)
+    destination = similar(collect(value), (transform.size * (transform.size - 1)) ÷ 2)
+    return _to_unconstrained_cholesky_corr!(destination, transform, value)
+end
+
+function logabsdetjac(transform::CholeskyCorrTransform, value::AbstractVector)
+    destination = similar(collect(value), (transform.size * (transform.size + 1)) ÷ 2)
+    return _to_constrained_cholesky_corr!(destination, transform, value)
+end
+
 function _slot_parameter_values(params::AbstractVector, slot::ParameterSlotSpec)
     indices = parametervalueindices(slot)
     if slot.value_length == 1
@@ -220,6 +327,10 @@ function _transform_slot_to_constrained!(
         constrained = view(destination, parametervalueindices(slot))
         _to_constrained_simplex!(constrained, slot.transform, unconstrained)
         return _simplex_logabsdet(constrained)
+    elseif slot.transform isa CholeskyCorrTransform
+        unconstrained = view(params, parameterindices(slot))
+        constrained = view(destination, parametervalueindices(slot))
+        return _to_constrained_cholesky_corr!(constrained, slot.transform, unconstrained)
     end
 
     throw(ArgumentError("unsupported parameter transform $(typeof(slot.transform))"))
@@ -255,6 +366,10 @@ function _transform_slot_to_unconstrained!(
         unconstrained = view(destination, parameterindices(slot))
         constrained = view(params, parametervalueindices(slot))
         _to_unconstrained_simplex!(unconstrained, slot.transform, constrained)
+    elseif slot.transform isa CholeskyCorrTransform
+        unconstrained = view(destination, parameterindices(slot))
+        constrained = view(params, parametervalueindices(slot))
+        _to_unconstrained_cholesky_corr!(unconstrained, slot.transform, constrained)
     else
         throw(ArgumentError("unsupported parameter transform $(typeof(slot.transform))"))
     end
