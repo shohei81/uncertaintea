@@ -46,8 +46,6 @@
     )
     geometric_backend_report = backend_report(geometric_probability_model)
     geometric_backend_plan = backend_execution_plan(geometric_probability_model)
-    geometric_backend_layout = backend_package_layout(geometric_probability_model)
-    geometric_backend_stage = gpu_backend_files(geometric_backend_layout)[2]
     geometric_params = parameter_vector(geometric_trace)
     geometric_batch_params = reshape(geometric_params .+ Float64[-0.1, 0.0, 0.2], 1, 3)
     geometric_batch_constraints = [
@@ -70,7 +68,6 @@
 
     @test geometric_backend_report.supported
     @test geometric_backend_plan.steps[3] isa UncertainTea.BackendGeometricChoicePlanStep
-    @test occursin("# 3. choice geometric", geometric_backend_stage.contents)
     @test geometric_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             geometric_probability_model,
@@ -101,8 +98,6 @@
     )
     negativebinomial_backend_report = backend_report(negativebinomial_probability_model)
     negativebinomial_backend_plan = backend_execution_plan(negativebinomial_probability_model)
-    negativebinomial_backend_layout = backend_package_layout(negativebinomial_probability_model)
-    negativebinomial_backend_stage = gpu_backend_files(negativebinomial_backend_layout)[2]
     negativebinomial_params = parameter_vector(negativebinomial_trace)
     negativebinomial_batch_params = hcat(
         negativebinomial_params .+ Float64[-0.1, 0.05],
@@ -129,7 +124,6 @@
 
     @test negativebinomial_backend_report.supported
     @test negativebinomial_backend_plan.steps[5] isa UncertainTea.BackendNegativeBinomialChoicePlanStep
-    @test occursin("# 5. choice negativebinomial", negativebinomial_backend_stage.contents)
     @test negativebinomial_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             negativebinomial_probability_model,

@@ -37,7 +37,6 @@
     @test mvnormal_backend_report.supported
     @test isempty(mvnormal_backend_report.issues)
     @test backend_execution_plan(mvnormal_latent_model).steps[1] isa UncertainTea.BackendMvNormalChoicePlanStep
-    @test any(occursin("choice mvnormal", file.contents) for file in gpu_backend_files(backend_package_layout(mvnormal_latent_model)))
 
     mvnormal_batch_params = hcat(
         mvnormal_unconstrained,

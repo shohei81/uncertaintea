@@ -34,7 +34,6 @@
     @test dirichlet_backend_report.supported
     @test isempty(dirichlet_backend_report.issues)
     @test backend_execution_plan(dirichlet_latent_model).steps[1] isa UncertainTea.BackendDirichletChoicePlanStep
-    @test any(occursin("choice dirichlet", file.contents) for file in gpu_backend_files(backend_package_layout(dirichlet_latent_model)))
 
     dirichlet_batch_params = hcat(
         dirichlet_unconstrained,

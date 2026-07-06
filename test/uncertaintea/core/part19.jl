@@ -46,8 +46,6 @@
     beta_shape_constraints = choicemap((:y, 0.7f0))
     beta_shape_trace, _ = generate(beta_shape_model, (), beta_shape_constraints; rng=MersenneTwister(141))
     beta_shape_backend_plan = backend_execution_plan(beta_shape_model)
-    beta_shape_backend_layout = backend_package_layout(beta_shape_model)
-    beta_shape_backend_stage = gpu_backend_files(beta_shape_backend_layout)[2]
     beta_shape_params = parameter_vector(beta_shape_trace)
     beta_shape_batch_params = reshape(beta_shape_params .+ Float64[-0.2, 0.0, 0.15], 1, 3)
     beta_shape_batch_constraints = [
@@ -69,7 +67,6 @@
     )
 
     @test beta_shape_backend_plan.steps[3] isa UncertainTea.BackendBetaChoicePlanStep
-    @test occursin("# 3. choice beta", beta_shape_backend_stage.contents)
     @test beta_shape_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             beta_shape_model,
@@ -101,8 +98,6 @@
     )
     categorical_backend_report = backend_report(categorical_weight_model)
     categorical_backend_plan = backend_execution_plan(categorical_weight_model)
-    categorical_backend_layout = backend_package_layout(categorical_weight_model)
-    categorical_backend_stage = gpu_backend_files(categorical_backend_layout)[2]
     categorical_params = parameter_vector(categorical_trace)
     categorical_batch_params = hcat(
         categorical_params .+ Float64[-0.1, 0.05],
@@ -129,7 +124,6 @@
 
     @test categorical_backend_report.supported
     @test categorical_backend_plan.steps[6] isa UncertainTea.BackendCategoricalChoicePlanStep
-    @test occursin("# 6. choice categorical", categorical_backend_stage.contents)
     @test categorical_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             categorical_weight_model,

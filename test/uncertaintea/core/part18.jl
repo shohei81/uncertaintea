@@ -92,8 +92,6 @@
     gamma_shape_constraints = choicemap((:y, 1.2f0))
     gamma_shape_trace, _ = generate(gamma_shape_model, (), gamma_shape_constraints; rng=MersenneTwister(132))
     gamma_shape_backend_plan = backend_execution_plan(gamma_shape_model)
-    gamma_shape_backend_layout = backend_package_layout(gamma_shape_model)
-    gamma_shape_backend_stage = gpu_backend_files(gamma_shape_backend_layout)[2]
     gamma_shape_params = parameter_vector(gamma_shape_trace)
     gamma_shape_batch_params = reshape(gamma_shape_params .+ Float64[-0.2, 0.0, 0.15], 1, 3)
     gamma_shape_batch_constraints = [
@@ -115,7 +113,6 @@
     )
 
     @test gamma_shape_backend_plan.steps[3] isa UncertainTea.BackendGammaChoicePlanStep
-    @test occursin("# 3. choice gamma", gamma_shape_backend_stage.contents)
     @test gamma_shape_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             gamma_shape_model,
@@ -142,8 +139,6 @@
         rng=MersenneTwister(133),
     )
     studentt_location_backend_plan = backend_execution_plan(studentt_location_model)
-    studentt_location_backend_layout = backend_package_layout(studentt_location_model)
-    studentt_location_backend_stage = gpu_backend_files(studentt_location_backend_layout)[2]
     studentt_location_params = parameter_vector(studentt_location_trace)
     studentt_location_batch_params = reshape(studentt_location_params .+ Float64[-0.1, 0.0, 0.2], 1, 3)
     studentt_location_batch_constraints = [
@@ -165,7 +160,6 @@
     )
 
     @test studentt_location_backend_plan.steps[2] isa UncertainTea.BackendStudentTChoicePlanStep
-    @test occursin("# 2. choice studentt", studentt_location_backend_stage.contents)
     @test studentt_location_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             studentt_location_model,

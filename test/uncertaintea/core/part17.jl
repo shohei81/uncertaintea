@@ -56,8 +56,6 @@
     poisson_plan = executionplan(poisson_rate_model)
     poisson_backend_report = backend_report(poisson_rate_model)
     poisson_backend_plan = backend_execution_plan(poisson_rate_model)
-    poisson_backend_layout = backend_package_layout(poisson_rate_model)
-    poisson_backend_stage = gpu_backend_files(poisson_backend_layout)[2]
     poisson_params = parameter_vector(poisson_trace)
     poisson_unconstrained = transform_to_unconstrained(poisson_trace)
     poisson_batch_params = reshape(
@@ -97,8 +95,6 @@
     @test poisson_backend_report.supported
     @test poisson_backend_plan.steps[1] isa UncertainTea.BackendExponentialChoicePlanStep
     @test poisson_backend_plan.steps[2] isa UncertainTea.BackendPoissonChoicePlanStep
-    @test occursin("# 1. choice exponential", poisson_backend_stage.contents)
-    @test occursin("# 2. choice poisson", poisson_backend_stage.contents)
     @test logjoint(poisson_rate_model, poisson_params, (), poisson_constraints) ≈
         assess(
             poisson_rate_model,

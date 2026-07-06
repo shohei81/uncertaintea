@@ -1,3 +1,7 @@
+> **Superseded (2026-07):** the string-emission GPU scaffolding this note
+> describes has been removed. The live GPU path is the KernelAbstractions
+> device backend — see [device-backend.md](device-backend.md).
+
 Date: 2026-03-12
 
 # Vector Latent Backend Lowering

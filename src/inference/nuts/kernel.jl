@@ -137,36 +137,6 @@ end
 
 function _activate_batched_nuts_subtree_merge_cohort!(
     workspace::BatchedNUTSWorkspace,
-)
-    ir = _batched_nuts_control_ir(workspace)
-    ir isa BatchedNUTSMergeIR || return false
-    return _activate_batched_nuts_subtree_merge_cohort!(workspace, ir)
-end
-
-function _activate_batched_nuts_subtree_merge_cohort!(
-    workspace::BatchedNUTSWorkspace,
-    ir::BatchedNUTSMergeIR,
-)
-    copyto!(workspace.control.scheduler.subtree_started, ir.started_chains)
-    fill!(workspace.subtree_active, false)
-    any_started = false
-    for chain_index in eachindex(workspace.control.tree_depths)
-        ir.started_chains[chain_index] || continue
-
-        workspace.control.tree_depths[chain_index] += 1
-        if !ir.merge_active[chain_index]
-            workspace.control.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
-            continue
-        end
-
-        workspace.subtree_active[chain_index] = true
-        any_started = true
-    end
-    return any_started
-end
-
-function _activate_batched_nuts_subtree_merge_cohort!(
-    workspace::BatchedNUTSWorkspace,
     block::BatchedNUTSMergeControlBlock,
 )
     copyto!(workspace.control.scheduler.subtree_started, block.started_chains)
@@ -255,6 +225,9 @@ function _merge_batched_nuts_subtree_cohort!(
     return workspace
 end
 
+# The kernel step sequence for the current scheduler phase (expand/merge/
+# idle/done) runs directly: build the access view over the live workspace
+# buffers, pick the phase program, and execute its steps in order.
 function _step_batched_nuts_subtree_scheduler!(
     workspace::BatchedNUTSWorkspace,
     model::TeaModel,
@@ -265,210 +238,14 @@ function _step_batched_nuts_subtree_scheduler!(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    program = _batched_nuts_kernel_program(workspace)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        program,
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    ir::AbstractBatchedNUTSControlIR,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        _batched_nuts_step_descriptor(
-            workspace,
-            _batched_nuts_control_block(ir),
-        ),
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    block::AbstractBatchedNUTSControlBlock,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        _batched_nuts_step_descriptor(workspace, block),
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    descriptor::AbstractBatchedNUTSStepDescriptor,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        _batched_nuts_step_state(workspace, descriptor),
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    state::AbstractBatchedNUTSStepState,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        _batched_nuts_kernel_frame(workspace, state),
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    access::AbstractBatchedNUTSKernelAccess,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        _batched_nuts_kernel_program(workspace, access),
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    frame::AbstractBatchedNUTSKernelFrame,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    return _step_batched_nuts_subtree_scheduler!(
-        workspace,
-        _batched_nuts_kernel_access(workspace, frame),
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-end
-
-function _step_batched_nuts_subtree_scheduler!(
-    workspace::BatchedNUTSWorkspace,
-    program::AbstractBatchedNUTSKernelProgram,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    _execute_batched_nuts_kernel_program!(
-        workspace,
-        program,
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-    return _batched_nuts_kernel_returns(program)
-end
-
-function _execute_batched_nuts_kernel_program!(
-    workspace::BatchedNUTSWorkspace,
-    program::AbstractBatchedNUTSKernelProgram,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
+    access = _batched_nuts_kernel_access(workspace)
+    program = _batched_nuts_kernel_program(workspace, access)
     execution = _batched_nuts_kernel_execution_state()
-    package_plan = _batched_nuts_package_plan(program)
-    for stage_file in _batched_nuts_package_stage_files(package_plan)
-        _execute_batched_nuts_package_stage!(
+    for step in _batched_nuts_kernel_steps(program)
+        _execute_batched_nuts_kernel_step!(
             workspace,
-            package_plan,
-            stage_file,
+            access,
+            step,
             execution,
             model,
             inverse_mass_matrix,
@@ -479,112 +256,7 @@ function _execute_batched_nuts_kernel_program!(
             rng,
         )
     end
-    return nothing
-end
-
-function _execute_batched_nuts_package_stage!(
-    workspace::BatchedNUTSWorkspace,
-    package_plan::BatchedNUTSKernelPackagePlan,
-    stage_file::BatchedNUTSKernelPackageStageFile,
-    execution::BatchedNUTSKernelExecutionState,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    _execute_batched_nuts_kernel_dataflow!(
-        workspace,
-        _batched_nuts_launch_stage_dataflow(
-            _batched_nuts_executor_launch_stage(
-                _batched_nuts_codegen_executor_stage(
-                    _batched_nuts_artifact_codegen_stage(
-                        _batched_nuts_source_artifact_stage(
-                            _batched_nuts_module_source_stage(
-                                _batched_nuts_bundle_module_stage(
-                                    _batched_nuts_package_bundle_stage(stage_file),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        execution,
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-    for barrier in _batched_nuts_artifact_barriers_after(
-        _batched_nuts_source_artifact_stage(
-            _batched_nuts_module_source_stage(
-                _batched_nuts_bundle_module_stage(
-                    _batched_nuts_package_bundle_stage(stage_file),
-                ),
-            ),
-        ),
-    )
-        _execute_batched_nuts_kernel_barrier!(workspace, barrier, execution)
-    end
-    return nothing
-end
-
-function _execute_batched_nuts_kernel_dataflow!(
-    workspace::BatchedNUTSWorkspace,
-    dataflow::AbstractBatchedNUTSKernelDataflow,
-    execution::BatchedNUTSKernelExecutionState,
-    model::TeaModel,
-    inverse_mass_matrix,
-    args,
-    constraints,
-    step_size,
-    max_delta_energy::Float64,
-    rng::AbstractRNG,
-)
-    _execute_batched_nuts_kernel_step!(
-        workspace,
-        _batched_nuts_kernel_access(dataflow),
-        _batched_nuts_kernel_step(dataflow),
-        execution,
-        model,
-        inverse_mass_matrix,
-        args,
-        constraints,
-        step_size,
-        max_delta_energy,
-        rng,
-    )
-    return nothing
-end
-
-function _execute_batched_nuts_kernel_barrier!(
-    workspace::BatchedNUTSWorkspace,
-    barrier::BatchedNUTSKernelBarrierPlacement,
-    execution::BatchedNUTSKernelExecutionState,
-)
-    return nothing
-end
-
-function _execute_batched_nuts_kernel_barrier!(
-    workspace::BatchedNUTSWorkspace,
-    barrier::BatchedNUTSKernelDeviceBarrierHint,
-    execution::BatchedNUTSKernelExecutionState,
-)
-    return nothing
-end
-
-function _execute_batched_nuts_kernel_barrier!(
-    workspace::BatchedNUTSWorkspace,
-    barrier::BatchedNUTSKernelTargetBarrierHint,
-    execution::BatchedNUTSKernelExecutionState,
-)
-    return nothing
+    return _batched_nuts_kernel_returns(program)
 end
 
 function _execute_batched_nuts_kernel_step!(

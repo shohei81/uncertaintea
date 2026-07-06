@@ -199,36 +199,13 @@ Current backend-lowering subset:
   kernel-frame object then makes the concrete matrix/vector buffers for that
   step explicit as well; the current CPU path now also flattens that frame
   into a phase-local kernel-access object whose fields directly expose the
-  buffers touched by each step, then lowers each primitive step into a typed
-  dataflow descriptor with explicit logical read/write buffer sets, alias
-  classes, and a fixed intra-program dependency table, and derives a
-  phase-local schedule plus buffer lifecycle metadata, resource groups, and
-  barrier placements from those steps, and then lowers that metadata into a
-  backend execution block with concrete buffer bindings and barrier hints, and
-  then into a device-plan skeleton with segment-local slots and device-stage
-  barrier hints, and finally into a target-plan layer that can choose
-  target-specific allocation and barrier policy for `:gpu`, `:metal`, and
-  `:cuda`, and then into a launch-plan layer with concrete argument/shared
-  bindings and per-stage executor skeletons, and then into a backend
-  executor-plan layer with target-specific argument classes and kernel
-  symbols, and then into a codegen-plan layer with backend module symbols,
-  generated entry symbols, and per-stage generated-argument descriptors, and
-  then into an artifact-plan layer with backend artifact symbols and generated
-  kernel layouts, and then into a source-plan layer with generated stub source
-  entrypoints and backend-specific argument declarations, and then into a
-  module-plan layer with materialized source blobs and backend-specific
-  filenames, and then into a bundle-plan layer that groups stage modules
-  behind a backend bundle manifest, and then into a package-plan layer with a
-  writeable root layout and concrete file entries, and then into a reusable
-  GPU-backend bundle/package-layout substrate plus an emitter stub that can
-  write the generated files to disk, and
-  then
-  wraps that access layer in a
-  small kernel program with a fixed per-phase op sequence, so the control
-  skeleton is increasingly declarative, and those op sequences now feed
-  phase-specialized program executors rather than a monolithic kernel-op
-  interpreter, with each program also exposing a typed primitive-step table
-  under the phase-specific executor; the
+  buffers touched by each step, and wraps that access layer in a small kernel
+  program with a fixed per-phase op sequence that the scheduler step executes
+  directly. (An earlier descriptive lowering chain — dataflow descriptors,
+  schedules, resource/barrier plans, and the string-emission GPU
+  bundle/package substrate built on top of them — has been removed; the live
+  GPU path is the KernelAbstractions device backend, see
+  [device-backend.md](device-backend.md).) The
   remaining chain-local subtree builder also reuses a per-chain
   current/next/left/right/proposal scratch workspace, but deeper tree growth
   is still performed chain-by-chain rather than through a backend-lowered
@@ -250,14 +227,6 @@ Current backend-lowering subset:
 - supported backend choice steps now preload their batched choice values into a
   shared numeric buffer, so `normal`, `lognormal`, and `bernoulli` score
   evaluation no longer performs value lookup inside the per-column scoring loop
-- backend-lowered static models can now also adapt their lowered execution plan
-  into the generic GPU-backend bundle/package substrate and emit a stub package
-  to disk, so that substrate is now shared between model lowering and NUTS
-  lowering; both now pass through the same codegen-bundle contract for stage
-  source blobs, entry symbols, and generated manifest structure
-- that shared emit layer now also owns the target-specific source/module policy
-  (`.jl`, `.metal`, `.cu` and matching buffer-argument declarations), so both
-  NUTS and static model backend packages consume the same target helpers
 - tempered SMC `:nuts` rejuvenation now also owns a dedicated persistent move
   workspace, so repeated rejuvenation steps reuse batched cohort scratch,
   initial trajectory buffers, and per-particle tree workspaces instead of
@@ -271,18 +240,10 @@ Current backend-lowering subset:
 - that path now also exposes `IR -> control block -> descriptor -> execution`,
   so the scheduler control surface is no longer coupled directly to the
   numeric expand/merge routines
-- the tempered SMC NUTS scheduler now also adapts those descriptors into the
-  shared GPU backend codegen/package substrate, aligning SMC control lowering
-  with the existing NUTS and static-backend package emitters
-- that same tempered SMC control path now also derives typed dataflow
-  descriptors, dependency tables, schedule/lifecycle metadata, resource
-  groups, and barrier placements from each scheduler descriptor, so SMC and
-  batched NUTS now share the same staged control-lowering vocabulary
-- stub source-module bodies are now emitted through a shared source-template
-  helper as well, so backend-specific package generation no longer duplicates
-  string assembly across NUTS and static model lowering
-- stage kind now flows through that same shared template/emitter path, so
-  generated manifests and stub modules expose a common stage taxonomy
+- the string-emission substrate that once mirrored these control descriptors
+  into generated GPU package stubs (for static models, batched NUTS, and
+  tempered SMC NUTS alike) has been removed in favor of the KernelAbstractions
+  device backend
 - unsupported expressions fall back to the compiled CPU evaluator on the
   batched path
 

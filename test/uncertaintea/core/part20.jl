@@ -53,8 +53,6 @@
         rng=MersenneTwister(151),
     )
     inversegamma_backend_plan = backend_execution_plan(inversegamma_shape_model)
-    inversegamma_backend_layout = backend_package_layout(inversegamma_shape_model)
-    inversegamma_backend_stage = gpu_backend_files(inversegamma_backend_layout)[2]
     inversegamma_params = parameter_vector(inversegamma_trace)
     inversegamma_batch_params = reshape(inversegamma_params .+ Float64[-0.2, 0.0, 0.15], 1, 3)
     inversegamma_batch_constraints = [
@@ -76,7 +74,6 @@
     )
 
     @test inversegamma_backend_plan.steps[3] isa UncertainTea.BackendInverseGammaChoicePlanStep
-    @test occursin("# 3. choice inversegamma", inversegamma_backend_stage.contents)
     @test inversegamma_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             inversegamma_shape_model,
@@ -105,8 +102,6 @@
     )
     binomial_backend_report = backend_report(binomial_probability_model)
     binomial_backend_plan = backend_execution_plan(binomial_probability_model)
-    binomial_backend_layout = backend_package_layout(binomial_probability_model)
-    binomial_backend_stage = gpu_backend_files(binomial_backend_layout)[2]
     binomial_params = parameter_vector(binomial_trace)
     binomial_batch_params = reshape(binomial_params .+ Float64[-0.1, 0.0, 0.15], 1, 3)
     binomial_batch_constraints = [
@@ -129,7 +124,6 @@
 
     @test binomial_backend_report.supported
     @test binomial_backend_plan.steps[3] isa UncertainTea.BackendBinomialChoicePlanStep
-    @test occursin("# 3. choice binomial", binomial_backend_stage.contents)
     @test binomial_batch_gradient ≈ hcat([
         logjoint_gradient_unconstrained(
             binomial_probability_model,

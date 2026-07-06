@@ -695,7 +695,6 @@
         (UncertainTea.BatchedNUTSReloadControlStep,)
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
-        idle_program,
         gaussian_mean,
         [1.0],
         (),

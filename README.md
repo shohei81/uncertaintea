@@ -7,7 +7,8 @@ backends.
 The project is built around one constraint: keep model structure static enough
 that `logjoint`, batched chains or particles, and parameter transforms can run
 over dense layouts and backend-friendly control flow. The CPU reference runtime
-is available today; GPU lowering and code emission are under active development.
+is available today; the device backend (KernelAbstractions kernels with a Metal
+extension) is under active development.
 
 ## Status
 
@@ -15,8 +16,9 @@ UncertainTea `0.1.0` is an experimental release.
 
 - The static DSL, CPU evaluation path, and several inference algorithms are
   implemented.
-- GPU work currently focuses on backend lowering, support checks, and package
-  emission for a supported static subset.
+- GPU work currently focuses on backend lowering, support checks, and
+  device-resident kernels (via KernelAbstractions) for a supported static
+  subset.
 - APIs and model restrictions may change as the static IR and backend contract
   continue to converge.
 
@@ -31,8 +33,10 @@ UncertainTea `0.1.0` is an experimental release.
 - Inference methods including `hmc`, `nuts`, `hmc_chains`, `nuts_chains`,
   `batched_hmc`, `batched_nuts`, `batched_advi`,
   `batched_importance_sampling`, `batched_sir`, and `batched_smc`
-- Experimental GPU-oriented lowering and code emission helpers such as
-  `backend_report`, `backend_execution_plan`, and `emit_backend_package`
+- Experimental GPU-oriented lowering and device execution: support checks via
+  `backend_report` and `backend_execution_plan`, plus a KernelAbstractions
+  device backend (`device_batched_logjoint`, `device_batched_logjoint_gradient`,
+  and device-resident batched HMC/ADVI inner loops) with a Metal extension
 
 ## Installation
 
