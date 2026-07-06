@@ -521,6 +521,9 @@ function _parameter_transform(rhs::DistributionSpec)
     elseif rhs.family === :mvnormal
         size = _mvnormal_static_size(rhs.arguments)
         isnothing(size) || return VectorIdentityTransform(size)
+    elseif rhs.family === :mvnormaldense
+        size = _mvnormaldense_static_size(rhs.arguments)
+        isnothing(size) || return VectorIdentityTransform(size)
     elseif rhs.family === :lognormal || rhs.family === :exponential || rhs.family === :gamma ||
            rhs.family === :inversegamma || rhs.family === :weibull
         return LogTransform()
@@ -619,6 +622,13 @@ function _mvnormal_static_size(arguments::Vector)
         return mu_size
     end
     return something(mu_size, sigma_size)
+end
+
+# Static size of `mvnormaldense(mu, scale_tril)` from the mu argument only; the
+# scale factor is an arbitrary matrix expression the frontend never introspects.
+function _mvnormaldense_static_size(arguments::Vector)
+    length(arguments) == 2 || return nothing
+    return _static_length(arguments[1])
 end
 
 function _parameterize_step(

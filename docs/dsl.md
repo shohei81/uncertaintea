@@ -264,6 +264,7 @@ The initial GPU-targeted distribution set should stay small:
 - `truncatedstudentt`
 - `mixture`
 - a restricted diagonal `mvnormal`
+- `mvnormaldense` (dense covariance via a Cholesky factor)
 - simple transformed distributions
 
 Requirements:
@@ -281,6 +282,16 @@ Requirements:
   reference path and unconstrained HMC/NUTS through a vector-valued identity
   transform, and restricted diagonal forms now lower to the backend-native
   subset as the first vector-valued built-in family
+- `mvnormaldense(mu, scale_tril)` is the dense-covariance multivariate normal in
+  Cholesky parameterization: `scale_tril` is a d×d lower-triangular factor `L`
+  with strictly positive diagonal and covariance `L * L'`. Only the lower
+  triangle of `scale_tril` is read — any upper-triangular content is ignored —
+  so a full runtime matrix (a model argument or deterministic binding) works
+  without wrapping. It is CPU-reference only (honestly reported unsupported by
+  `backend_report`; the batched path uses the ForwardDiff fallback). As a
+  **latent** (parameter slot sampled by HMC/NUTS) the mean must have a
+  statically known length (vector literal/tuple), mirroring the diagonal
+  `mvnormal` rule; with a non-static mean it is observation-only (no slot).
 - `truncatednormal(mu, sigma, lower, upper)` and
   `truncatedstudentt(nu, mu, sigma, lower, upper)` renormalize the base density
   over `[lower, upper]` (infinite bounds are allowed on either side). They are

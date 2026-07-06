@@ -36,6 +36,7 @@ function _qualify_builtin_distribution(name)
         :beta,
         :dirichlet,
         :mvnormal,
+        :mvnormaldense,
         :bernoulli,
         :binomial,
         :geometric,
@@ -60,7 +61,7 @@ const _BROADCAST_DISTRIBUTION_FAMILIES = (:normal,)
 
 const _KNOWN_DISTRIBUTION_FAMILIES = (
     :normal, :lognormal, :laplace, :exponential, :gamma, :inversegamma, :weibull,
-    :beta, :dirichlet, :mvnormal, :bernoulli, :binomial, :geometric, :negativebinomial,
+    :beta, :dirichlet, :mvnormal, :mvnormaldense, :bernoulli, :binomial, :geometric, :negativebinomial,
     :poisson, :studentt, :categorical, :truncatednormal, :truncatedstudentt, :mixture,
 )
 
@@ -218,6 +219,7 @@ function _rhs_spec_expr(rhs)
             :studentt,
             :categorical,
             :mvnormal,
+            :mvnormaldense,
             :truncatednormal,
             :truncatedstudentt,
             :mixture,
@@ -288,6 +290,9 @@ function _supported_distribution_family(rhs)
     if family === :mvnormal && !isnothing(_mvnormal_static_size(rhs))
         return family
     end
+    if family === :mvnormaldense && !isnothing(_mvnormaldense_static_size(rhs))
+        return family
+    end
     if family === :truncatednormal || family === :truncatedstudentt
         isnothing(_truncated_static_bounds(family, rhs.args[2:end])) && throw(ArgumentError(
             "$family latents require literal (static) bounds; use static Number/Inf lower and upper bounds, " *
@@ -319,6 +324,11 @@ function _mvnormal_static_size(rhs)
     return _mvnormal_static_size(rhs.args[2:end])
 end
 
+function _mvnormaldense_static_size(rhs)
+    rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :mvnormaldense || return nothing
+    return _mvnormaldense_static_size(rhs.args[2:end])
+end
+
 function _parameter_layout_sizes(rhs)
     family = _supported_distribution_family(rhs)
     isnothing(family) && throw(ArgumentError("unsupported parameter layout size for $rhs"))
@@ -329,6 +339,10 @@ function _parameter_layout_sizes(rhs)
     elseif family === :mvnormal
         size = _mvnormal_static_size(rhs)
         isnothing(size) && throw(ArgumentError("mvnormal parameter slots require a statically known vector size"))
+        return size, size
+    elseif family === :mvnormaldense
+        size = _mvnormaldense_static_size(rhs)
+        isnothing(size) && throw(ArgumentError("mvnormaldense parameter slots require a statically known mean vector size"))
         return size, size
     end
     return 1, 1
@@ -343,6 +357,10 @@ function _parameter_transform_expr(rhs)
     elseif family === :mvnormal
         size = _mvnormal_static_size(rhs)
         isnothing(size) && throw(ArgumentError("mvnormal parameter slots require a statically known vector size"))
+        return :($(_qualify(:VectorIdentityTransform))($size))
+    elseif family === :mvnormaldense
+        size = _mvnormaldense_static_size(rhs)
+        isnothing(size) && throw(ArgumentError("mvnormaldense parameter slots require a statically known mean vector size"))
         return :($(_qualify(:VectorIdentityTransform))($size))
     elseif family === :lognormal || family === :exponential || family === :gamma ||
            family === :inversegamma || family === :weibull

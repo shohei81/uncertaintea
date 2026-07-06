@@ -241,6 +241,33 @@ struct MixtureDist{W<:Real,C<:Tuple} <: AbstractTeaDistribution
     end
 end
 
+# Dense-covariance multivariate normal parameterized by a lower-triangular
+# Cholesky factor `scale_tril` (covariance = L * L'). Element types stay generic
+# (like MixtureDist) so a latent mean built from ForwardDiff Duals remains
+# differentiable. Only the lower triangle of `scale_tril` is ever read — any
+# upper-triangular content is ignored — which lets callers pass a full matrix
+# without wrapping it in `LinearAlgebra.LowerTriangular`.
+struct MvNormalDenseDist{M<:AbstractVector,S<:AbstractMatrix} <: AbstractTeaDistribution
+    mu::M
+    scale_tril::S
+
+    function MvNormalDenseDist(mu::AbstractVector, scale_tril::AbstractMatrix)
+        isempty(mu) && throw(ArgumentError("mvnormaldense requires at least one dimension"))
+        size(scale_tril, 1) == size(scale_tril, 2) || throw(ArgumentError(
+            "mvnormaldense requires a square scale_tril matrix, got size $(size(scale_tril))",
+        ))
+        size(scale_tril, 1) == length(mu) || throw(ArgumentError(
+            "mvnormaldense requires scale_tril of size $(length(mu))x$(length(mu)) to match the mean length, got $(size(scale_tril))",
+        ))
+        for index in 1:size(scale_tril, 1)
+            scale_tril[index, index] > 0 || throw(ArgumentError(
+                "mvnormaldense requires strictly positive scale_tril diagonal entries",
+            ))
+        end
+        return new{typeof(mu),typeof(scale_tril)}(mu, scale_tril)
+    end
+end
+
 function normal(mu, sigma)
     promoted_mu, promoted_sigma = promote(mu, sigma)
     return NormalDist(promoted_mu, promoted_sigma)
@@ -367,6 +394,18 @@ function mvnormal(mu, sigma)
         promoted_type[value for value in mu_values],
         promoted_type[value for value in sigma_values],
     )
+end
+
+function mvnormaldense(mu, scale_tril)
+    (mu isa AbstractVector || mu isa Tuple) ||
+        throw(ArgumentError("mvnormaldense requires a vector-like mean argument"))
+    scale_tril isa AbstractMatrix ||
+        throw(ArgumentError("mvnormaldense requires a matrix scale_tril argument"))
+    # `map(identity, collect(...))` narrows a `Vector{Any}` (e.g. a compiled
+    # `[mu, mu]` vector expression holding ForwardDiff Duals) to the promoted
+    # element type so downstream arithmetic stays differentiable.
+    mu_values = map(identity, collect(mu))
+    return MvNormalDenseDist(mu_values, scale_tril)
 end
 
 function lognormal(mu, sigma)
@@ -514,6 +553,23 @@ function Random.rand(rng::AbstractRNG, dist::MvNormalDist{T}) where {T<:Abstract
     draws = Vector{T}(undef, length(dist.mu))
     for index in eachindex(draws)
         draws[index] = dist.mu[index] + dist.sigma[index] * randn(rng, T)
+    end
+    return draws
+end
+
+# Draw mu + L * z with z ~ standard normal, reading only the lower triangle of
+# `scale_tril`.
+function Random.rand(rng::AbstractRNG, dist::MvNormalDenseDist)
+    dimension = length(dist.mu)
+    T = float(promote_type(typeof(float(dist.mu[1])), typeof(float(dist.scale_tril[1, 1]))))
+    noise = randn(rng, T, dimension)
+    draws = Vector{T}(undef, dimension)
+    for row in 1:dimension
+        accumulator = T(dist.mu[row])
+        for col in 1:row
+            accumulator += T(dist.scale_tril[row, col]) * noise[col]
+        end
+        draws[row] = accumulator
     end
     return draws
 end
@@ -782,6 +838,35 @@ function logpdf(dist::MvNormalDist, x)
         accumulator += logpdf(normal(dist.mu[index], dist.sigma[index]), values[index])
     end
     return accumulator
+end
+
+# Dense mvnormal log density via hand-rolled forward substitution solving
+# L z = x - mu, reading only the lower triangle of `scale_tril`. Avoiding
+# LinearAlgebra factorization objects keeps every operation a plain scalar
+# loop that ForwardDiff Duals flow through:
+#   logpdf = -sum_i log(L[i,i]) - z'z / 2 - d * log(2*pi) / 2.
+function logpdf(dist::MvNormalDenseDist, x)
+    values = x isa Tuple ? collect(x) : x
+    values isa AbstractVector || throw(ArgumentError("mvnormaldense logpdf expects a vector or tuple value"))
+    dimension = length(dist.mu)
+    length(values) == dimension || return -Inf
+    L = dist.scale_tril
+    z1 = (values[1] - dist.mu[1]) / L[1, 1]
+    solved = Vector{typeof(z1)}(undef, dimension)
+    solved[1] = z1
+    log_det = log(L[1, 1])
+    quadratic = z1 * z1
+    for row in 2:dimension
+        residual = values[row] - dist.mu[row]
+        for col in 1:(row - 1)
+            residual -= L[row, col] * solved[col]
+        end
+        z = residual / L[row, row]
+        solved[row] = z
+        log_det += log(L[row, row])
+        quadratic += z * z
+    end
+    return -log_det - quadratic / 2 - dimension * log(2 * pi) / 2
 end
 
 function logpdf(dist::BroadcastNormalDist, x)
