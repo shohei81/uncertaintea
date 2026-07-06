@@ -29,9 +29,11 @@
         rng=MersenneTwister(404),
     )
     for pca_reg_chain in pca_reg.chains
-        @test pca_reg_chain.step_size ≈ 1.4269329081220101 atol = 1e-12
+        # Re-pinned after the batched-NUTS merge-cohort stale-select fix
+        # (PR 6.4); still matches the part33 shared-driver regression.
+        @test pca_reg_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
         @test length(pca_reg_chain.mass_matrix) == 1
-        @test pca_reg_chain.mass_matrix[1] ≈ 0.54987846326449419 atol = 1e-12
+        @test pca_reg_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12
     end
 
     # Per-chain divergence: two chains facing different observation scales via a

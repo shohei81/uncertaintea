@@ -193,6 +193,14 @@ function _merge_batched_nuts_subtree_cohort!(
     inverse_mass_matrix,
     rng::AbstractRNG,
 )
+    # The select mask persists across merges; clear the lanes that are not in
+    # this merge so the masked copies below cannot replay a stale selection
+    # (on a chain's first transition that would copy an uninitialized
+    # tree-proposal column into the live proposal buffers).
+    for chain_index in eachindex(workspace.subtree_active)
+        workspace.subtree_active[chain_index] && continue
+        access.select_proposal[chain_index] = false
+    end
     _merge_batched_nuts_continuation_frontiers!(workspace, workspace.subtree_active)
     _batched_is_turning!(
         access.merged_turning,

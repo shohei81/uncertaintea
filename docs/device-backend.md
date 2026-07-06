@@ -60,6 +60,18 @@ duals, device results are **statistically equivalent** to the CPU path, not bitw
 identical. Unsupported models raise the same `device_lowering_report`-pointing
 `ArgumentError`.
 
+## Masked doubling status (batched NUTS)
+
+`batched_nuts(...; tree_strategy=:masked)` runs the mask-based iterative-doubling
+tree builder (`src/inference/nuts/masked_doubling.jl`): all chains advance through
+the same doubling round in lockstep with active masks, so every leapfrog step is
+one full-width batched gradient call -- the exact shape the device gradient kernel
+consumes. Per-chain tree bookkeeping (log weights, U-turn state, proposal
+selection, directions) stays in small host arrays. The path is CPU-validated
+(statistically equivalent to the default `:hybrid` strategy; deterministic under a
+seed) and benchmarked in `bench/nuts_masked_bench.jl`; wiring its inner leapfrog
+loop onto the device backend is the next step.
+
 ## What follows
 
 Device-resident NUTS integration (dynamic trajectory lengths) and on-device warmup

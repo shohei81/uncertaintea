@@ -29,7 +29,10 @@
         rng=MersenneTwister(404),
     )
     warmup_driver_bn_chain = warmup_driver_bn.chains[1]
-    @test warmup_driver_bn_chain.step_size ≈ 1.4269329081220101 atol = 1e-12
+    # Values re-pinned after the batched-NUTS merge-cohort stale-select fix
+    # (PR 6.4): the previous pins had captured runs where stale proposal
+    # selections replayed old tree-proposal columns into the live proposals.
+    @test warmup_driver_bn_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
     @test length(warmup_driver_bn_chain.mass_matrix) == 1
-    @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.54987846326449419 atol = 1e-12
+    @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12
 end

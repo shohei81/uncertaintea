@@ -18,8 +18,11 @@ function batched_nuts(
     mass_matrix_min_samples::Int=10,
     callback=nothing,
     callback_every::Int=10,
+    tree_strategy::Symbol=:hybrid,
     rng::AbstractRNG=Random.default_rng(),
 )
+    tree_strategy in (:hybrid, :masked) ||
+        throw(ArgumentError("batched_nuts tree_strategy must be :hybrid or :masked, got $(repr(tree_strategy))"))
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_batched_nuts_arguments(
@@ -115,6 +118,7 @@ function batched_nuts(
             mass_matrix_min_samples,
             callback,
             callback_every,
+            tree_strategy,
             rng,
         )
     end
@@ -164,20 +168,37 @@ function batched_nuts(
     for iteration in 1:total_iterations
         nuts_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
-        _batched_nuts_proposals!(
-            workspace,
-            model,
-            position,
-            current_logjoint,
-            current_gradient,
-            inverse_mass_matrix,
-            batch_args,
-            batch_constraints,
-            nuts_step_size,
-            max_tree_depth,
-            nuts_max_delta_energy,
-            rng,
-        )
+        if tree_strategy === :masked
+            _batched_nuts_proposals_masked!(
+                workspace,
+                model,
+                position,
+                current_logjoint,
+                current_gradient,
+                inverse_mass_matrix,
+                batch_args,
+                batch_constraints,
+                nuts_step_size,
+                max_tree_depth,
+                nuts_max_delta_energy,
+                rng,
+            )
+        else
+            _batched_nuts_proposals!(
+                workspace,
+                model,
+                position,
+                current_logjoint,
+                current_gradient,
+                inverse_mass_matrix,
+                batch_args,
+                batch_constraints,
+                nuts_step_size,
+                max_tree_depth,
+                nuts_max_delta_energy,
+                rng,
+            )
+        end
 
         for chain_index in 1:num_chains
             if workspace.control.accepted_step[chain_index]
@@ -653,6 +674,7 @@ function _batched_nuts_per_chain!(
     mass_matrix_min_samples::Int,
     callback,
     callback_every::Int,
+    tree_strategy::Symbol,
     rng::AbstractRNG,
 )
     inverse_mass_matrices = ones(num_params, num_chains)
@@ -713,20 +735,37 @@ function _batched_nuts_per_chain!(
         end
         mean_step_size = sum(step_sizes) / num_chains
 
-        _batched_nuts_proposals!(
-            workspace,
-            model,
-            position,
-            current_logjoint,
-            current_gradient,
-            inverse_mass_matrices,
-            batch_args,
-            batch_constraints,
-            step_sizes,
-            max_tree_depth,
-            nuts_max_delta_energy,
-            rng,
-        )
+        if tree_strategy === :masked
+            _batched_nuts_proposals_masked!(
+                workspace,
+                model,
+                position,
+                current_logjoint,
+                current_gradient,
+                inverse_mass_matrices,
+                batch_args,
+                batch_constraints,
+                step_sizes,
+                max_tree_depth,
+                nuts_max_delta_energy,
+                rng,
+            )
+        else
+            _batched_nuts_proposals!(
+                workspace,
+                model,
+                position,
+                current_logjoint,
+                current_gradient,
+                inverse_mass_matrices,
+                batch_args,
+                batch_constraints,
+                step_sizes,
+                max_tree_depth,
+                nuts_max_delta_energy,
+                rng,
+            )
+        end
 
         for chain_index in 1:num_chains
             if workspace.control.accepted_step[chain_index]
