@@ -251,6 +251,9 @@ mutable struct DeviceNUTSWorkspace{T,B<:KernelAbstractions.Backend}
     # Movement detection (fix: precision-robust `accepted_step`).
     current_position::Any    # P x C  device copy of the current (pre-trajectory) position
     moved::Any               # C UInt8  per-chain moved flag (device)
+    # Reusable P x C host staging buffer for the once-per-iteration frontier
+    # upload / accepted-proposal download, so those transfers do not allocate.
+    host_mat::Matrix{T}
 end
 
 function DeviceNUTSWorkspace(
@@ -305,6 +308,7 @@ function DeviceNUTSWorkspace(
         Vector{Bool}(undef, C),
         mat(),
         vecU8(),
+        Matrix{T}(undef, P, C),
     )
 end
 
@@ -334,14 +338,20 @@ _download_reals!(host::AbstractVector{Float64}, dev, stage::Vector) = begin
     return host
 end
 
-# Upload a host P x C Float64 matrix into a device T matrix (converts precision).
-_upload_matrix!(dev, host::AbstractMatrix{Float64}) = copyto!(dev, convert(Array{eltype(dev)}, host))
-# Download a device T matrix into a host P x C Float64 matrix.
-_download_matrix!(host::AbstractMatrix{Float64}, dev) = begin
-    tmp = Array{eltype(dev)}(undef, size(host))
-    copyto!(tmp, dev)
-    @inbounds for i in eachindex(host)
-        host[i] = Float64(tmp[i])
+# Upload a host P x C Float64 matrix into a device T matrix (converts precision)
+# through a caller-owned `stage::Matrix{T}` buffer so the transfer does not allocate.
+_upload_matrix!(dev, host::AbstractMatrix{Float64}, stage::Matrix) = begin
+    @inbounds for i in eachindex(host, stage)
+        stage[i] = host[i]
+    end
+    copyto!(dev, stage)
+    return dev
+end
+# Download a device T matrix into a host P x C Float64 matrix through `stage`.
+_download_matrix!(host::AbstractMatrix{Float64}, dev, stage::Matrix) = begin
+    copyto!(stage, dev)
+    @inbounds for i in eachindex(host, stage)
+        host[i] = Float64(stage[i])
     end
     return host
 end
@@ -672,24 +682,24 @@ function _device_batched_nuts_proposals_masked!(
     copyto!(dws.inverse_mass, dws.inverse_mass_host)
     # A device-precision copy of the current position, for precision-robust movement
     # detection after the rounds (see the accepted_step override below).
-    _upload_matrix!(dws.current_position, position)
-    _upload_matrix!(dws.left_position, ws.left_position)
-    _upload_matrix!(dws.left_momentum, ws.left_momentum)
-    _upload_matrix!(dws.left_gradient, ws.left_gradient)
-    _upload_matrix!(dws.right_position, ws.right_position)
-    _upload_matrix!(dws.right_momentum, ws.right_momentum)
-    _upload_matrix!(dws.right_gradient, ws.right_gradient)
-    _upload_matrix!(dws.proposal_position, ws.proposal_position)
-    _upload_matrix!(dws.proposal_momentum, ws.proposal_momentum)
-    _upload_matrix!(dws.proposal_gradient, ws.proposal_gradient)
+    _upload_matrix!(dws.current_position, position, dws.host_mat)
+    _upload_matrix!(dws.left_position, ws.left_position, dws.host_mat)
+    _upload_matrix!(dws.left_momentum, ws.left_momentum, dws.host_mat)
+    _upload_matrix!(dws.left_gradient, ws.left_gradient, dws.host_mat)
+    _upload_matrix!(dws.right_position, ws.right_position, dws.host_mat)
+    _upload_matrix!(dws.right_momentum, ws.right_momentum, dws.host_mat)
+    _upload_matrix!(dws.right_gradient, ws.right_gradient, dws.host_mat)
+    _upload_matrix!(dws.proposal_position, ws.proposal_position, dws.host_mat)
+    _upload_matrix!(dws.proposal_momentum, ws.proposal_momentum, dws.host_mat)
+    _upload_matrix!(dws.proposal_gradient, ws.proposal_gradient, dws.host_mat)
 
     while _device_masked_nuts_doubling_round!(dws, ws, max_tree_depth, max_delta_energy, step_size, rng)
     end
 
     # download the accepted continuation proposal for host finalize + recording.
-    _download_matrix!(ws.proposal_position, dws.proposal_position)
-    _download_matrix!(ws.proposal_momentum, dws.proposal_momentum)
-    _download_matrix!(ws.proposal_gradient, dws.proposal_gradient)
+    _download_matrix!(ws.proposal_position, dws.proposal_position, dws.host_mat)
+    _download_matrix!(ws.proposal_momentum, dws.proposal_momentum, dws.host_mat)
+    _download_matrix!(ws.proposal_gradient, dws.proposal_gradient, dws.host_mat)
 
     _finalize_batched_nuts_proposals!(ws, position)
 

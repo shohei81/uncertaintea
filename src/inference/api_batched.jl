@@ -31,7 +31,11 @@ function batched_nuts(
     # device-side leapfrog/gradient/tree ops); results are statistically -- and, on
     # the CPU() reference backend at Float64, numerically -- equivalent to the host
     # masked path. Only the masked strategy and shared (diagonal) adaptation apply.
-    device_nuts_workspace = nothing
+    # Validate the cheap backend kwargs up front (fail fast), but defer the
+    # expensive `DeviceNUTSWorkspace` construction (model lowering + large device
+    # buffers) until after `_validate_batched_nuts_arguments` so a bad argument does
+    # not lower/allocate before throwing.
+    device_precision = nothing
     if backend !== nothing
         backend isa KernelAbstractions.Backend ||
             throw(ArgumentError("batched_nuts `backend` must be a KernelAbstractions.Backend or nothing, got $(typeof(backend))"))
@@ -42,10 +46,6 @@ function batched_nuts(
             "run with backend=nothing or per_chain_adaptation=false",
         ))
         device_precision = precision === nothing ? default_device_precision(backend) : precision
-        device_nuts_workspace = DeviceNUTSWorkspace(
-            model, num_chains, max_tree_depth;
-            backend=backend, precision=device_precision, args=args, constraints=constraints,
-        )
     end
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
@@ -62,6 +62,10 @@ function batched_nuts(
         mass_matrix_min_samples,
         args,
         constraints,
+    )
+    device_nuts_workspace = backend === nothing ? nothing : DeviceNUTSWorkspace(
+        model, num_chains, max_tree_depth;
+        backend=backend, precision=device_precision, args=args, constraints=constraints,
     )
 
     batch_args = _validate_batched_args(args, num_chains)
