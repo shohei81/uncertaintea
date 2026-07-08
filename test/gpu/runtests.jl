@@ -3,7 +3,7 @@
 # NOT part of the package test target and NOT run in CI. Requires a functional Metal
 # GPU (Apple Silicon). See test/gpu/Project.toml for setup instructions.
 #
-# It runs the same parity checks as test/uncertaintea/core/part42.jl, but on a
+# It runs the same parity checks as test/uncertaintea/core/device_lowering_parity.jl, but on a
 # Metal.MetalBackend at Float32, and compares against the authoritative CPU
 # `batched_logjoint_unconstrained` reference computed in Float64.
 
@@ -93,7 +93,7 @@ end
 end
 
 # --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
-# Mirrors test/uncertaintea/core/part46.jl on a Metal.MetalBackend at Float32.
+# Mirrors test/uncertaintea/core/device_hmc_advi.jl on a Metal.MetalBackend at Float32.
 # RNG stays host-side, so results are statistically (not bitwise) equivalent to the
 # CPU path; we only assert finite results and posterior/variational-mean sanity.
 
@@ -143,7 +143,7 @@ end
 end
 
 # --- device-resident masked batched NUTS smoke (issue #2) --------------------
-# Mirrors test/uncertaintea/core/part51.jl on a Metal.MetalBackend at Float32.
+# Mirrors test/uncertaintea/core/device_masked_nuts.jl on a Metal.MetalBackend at Float32.
 # The masked doubling trajectory runs device-resident: the per-leaf P x C arrays
 # and tree ops (leapfrog, checkpoints, U-turn) live on the device, while the RNG
 # draws and O(num_chains) bookkeeping stay host-side, so results are statistically

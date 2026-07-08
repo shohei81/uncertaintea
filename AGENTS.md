@@ -69,3 +69,7 @@ Defer by default:
 - GPU code should be validated against CPU reference behavior
 - Performance claims should be backed by a reproducible benchmark or a documented measurement plan
 - Keep large test suites split across multiple files instead of regrowing `test/runtests.jl`
+- Name test files under `test/uncertaintea/core/` after what they cover
+  (e.g. `dist_truncated.jl`, `device_masked_nuts.jl`), never after the PR that
+  introduced them; a new feature's tests go into the topically matching file or
+  a new descriptively named one
