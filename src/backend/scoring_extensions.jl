@@ -980,8 +980,12 @@ end
 
 function _backend_truncatedstudentt_logpdf(nu, mu, sigma, lower, upper, x)
     xx, nu_, mu_, sigma_, lower_, upper_ = promote(x, nu, mu, sigma, lower, upper)
+    # Mirror the CPU `TruncatedStudentTDist` constructor contract: the
+    # backend-native path bypasses construction, so re-validate the parameters
+    # here to keep behavior (a clear ArgumentError) identical to the reference.
     nu_ > zero(nu_) || throw(ArgumentError("truncatedstudentt requires nu > 0"))
     sigma_ > zero(sigma_) || throw(ArgumentError("truncatedstudentt requires sigma > 0"))
+    lower_ < upper_ || throw(ArgumentError("truncatedstudentt requires lower < upper"))
     (xx < lower_ || xx > upper_) && return oftype(xx, -Inf)
     base = _backend_studentt_logpdf(nu_, mu_, sigma_, xx)
     za = (lower_ - mu_) / sigma_

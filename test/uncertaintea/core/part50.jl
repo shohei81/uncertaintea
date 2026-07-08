@@ -220,6 +220,19 @@ end
     @test !isnothing(bg_ts_mean_cache.backend_cache)
     @test isnothing(bg_ts_mean_cache.flat_cache)
     @test isempty(bg_ts_mean_cache.column_caches)
+
+    # The backend-native path bypasses the CPU constructor, so it re-validates the
+    # parameter contract: inverted bounds must raise the same ArgumentError as the
+    # CPU reference rather than silently scoring a non-positive normalizer.
+    @tea static function bg_ts_bad_bounds_model()
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ truncatedstudentt(5.0, 0.5f0, exp(s), 2.0, 1.0)
+        return s
+    end
+    bg_ts_bad_params = reshape(Float64[0.0], 1, 1)
+    bg_ts_bad_constraints = [choicemap((:y, 1.5))]
+    @test_throws ArgumentError batched_logjoint(bg_ts_bad_bounds_model, bg_ts_bad_params, (), bg_ts_bad_constraints)
+    @test_throws ArgumentError logjoint(bg_ts_bad_bounds_model, bg_ts_bad_params[:, 1], (), bg_ts_bad_constraints[1])
 end
 
 @testset "bg_deferred_families_fall_back" begin
