@@ -121,6 +121,15 @@ function _backend_gradient_supported_step(step::BackendTruncatedNormalChoicePlan
            _backend_gradient_supported_expr(step.upper)
 end
 
+# nu is a lowering-guaranteed literal constant (its d/dnu term is intractable and
+# omitted); only mu/sigma/lower/upper must be gradient-differentiable.
+function _backend_gradient_supported_step(step::BackendTruncatedStudentTChoicePlanStep)
+    return _backend_gradient_supported_expr(step.mu) &&
+           _backend_gradient_supported_expr(step.sigma) &&
+           _backend_gradient_supported_expr(step.lower) &&
+           _backend_gradient_supported_expr(step.upper)
+end
+
 function _backend_gradient_supported_step(step::BackendMixtureNormalChoicePlanStep)
     return all(_backend_gradient_supported_expr, step.weights) &&
            all(_backend_gradient_supported_expr, step.mus) &&
@@ -171,6 +180,7 @@ _backend_gradient_supported_step(step::BackendPoissonChoicePlanStep, numeric_slo
 _backend_gradient_supported_step(step::BackendStudentTChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendMvNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendTruncatedNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendTruncatedStudentTChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendMixtureNormalChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendMvNormalDenseChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep, numeric_slots::BitVector) = _backend_gradient_supported_step(step)

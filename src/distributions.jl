@@ -773,6 +773,57 @@ function _std_t_cdf(z, nu)
     return zz > zero(zz) ? one(zz) - regularized / 2 : regularized / 2
 end
 
+# Standard (unit-scale, zero-location) Student-t density with `nu` degrees of
+# freedom, guarded so an infinite standardized argument (an unbounded truncation
+# side) yields a zero density.
+function _std_t_pdf(z, nu)
+    zz = float(z)
+    isinf(zz) && return zero(zz)
+    nu_ = oftype(zz, nu)
+    return exp(
+        loggamma((nu_ + one(nu_)) / 2) - loggamma(nu_ / 2) -
+        (log(nu_) + log(oftype(zz, pi))) / 2 -
+        (nu_ + one(nu_)) * log1p((zz * zz) / nu_) / 2,
+    )
+end
+
+# Peel a degrees-of-freedom argument down to a plain value. `TruncatedStudentTDist`
+# promotes every field to a common type, so a constant `nu` still arrives as a
+# ForwardDiff Dual carrying zero partials — that is the tractable case. A `nu`
+# with nonzero partials is a genuine latent dependence whose CDF derivative has no
+# closed form, so it is rejected rather than silently mis-differentiated.
+_constant_nu_value(nu::Real) = nu
+function _constant_nu_value(nu::ForwardDiff.Dual)
+    all(iszero, ForwardDiff.partials(nu)) || throw(
+        ArgumentError(
+            "truncatedstudentt gradient with respect to nu (degrees of freedom) is unsupported; nu must be a constant",
+        ),
+    )
+    return _constant_nu_value(ForwardDiff.value(nu))
+end
+
+# ForwardDiff rule for the Student-t CDF differentiated through its `z` argument.
+# `beta_inc` is not itself dual-differentiable, but d/dz T_cdf(z, nu) is exactly
+# the Student-t density, a closed form. This keeps the CPU truncatedstudentt
+# logpdf ForwardDiff-differentiable whenever `nu` is a constant (the only
+# tractable case: the incomplete beta's nu-derivative has no closed form).
+function _std_t_cdf(z::ForwardDiff.Dual{T}, nu::Real) where {T}
+    zv = ForwardDiff.value(z)
+    # An infinite standardized bound pins the CDF at 0/1 with a flat (zero)
+    # derivative, independent of `nu`. Handle it before requiring a constant `nu`:
+    # an unbounded truncation side needs no `d/dnu` term, so a latent `nu` stays
+    # valid here (e.g. both bounds infinite). Skipping the pdf * partials product
+    # also avoids an infinite partial surfacing as 0 * Inf = NaN.
+    if isinf(zv)
+        value = zv > zero(zv) ? one(zv) : zero(zv)
+        return ForwardDiff.Dual{T}(value, zero(ForwardDiff.partials(z)))
+    end
+    nu_value = _constant_nu_value(nu)
+    value = _std_t_cdf(zv, nu_value)
+    derivative = _std_t_pdf(zv, nu_value)
+    return ForwardDiff.Dual{T}(value, derivative * ForwardDiff.partials(z))
+end
+
 function _log_normal_cdf_diff(za, zb)
     root2 = sqrt(oftype(float(za), 2))
     log2 = log(oftype(float(za), 2))
