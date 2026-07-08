@@ -175,6 +175,22 @@ end
     @inbounds kinetic[b] = acc / 2
 end
 
+# Per-chain "did the proposal move off the current state" flag, computed in the
+# backend's OWN precision. This mirrors the host `_batched_positions_moved!`
+# (exact column inequality) but compares the device proposal against a device copy
+# of the current position, so a no-move proposal is NOT spuriously flagged as moved
+# by a lower-precision (e.g. Float32) host<->device round-trip.
+@kernel function _device_nuts_moved!(moved, @Const(proposal_position), @Const(current_position), num_params::Int)
+    b = @index(Global)
+    is_moved = 0x00
+    for pidx in 1:num_params
+        if @inbounds(proposal_position[pidx, b]) != @inbounds(current_position[pidx, b])
+            is_moved = 0x01
+        end
+    end
+    @inbounds moved[b] = is_moved
+end
+
 # ---- device NUTS workspace -----------------------------------------------------
 
 # Device buffers for the masked doubling round loop. Wraps a `DeviceBatchedWorkspace`
@@ -232,6 +248,9 @@ mutable struct DeviceNUTSWorkspace{T,B<:KernelAbstractions.Backend}
     kinetic_host::Vector{Float64}
     advanced_scratch::Vector{Bool}
     checkpoint_scratch::Vector{Bool}
+    # Movement detection (fix: precision-robust `accepted_step`).
+    current_position::Any    # P x C  device copy of the current (pre-trajectory) position
+    moved::Any               # C UInt8  per-chain moved flag (device)
 end
 
 function DeviceNUTSWorkspace(
@@ -251,13 +270,19 @@ function DeviceNUTSWorkspace(
     P = inner.parameter_count
     C = inner.batch_size
     D = Int(max_tree_depth)
-    mat() = KernelAbstractions.allocate(backend, T, P, C)
+    # Zero-initialize every P x C device buffer: a chain that is never active in any
+    # round (e.g. its initial one-step trajectory diverged/turned while others
+    # continue) never has its `tree_current_*` column written, yet the unmasked leaf
+    # gradient runs over all columns -- so an uninitialized column would feed garbage
+    # (and potentially NaN/FP noise) into the gradient. Zeros are a valid finite
+    # UNCONSTRAINED position, so those ignored lanes stay finite and harmless.
+    mat() = fill!(KernelAbstractions.allocate(backend, T, P, C), zero(T))
     vecT() = KernelAbstractions.allocate(backend, T, C)
     vecU8() = KernelAbstractions.allocate(backend, UInt8, C)
-    ckpt() = KernelAbstractions.allocate(backend, T, P, max(D + 1, 1), C)
+    ckpt() = fill!(KernelAbstractions.allocate(backend, T, P, max(D + 1, 1), C), zero(T))
     return DeviceNUTSWorkspace{T,typeof(backend)}(
         inner, backend, P, C, D,
-        KernelAbstractions.allocate(backend, T, P),
+        fill!(KernelAbstractions.allocate(backend, T, P), zero(T)),
         vecT(),
         mat(),
         mat(), mat(), mat(),
@@ -278,6 +303,8 @@ function DeviceNUTSWorkspace(
         Vector{Float64}(undef, C),
         Vector{Bool}(undef, C),
         Vector{Bool}(undef, C),
+        mat(),
+        vecU8(),
     )
 end
 
@@ -643,6 +670,9 @@ function _device_batched_nuts_proposals_masked!(
     # upload the continuation frontier + diagonal mass to the device.
     dws.inverse_mass_host .= convert.(T, inverse_mass_matrix)
     copyto!(dws.inverse_mass, dws.inverse_mass_host)
+    # A device-precision copy of the current position, for precision-robust movement
+    # detection after the rounds (see the accepted_step override below).
+    _upload_matrix!(dws.current_position, position)
     _upload_matrix!(dws.left_position, ws.left_position)
     _upload_matrix!(dws.left_momentum, ws.left_momentum)
     _upload_matrix!(dws.left_gradient, ws.left_gradient)
@@ -662,5 +692,19 @@ function _device_batched_nuts_proposals_masked!(
     _download_matrix!(ws.proposal_gradient, dws.proposal_gradient)
 
     _finalize_batched_nuts_proposals!(ws, position)
+
+    # Override `accepted_step` with a device-precision movement check. `_finalize`
+    # (via `_batched_positions_moved!`) compares the DOWNLOADED proposal against the
+    # Float64 host position; on a lower-precision backend the upload/download round
+    # trip perturbs a genuine no-move proposal into a spurious "moved", corrupting the
+    # accept diagnostic (and, downstream, letting the rounded copy overwrite the host
+    # position). Comparing on-device -- proposal vs a device copy of the current
+    # position, both in backend precision -- matches the host semantics exactly at
+    # Float64 and stays correct at Float32.
+    _device_nuts_moved!(dws.backend)(
+        dws.moved, dws.proposal_position, dws.current_position, dws.num_params; ndrange=dws.num_chains,
+    )
+    KernelAbstractions.synchronize(dws.backend)
+    _download_bits!(ws.control.accepted_step, dws.moved, dws.host_u8)
     return ws
 end
