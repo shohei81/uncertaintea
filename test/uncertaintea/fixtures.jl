@@ -1,6 +1,6 @@
 # Shared fixtures: models and values used by more than one test file
-# (dsl_static_models_and_backend.jl and sampling.jl). test/runtests.jl includes
-# this file once, before the core suite. To run any core test file standalone:
+# (dsl_static_models_and_backend.jl and sampling.jl). core.jl includes this
+# file first, before the core suite. To run any core test file standalone:
 #
 #   using Test, Random, UncertainTea
 #   include("test/uncertaintea/fixtures.jl")

@@ -1,6 +1,7 @@
 # Every file below is wrapped in its own named @testset and depends only on
-# ../fixtures.jl (included by runtests.jl before this file), so any file can be
-# run standalone and the include order is free.
+# ../fixtures.jl, so any file can be run standalone (include fixtures.jl first)
+# and the include order is free.
+include("fixtures.jl")
 include("core/dsl_static_models_and_backend.jl")
 include("core/dist_exponential_poisson.jl")
 include("core/dist_gamma_studentt.jl")
