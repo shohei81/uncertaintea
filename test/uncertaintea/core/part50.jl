@@ -20,13 +20,20 @@
 #     logpdf).
 #   mvnormaldense(mu, scale_tril=L): z = L^{-1}(x-mu), w = L^{-T} z; d/dmu = w,
 #     d/dx = -w (the constant scale factor contributes no gradient).
+#   truncatedstudentt(nu, mu, sigma, lower, upper) with a CONSTANT nu: logpdf =
+#     studentt_logpdf - log Z, Z = T_cdf(zb) - T_cdf(za). The nu-derivative of the
+#     incomplete-beta normalizer is intractable, so backend support is restricted
+#     (at lowering) to a literal nu — its d/dnu term is then genuinely zero and
+#     safely omitted. The remaining partials reuse the truncated-normal structure
+#     with the Student-t pdf `p`/CDF: d/dmu logZ = (p(za)-p(zb))/(sigma Z),
+#     d/dsigma logZ = (za p(za) - zb p(zb))/(sigma Z), d/dlower logZ =
+#     -p(za)/(sigma Z), d/dupper logZ = p(zb)/(sigma Z).
 #
 # Deferred (still honestly reported unsupported, run via the fallback):
-#   truncatedstudentt — its CDF uses the regularized incomplete beta, whose
-#     nu-derivative is intractable analytically AND is not ForwardDiff
-#     differentiable, so only its logjoint VALUE is exercised via the fallback.
-#   latent truncatednormal — draws through a bounded parameter transform the
-#     batched-backend unconstrained-transform layer does not implement.
+#   truncatedstudentt with a latent- or argument-flowing nu — the intractable
+#     d/dnu term cannot be omitted, so lowering falls back to the compiled logjoint.
+#   latent truncatednormal / truncatedstudentt — draw through a bounded parameter
+#     transform the batched-backend unconstrained-transform layer does not implement.
 
 @testset "bg_truncatednormal_backend_native" begin
     # Observation with a latent-flowing scale (exp(s)) and an unbounded upper side.
@@ -162,21 +169,74 @@ end
     @test isempty(bg_mvd_cache.column_caches)
 end
 
-@testset "bg_deferred_families_fall_back" begin
-    # truncatedstudentt is deferred: its CDF's nu-derivative is intractable and the
-    # regularized incomplete beta is not ForwardDiff differentiable, so only the
-    # logjoint VALUE is exercised via the fallback.
-    @tea static function bg_ts_model()
+@testset "bg_truncatedstudentt_backend_native" begin
+    # Observation with a latent-flowing scale (exp(s)), a constant nu, and an
+    # unbounded upper side, exercising the infinite-bound (p(zb)=0) path.
+    @tea static function bg_ts_scale_model()
         s ~ normal(0.0f0, 0.3f0)
         {:y} ~ truncatedstudentt(5.0, 0.5f0, exp(s), 0.0, Inf)
         return s
     end
 
-    @test backend_report(bg_ts_model).supported == false
+    bg_ts_scale_plan = backend_execution_plan(bg_ts_scale_model)
+    @test backend_report(bg_ts_scale_model).supported == true
+    @test bg_ts_scale_plan.steps[2] isa UncertainTea.BackendTruncatedStudentTChoicePlanStep
+
+    bg_ts_scale_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
+    bg_ts_scale_constraints = [choicemap((:y, 0.3)), choicemap((:y, 1.2)), choicemap((:y, 2.0))]
+    @test batched_logjoint(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints) ≈ [
+        logjoint(bg_ts_scale_model, bg_ts_scale_params[:, i], (), bg_ts_scale_constraints[i]) for i in 1:3
+    ] atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints) ≈ hcat([
+        logjoint_gradient_unconstrained(bg_ts_scale_model, bg_ts_scale_params[:, i], (), bg_ts_scale_constraints[i]) for i in 1:3
+    ]...) atol = 1e-8
+
+    bg_ts_scale_cache = BatchedLogjointGradientCache(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints)
+    @test !isnothing(bg_ts_scale_cache.backend_cache)
+    @test isnothing(bg_ts_scale_cache.flat_cache)
+    @test isempty(bg_ts_scale_cache.column_caches)
+
+    # Observation with a latent-flowing mean and finite bounds, exercising the
+    # finite-normalizer d/dmu and both d/dlower, d/dupper paths.
+    @tea static function bg_ts_mean_model()
+        m ~ normal(0.0f0, 1.0f0)
+        {:y} ~ truncatedstudentt(4.0, m, 1.0, -2.0, 2.0)
+        return m
+    end
+
+    @test backend_report(bg_ts_mean_model).supported == true
+    @test backend_execution_plan(bg_ts_mean_model).steps[2] isa UncertainTea.BackendTruncatedStudentTChoicePlanStep
+
+    bg_ts_mean_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
+    bg_ts_mean_constraints = [choicemap((:y, 0.1)), choicemap((:y, 0.5)), choicemap((:y, -0.3))]
+    @test batched_logjoint(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints) ≈ [
+        logjoint(bg_ts_mean_model, bg_ts_mean_params[:, i], (), bg_ts_mean_constraints[i]) for i in 1:3
+    ] atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints) ≈ hcat([
+        logjoint_gradient_unconstrained(bg_ts_mean_model, bg_ts_mean_params[:, i], (), bg_ts_mean_constraints[i]) for i in 1:3
+    ]...) atol = 1e-8
+
+    bg_ts_mean_cache = BatchedLogjointGradientCache(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints)
+    @test !isnothing(bg_ts_mean_cache.backend_cache)
+    @test isnothing(bg_ts_mean_cache.flat_cache)
+    @test isempty(bg_ts_mean_cache.column_caches)
+end
+
+@testset "bg_deferred_families_fall_back" begin
+    # A latent-flowing nu keeps truncatedstudentt deferred: the intractable d/dnu
+    # term cannot be omitted, so lowering falls back to the compiled logjoint. The
+    # logjoint VALUE still matches per column via the fallback.
+    @tea static function bg_ts_latent_nu_model()
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ truncatedstudentt(exp(s) + 3.0, 0.5f0, 1.0, 0.0, Inf)
+        return s
+    end
+
+    @test backend_report(bg_ts_latent_nu_model).supported == false
     bg_ts_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_ts_constraints = [choicemap((:y, 0.3)), choicemap((:y, 1.2)), choicemap((:y, 2.0))]
-    @test batched_logjoint(bg_ts_model, bg_ts_params, (), bg_ts_constraints) ≈ [
-        logjoint(bg_ts_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) for i in 1:3
+    @test batched_logjoint(bg_ts_latent_nu_model, bg_ts_params, (), bg_ts_constraints) ≈ [
+        logjoint(bg_ts_latent_nu_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) for i in 1:3
     ] atol = 1e-8
 
     # Latent truncatednormal is deferred: the bounded parameter transform is not

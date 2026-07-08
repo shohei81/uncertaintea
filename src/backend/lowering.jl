@@ -36,6 +36,7 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :categorical,
     :mvnormal,
     :truncatednormal,
+    :truncatedstudentt,
     :mixture,
     :mvnormaldense,
 ]
@@ -369,6 +370,7 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
     step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, step, issues)
     step.rhs.family === :truncatednormal && return _backend_lower_truncatednormal_choice_step(model, layout, step, issues)
+    step.rhs.family === :truncatedstudentt && return _backend_lower_truncatedstudentt_choice_step(model, layout, step, issues)
     step.rhs.family === :mixture && return _backend_lower_mixture_choice_step(model, layout, step, issues)
     step.rhs.family === :mvnormaldense && return _backend_lower_mvnormaldense_choice_step(model, layout, step, issues)
 
@@ -930,6 +932,7 @@ function _backend_loop_observed_choice(step::BackendLoopPlanStep)
     choice isa BackendMvNormalChoicePlanStep && return nothing
     choice isa BackendMvNormalDenseChoicePlanStep && return nothing
     choice isa BackendTruncatedNormalChoicePlanStep && return nothing
+    choice isa BackendTruncatedStudentTChoicePlanStep && return nothing
     choice isa BackendMixtureNormalChoicePlanStep && return nothing
     isnothing(choice.parameter_slot) || return nothing
     isnothing(choice.binding_slot) || return nothing
