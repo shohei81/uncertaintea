@@ -1,3 +1,4 @@
+@testset "dist_laplace_geometric_negbinom" begin
     @test UncertainTea.logpdf(laplace(0.5, 2.0), 1.5) ≈ -log(4.0) - 0.5 atol=1e-8
     @test UncertainTea.logpdf(geometric(0.25), 3) ≈ log(0.25) + 3 * log(0.75) atol=1e-8
     @test UncertainTea.logpdf(negativebinomial(2.5, 0.4), 3) ≈
@@ -135,3 +136,4 @@
     @test !isnothing(negativebinomial_batch_cache.backend_cache)
     @test isnothing(negativebinomial_batch_cache.flat_cache)
     @test isempty(negativebinomial_batch_cache.column_caches)
+end

@@ -7,6 +7,7 @@
     # matrix, one column per chain). The progress callback reports the mean of the
     # per-chain step sizes.
 
+@testset "per_chain_warmup_batched" begin
     @tea static function pca_gaussian_model()
         mu ~ normal(0.0f0, 1.0f0)
         {:y} ~ normal(mu, 1.0f0)
@@ -116,3 +117,4 @@
     @test all(e -> e.phase === :warmup || e.phase === :sample, pca_cb_events)
     @test all(e -> haskey(e, :step_size) && haskey(e, :divergences), pca_cb_events)
     @test all(e -> isfinite(e.step_size), pca_cb_events)
+end

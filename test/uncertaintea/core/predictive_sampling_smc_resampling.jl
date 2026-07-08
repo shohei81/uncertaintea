@@ -3,6 +3,7 @@
     # results, and the prior. Feature 2 exercises the resampling scheme dispatch
     # plus the `log_evidence` accessor and `SMCResult` show.
 
+@testset "predictive_sampling_smc_resampling" begin
     @tea static function pred_conjugate_model()
         mu ~ normal(0.0f0, 1.0f0)
         {:y} ~ normal(mu, 1.0f0)
@@ -167,3 +168,4 @@
     @test log_evidence(resamp_importance) == resamp_importance.log_evidence_estimate
     @test log_evidence(pred_smc) == pred_smc.importance.log_evidence_estimate
     @test occursin("SMCResult", sprint(show, pred_smc))
+end

@@ -1,10 +1,7 @@
-# Include order matters: dsl_core_1/2/3 are one continuous block (later files use
-# definitions from earlier ones), and several files below run bare top-level
-# @tests that share the parent testset scope. Do not reorder without untangling
-# that coupling first (see issue #7).
-include("core/dsl_core_1.jl")
-include("core/dsl_core_2.jl")
-include("core/dsl_core_3.jl")
+# Every file below is wrapped in its own named @testset and depends only on
+# ../fixtures.jl (included by runtests.jl before this file), so any file can be
+# run standalone and the include order is free.
+include("core/dsl_static_models_and_backend.jl")
 include("core/dist_exponential_poisson.jl")
 include("core/dist_gamma_studentt.jl")
 include("core/dist_beta_categorical.jl")

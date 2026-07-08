@@ -6,6 +6,7 @@
     # Exact Gaussian: mu ~ N(0,1); y | mu ~ N(mu,1) with y=0.3 has posterior mode
     # mu = y/2 = 0.15 and posterior variance 0.5 in the (already unconstrained)
     # latent space.
+@testset "map_laplace_approximation" begin
     @tea static function map_gaussian_model()
         mu ~ normal(0f0, 1f0)
         {:y} ~ normal(mu, 1f0)
@@ -204,3 +205,4 @@
     @test length(cb_advi_events) >= 1
     @test all(e -> e.phase === :step, cb_advi_events)
     @test cb_advi_events[end].iteration == 25
+end

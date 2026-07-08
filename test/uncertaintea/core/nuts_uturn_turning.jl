@@ -1,3 +1,4 @@
+@testset "nuts_uturn_turning" begin
     @tea static function dyadic_model()
         x ~ normal(0.0f0, 1.0f0)
         y ~ normal(0.0f0, 3.0f0)
@@ -282,3 +283,4 @@
     @test dyadicb_smc isa SMCResult
     @test isfinite(dyadicb_smc.importance.log_evidence_estimate)
     @test all(0.0 <= stage.move_acceptance_rate <= 1.0 for stage in dyadicb_smc.stages)
+end

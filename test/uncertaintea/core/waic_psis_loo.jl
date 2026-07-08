@@ -4,6 +4,7 @@
     # known generalized Pareto sample; WAIC and PSIS-LOO agree with each other and with an
     # exact (unsmoothed) importance-sampling LOO on a well-behaved conjugate model.
 
+@testset "waic_psis_loo" begin
     mc_logsumexp = function (v)
         m = maximum(v)
         return m + log(sum(exp.(v .- m)))
@@ -91,3 +92,4 @@
     # show smoke tests.
     @test !isempty(sprint(show, mc_waic))
     @test !isempty(sprint(show, mc_loo))
+end

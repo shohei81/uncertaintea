@@ -1,3 +1,4 @@
+@testset "dist_gamma_studentt" begin
     @test UncertainTea.logpdf(gamma(2.0, 3.0), 1.5) ≈
         2.0 * log(3.0) - UncertainTea.loggamma(2.0) + log(1.5) - 4.5 atol=1e-8
     @test UncertainTea.logpdf(gamma(2.0, 3.0), 0.0) == -Inf
@@ -243,3 +244,4 @@
     @test !isnothing(studentt_dof_batch_cache.backend_cache)
     @test isnothing(studentt_dof_batch_cache.flat_cache)
     @test isempty(studentt_dof_batch_cache.column_caches)
+end
