@@ -141,3 +141,38 @@ end
     @test all(isfinite, result.elbo_history)
     @test isapprox(variational_mean(result)[1], 0.15; atol=0.15)
 end
+
+# --- device-resident masked batched NUTS smoke (issue #2) --------------------
+# Mirrors test/uncertaintea/core/part51.jl on a Metal.MetalBackend at Float32.
+# The masked doubling trajectory runs device-resident: the per-leaf P x C arrays
+# and tree ops (leapfrog, checkpoints, U-turn) live on the device, while the RNG
+# draws and O(num_chains) bookkeeping stay host-side, so results are statistically
+# (not bitwise) equivalent to the CPU masked path.
+
+@testset "device Metal GPU batched NUTS smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU NUTS smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+    constraints = choicemap((:y, 0.3))
+
+    chains = batched_nuts(
+        gpu_conjugate_gauss,
+        (),
+        constraints;
+        num_chains=2,
+        num_samples=300,
+        num_warmup=150,
+        tree_strategy=:masked,
+        backend=backend,
+        precision=Float32,
+        rng=MersenneTwister(46),
+    )
+    samples = posterior_array(chains)
+    @test all(isfinite, samples)
+    @test isapprox(sum(samples) / length(samples), 0.15; atol=0.15)
+    @test all(<(1.3), rhat(chains))
+end
