@@ -239,6 +239,32 @@ end
         logjoint(bg_ts_latent_nu_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) for i in 1:3
     ] atol = 1e-8
 
+    # A latent nu with BOTH bounds infinite still has a valid CPU gradient: the
+    # normalizer Z = T_cdf(+Inf) - T_cdf(-Inf) = 1 is constant, so no intractable
+    # d/dnu term arises and the infinite-bound guard must fire before the
+    # constant-nu check. The gradient matches the equivalent untruncated studentt.
+    @tea static function bg_ts_latent_nu_open_model()
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ truncatedstudentt(exp(s) + 3.0, 0.5f0, 1.0, -Inf, Inf)
+        return s
+    end
+    @tea static function bg_ts_latent_nu_ref_model()
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ studentt(exp(s) + 3.0, 0.5f0, 1.0)
+        return s
+    end
+    for i in 1:3
+        @test logjoint_gradient_unconstrained(bg_ts_latent_nu_open_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) ≈
+              logjoint_gradient_unconstrained(bg_ts_latent_nu_ref_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) atol = 1e-8
+        @test all(isfinite, logjoint_gradient_unconstrained(bg_ts_latent_nu_open_model, bg_ts_params[:, i], (), bg_ts_constraints[i]))
+    end
+
+    # A latent nu with a finite bound remains genuinely unsupported: the CDF's
+    # d/dnu term is intractable, so the CPU gradient throws honestly.
+    @test_throws ArgumentError logjoint_gradient_unconstrained(
+        bg_ts_latent_nu_model, bg_ts_params[:, 1], (), bg_ts_constraints[1],
+    )
+
     # Latent truncatednormal is deferred: the bounded parameter transform is not
     # implemented in the batched-backend transform layer, so it runs via the
     # ForwardDiff column-cache fallback. The value still matches per column.

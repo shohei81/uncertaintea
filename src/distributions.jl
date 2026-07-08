@@ -808,13 +808,18 @@ end
 # logpdf ForwardDiff-differentiable whenever `nu` is a constant (the only
 # tractable case: the incomplete beta's nu-derivative has no closed form).
 function _std_t_cdf(z::ForwardDiff.Dual{T}, nu::Real) where {T}
-    nu_value = _constant_nu_value(nu)
     zv = ForwardDiff.value(z)
-    value = _std_t_cdf(zv, nu_value)
     # An infinite standardized bound pins the CDF at 0/1 with a flat (zero)
-    # derivative; skip the pdf * partials product so an infinite partial from the
-    # unbounded side does not surface as 0 * Inf = NaN.
-    isinf(zv) && return ForwardDiff.Dual{T}(value, zero(ForwardDiff.partials(z)))
+    # derivative, independent of `nu`. Handle it before requiring a constant `nu`:
+    # an unbounded truncation side needs no `d/dnu` term, so a latent `nu` stays
+    # valid here (e.g. both bounds infinite). Skipping the pdf * partials product
+    # also avoids an infinite partial surfacing as 0 * Inf = NaN.
+    if isinf(zv)
+        value = zv > zero(zv) ? one(zv) : zero(zv)
+        return ForwardDiff.Dual{T}(value, zero(ForwardDiff.partials(z)))
+    end
+    nu_value = _constant_nu_value(nu)
+    value = _std_t_cdf(zv, nu_value)
     derivative = _std_t_pdf(zv, nu_value)
     return ForwardDiff.Dual{T}(value, derivative * ForwardDiff.partials(z))
 end
