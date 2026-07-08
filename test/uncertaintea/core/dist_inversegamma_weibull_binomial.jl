@@ -1,3 +1,4 @@
+@testset "dist_inversegamma_weibull_binomial" begin
     @test UncertainTea.logpdf(inversegamma(3.0, 2.0), 1.5) ≈
         3.0 * log(2.0) - UncertainTea.loggamma(3.0) - 4.0 * log(1.5) - 2.0 / 1.5 atol=1e-8
     @test UncertainTea.logpdf(inversegamma(3.0, 2.0), 0.0) == -Inf
@@ -135,3 +136,4 @@
     @test !isnothing(binomial_batch_cache.backend_cache)
     @test isnothing(binomial_batch_cache.flat_cache)
     @test isempty(binomial_batch_cache.column_caches)
+end

@@ -1,3 +1,4 @@
+@testset "dist_mvnormal_diag" begin
     @test UncertainTea.logpdf(
         mvnormal([0.0, 1.0], [1.5, 0.8]),
         [0.2, 1.3],
@@ -92,3 +93,4 @@
     @test constrained_summary.parameters[2].address == (:state, 2)
     @test unconstrained_summary.parameters[1].address == (:state, 1)
     @test unconstrained_summary.parameters[2].address == (:state, 2)
+end

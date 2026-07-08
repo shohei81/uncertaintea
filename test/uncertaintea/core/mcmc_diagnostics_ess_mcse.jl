@@ -1,3 +1,4 @@
+@testset "mcmc_diagnostics_ess_mcse" begin
     @tea static function diag_model()
         mu ~ normal(0.0f0, 1.0f0)
         {:y} ~ normal(mu, 1.0f0)
@@ -77,3 +78,4 @@
     # The text/plain show renders a warnings section for the divergent run.
     diag_div_show = sprint(show, MIME("text/plain"), diag_div_summary)
     @test occursin("warnings", diag_div_show)
+end

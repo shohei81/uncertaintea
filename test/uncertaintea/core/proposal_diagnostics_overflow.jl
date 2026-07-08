@@ -1,3 +1,4 @@
+@testset "proposal_diagnostics_overflow" begin
     proposal_favorable = UncertainTea._proposal_diagnostics(
         0.0,
         [0.0],
@@ -66,3 +67,4 @@
     )
     @test all(isfinite, variational_mean(overflow_advi; space=:unconstrained))
     @test all(isfinite, overflow_advi.elbo_history)
+end

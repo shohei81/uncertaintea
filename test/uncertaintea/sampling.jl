@@ -1,3 +1,4 @@
+@testset "sampling" begin
     gaussian_chain = hmc(
         gaussian_mean,
         (),
@@ -690,3 +691,4 @@
         num_samples=10,
         initial_params=zeros(1, 2),
     )
+end
