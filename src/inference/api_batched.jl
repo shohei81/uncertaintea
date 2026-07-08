@@ -19,10 +19,34 @@ function batched_nuts(
     callback=nothing,
     callback_every::Int=10,
     tree_strategy::Symbol=:hybrid,
+    backend=nothing,
+    precision=nothing,
     rng::AbstractRNG=Random.default_rng(),
 )
     tree_strategy in (:hybrid, :masked) ||
         throw(ArgumentError("batched_nuts tree_strategy must be :hybrid or :masked, got $(repr(tree_strategy))"))
+
+    # Device-resident masked NUTS. When `backend` is given the masked doubling
+    # trajectory runs device-resident (host-side RNG + O(num_chains) bookkeeping,
+    # device-side leapfrog/gradient/tree ops); results are statistically -- and, on
+    # the CPU() reference backend at Float64, numerically -- equivalent to the host
+    # masked path. Only the masked strategy and shared (diagonal) adaptation apply.
+    device_nuts_workspace = nothing
+    if backend !== nothing
+        backend isa KernelAbstractions.Backend ||
+            throw(ArgumentError("batched_nuts `backend` must be a KernelAbstractions.Backend or nothing, got $(typeof(backend))"))
+        tree_strategy === :masked ||
+            throw(ArgumentError("batched_nuts device backend requires tree_strategy=:masked, got $(repr(tree_strategy))"))
+        per_chain_adaptation && throw(ArgumentError(
+            "batched_nuts per-chain adaptation is not supported on the device backend; " *
+            "run with backend=nothing or per_chain_adaptation=false",
+        ))
+        device_precision = precision === nothing ? default_device_precision(backend) : precision
+        device_nuts_workspace = DeviceNUTSWorkspace(
+            model, num_chains, max_tree_depth;
+            backend=backend, precision=device_precision, args=args, constraints=constraints,
+        )
+    end
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     _validate_batched_nuts_arguments(
@@ -168,7 +192,23 @@ function batched_nuts(
     for iteration in 1:total_iterations
         nuts_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
-        if tree_strategy === :masked
+        if tree_strategy === :masked && device_nuts_workspace !== nothing
+            _device_batched_nuts_proposals_masked!(
+                device_nuts_workspace,
+                workspace,
+                model,
+                position,
+                current_logjoint,
+                current_gradient,
+                inverse_mass_matrix,
+                batch_args,
+                batch_constraints,
+                nuts_step_size,
+                max_tree_depth,
+                nuts_max_delta_energy,
+                rng,
+            )
+        elseif tree_strategy === :masked
             _batched_nuts_proposals_masked!(
                 workspace,
                 model,
