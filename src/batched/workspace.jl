@@ -370,6 +370,11 @@ function _logjoint_unconstrained_batched_backend!(
         destination_indices = parametervalueindices(slot)
         if slot.transform isa IdentityTransform
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
+        elseif slot.transform isa NoncenteredTransform
+            # z-space plan: the noncentered step scores N(z; 0, 1) and
+            # materializes theta itself, so the pre-pass passes z through with
+            # no Jacobian term
+            copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa VectorIdentityTransform
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa VectorLogTransform

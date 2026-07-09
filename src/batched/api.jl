@@ -258,7 +258,9 @@ function batched_logjoint(
     batch_size == 0 && return float(eltype(params))[]
 
     workspace = BatchedLogjointWorkspace(model)
-    if !isnothing(workspace.backend_plan)
+    # the backend plan for a dependent-transform model scores in z space, so
+    # the CONSTRAINED entry point must use the per-column reference instead
+    if !isnothing(workspace.backend_plan) && !_has_dependent_transforms(parameterlayout(model))
         try
             return _logjoint_with_batched_backend!(workspace, params, batch_args, batch_constraints)
         catch err

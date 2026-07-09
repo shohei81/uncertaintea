@@ -255,6 +255,25 @@ function _backend_lower_address(model::TeaModel, layout::EnvironmentLayout, addr
     return BackendAddressSpec(tuple(parts...))
 end
 
+# Scalar family steps read the batched constrained matrix and seed gradient
+# rows with the number stored in their `parameter_slot` field. That number
+# must be the slot's VALUE row, not its ordinal (issue #36); the two agree
+# for the gradient seed only while every preceding slot keeps parameter and
+# value dimensions equal, so dimension-changing predecessors are rejected.
+function _backend_scalar_parameter_row(model::TeaModel, parameter_slot, issues::Vector{String})
+    isnothing(parameter_slot) && return nothing, true
+    slot = parameterlayout(model).slots[parameter_slot]
+    if slot.index != slot.value_index
+        _backend_issue!(
+            issues,
+            "scalar latents after a dimension-changing vector latent (simplex/cholesky) are not " *
+            "supported in backend lowering yet (issue #36)",
+        )
+        return nothing, false
+    end
+    return slot.value_index, true
+end
+
 function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
     if step.rhs isa BroadcastDistributionSpec
         return _backend_lower_broadcast_normal_choice_step(model, layout, step, issues)
@@ -267,8 +286,13 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
         return nothing
     end
-    step.rhs.reparam === :noncentered && begin
-        _backend_issue!(issues, "reparam=:noncentered is not lowered yet (docs/noncentered-reparam.md, PR-4)")
+    parameter_row, parameter_row_ok = _backend_scalar_parameter_row(model, step.parameter_slot, issues)
+    parameter_row_ok || return nothing
+    if step.rhs.reparam === :noncentered && step.rhs.family !== :normal
+        _backend_issue!(
+            issues,
+            "reparam=:noncentered is lowered for normal only; $(step.rhs.family) is pending (docs/noncentered-reparam.md)",
+        )
         return nothing
     end
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
@@ -286,31 +310,38 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             _backend_issue!(issues, "normal expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendNormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        step.rhs.reparam === :noncentered && return BackendNoncenteredNormalChoicePlanStep(
+            step.binding_slot,
+            address,
+            arguments[1],
+            arguments[2],
+            parameter_row,
+        )
+        return BackendNormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :laplace
         length(arguments) == 2 || begin
             _backend_issue!(issues, "laplace expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendLaplaceChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendLaplaceChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :lognormal
         length(arguments) == 2 || begin
             _backend_issue!(issues, "lognormal expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendLognormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendLognormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :exponential
         length(arguments) == 1 || begin
             _backend_issue!(issues, "exponential expects exactly 1 backend argument")
             return nothing
         end
-        return BackendExponentialChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+        return BackendExponentialChoicePlanStep(step.binding_slot, address, arguments[1], parameter_row)
     elseif step.rhs.family === :gamma
         length(arguments) == 2 || begin
             _backend_issue!(issues, "gamma expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendGammaChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendGammaChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :inversegamma
         length(arguments) == 2 || begin
             _backend_issue!(issues, "inversegamma expects exactly 2 backend arguments")
@@ -321,56 +352,56 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             address,
             arguments[1],
             arguments[2],
-            step.parameter_slot,
+            parameter_row,
         )
     elseif step.rhs.family === :weibull
         length(arguments) == 2 || begin
             _backend_issue!(issues, "weibull expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendWeibullChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendWeibullChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :beta
         length(arguments) == 2 || begin
             _backend_issue!(issues, "beta expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendBetaChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendBetaChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :bernoulli
         length(arguments) == 1 || begin
             _backend_issue!(issues, "bernoulli expects exactly 1 backend argument")
             return nothing
         end
-        return BackendBernoulliChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+        return BackendBernoulliChoicePlanStep(step.binding_slot, address, arguments[1], parameter_row)
     elseif step.rhs.family === :binomial
         length(arguments) == 2 || begin
             _backend_issue!(issues, "binomial expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :geometric
         length(arguments) == 1 || begin
             _backend_issue!(issues, "geometric expects exactly 1 backend argument")
             return nothing
         end
-        return BackendGeometricChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+        return BackendGeometricChoicePlanStep(step.binding_slot, address, arguments[1], parameter_row)
     elseif step.rhs.family === :negativebinomial
         length(arguments) == 2 || begin
             _backend_issue!(issues, "negativebinomial expects exactly 2 backend arguments")
             return nothing
         end
-        return BackendNegativeBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
+        return BackendNegativeBinomialChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], parameter_row)
     elseif step.rhs.family === :categorical
         isempty(arguments) && begin
             _backend_issue!(issues, "categorical expects at least 1 backend argument")
             return nothing
         end
-        return BackendCategoricalChoicePlanStep(step.binding_slot, address, tuple(arguments...), step.parameter_slot)
+        return BackendCategoricalChoicePlanStep(step.binding_slot, address, tuple(arguments...), parameter_row)
     elseif step.rhs.family === :poisson
         length(arguments) == 1 || begin
             _backend_issue!(issues, "poisson expects exactly 1 backend argument")
             return nothing
         end
-        return BackendPoissonChoicePlanStep(step.binding_slot, address, arguments[1], step.parameter_slot)
+        return BackendPoissonChoicePlanStep(step.binding_slot, address, arguments[1], parameter_row)
     elseif step.rhs.family === :studentt
         length(arguments) == 3 || begin
             _backend_issue!(issues, "studentt expects exactly 3 backend arguments")
@@ -382,7 +413,7 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             arguments[1],
             arguments[2],
             arguments[3],
-            step.parameter_slot,
+            parameter_row,
         )
     end
 
@@ -753,11 +784,57 @@ function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     if any(isnothing, steps)
         return BackendLoweringResult(report, nothing)
     end
+    if !_backend_noncentered_dependencies_ok!(issues, tuple(steps...))
+        return BackendLoweringResult(
+            BackendLoweringReport(target, false, issues, report.supported_families, report.supported_primitives),
+            nothing,
+        )
+    end
     numeric_slots, index_slots, generic_slots = _derive_backend_slot_kinds(plan.environment_layout, tuple(steps...))
     return BackendLoweringResult(
         report,
         BackendExecutionPlan(target, tuple(steps...), numeric_slots, index_slots, generic_slots),
     )
+end
+
+
+# A noncentered location/scale may only depend on model arguments and slotted
+# latents -- the CPU plan-walk transform rejects anything else, so the z-space
+# backend plan must too (codex review on PR #35). Taint propagates from
+# slotless choice bindings through deterministic bindings.
+_backend_expr_uses_tainted(expr::BackendLiteralExpr, tainted::BitSet) = false
+_backend_expr_uses_tainted(expr::BackendSlotExpr, tainted::BitSet) = expr.slot in tainted
+_backend_expr_uses_tainted(expr::BackendPrimitiveExpr, tainted::BitSet) =
+    any(_backend_expr_uses_tainted(arg, tainted) for arg in expr.arguments)
+_backend_expr_uses_tainted(expr::BackendTupleExpr, tainted::BitSet) =
+    any(_backend_expr_uses_tainted(arg, tainted) for arg in expr.arguments)
+_backend_expr_uses_tainted(expr::BackendBlockExpr, tainted::BitSet) =
+    any(_backend_expr_uses_tainted(arg, tainted) for arg in expr.arguments)
+_backend_expr_uses_tainted(expr, tainted::BitSet) = false
+
+function _backend_noncentered_dependencies_ok!(issues::Vector{String}, steps::Tuple, tainted::BitSet=BitSet())
+    ok = true
+    for step in steps
+        if step isa BackendDeterministicPlanStep
+            _backend_expr_uses_tainted(step.expr, tainted) && push!(tainted, step.binding_slot)
+        elseif step isa BackendLoopPlanStep
+            ok &= _backend_noncentered_dependencies_ok!(issues, step.body, tainted)
+        elseif step isa BackendNoncenteredNormalChoicePlanStep
+            if _backend_expr_uses_tainted(step.mu, tainted) || _backend_expr_uses_tainted(step.sigma, tainted)
+                _backend_issue!(
+                    issues,
+                    "reparam=:noncentered location/scale depends on a choice without a parameter slot; " *
+                    "the CPU transform rejects this, so backend lowering does too",
+                )
+                ok = false
+            end
+        elseif step isa BackendChoicePlanStep
+            if isnothing(step.parameter_slot) && !isnothing(step.binding_slot)
+                push!(tainted, step.binding_slot)
+            end
+        end
+    end
+    return ok
 end
 
 function _backend_lowering(model::TeaModel; target::Symbol=:gpu)

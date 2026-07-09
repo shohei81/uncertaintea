@@ -295,6 +295,52 @@ function _score_backend_step_and_gradient!(
 end
 
 function _score_backend_step_and_gradient!(
+    step::BackendNoncenteredNormalChoicePlanStep,
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
+    constraints,
+) where {T<:AbstractFloat}
+    z_values = env.observed_values
+    z_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    mu_values = _batched_numeric_scratch!(env, 1)
+    mu_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    sigma_gradients = _batched_backend_gradient_scratch!(cache, 3)
+    theta_values = _batched_numeric_scratch!(env, 3)
+    theta_gradients = _batched_backend_gradient_scratch!(cache, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_numeric_values!(z_values, step.parameter_slot, params, constraints, address_parts)
+    _fill_choice_gradient!(z_gradients, step.parameter_slot)
+    _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 5)
+    _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 6)
+    for batch_index in eachindex(totals)
+        z = z_values[batch_index]
+        sigma = sigma_values[batch_index]
+        (isfinite(sigma) && sigma > 0) || throw(
+            BatchedBackendFallback("noncentered normal requires a finite positive scale, got $sigma"),
+        )
+        totals[batch_index] += _backend_normal_logpdf(zero(z), one(z), z)
+        theta_values[batch_index] = mu_values[batch_index] + sigma * z
+    end
+    # d logpdf(N(0,1), z)/dz = -z through the slot seed of z
+    for batch_index in eachindex(totals), parameter_index in axes(gradients, 1)
+        z_grad = z_gradients[parameter_index, batch_index]
+        iszero(z_grad) || (gradients[parameter_index, batch_index] -= z_values[batch_index] * z_grad)
+        theta_gradients[parameter_index, batch_index] =
+            mu_gradients[parameter_index, batch_index] +
+            z_values[batch_index] * sigma_gradients[parameter_index, batch_index] +
+            sigma_values[batch_index] * z_grad
+    end
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, theta_values, theta_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
     step::BackendLognormalChoicePlanStep,
     totals::AbstractVector{T},
     gradients::AbstractMatrix{T},

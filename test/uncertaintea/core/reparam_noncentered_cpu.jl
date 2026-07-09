@@ -211,6 +211,48 @@ end
         @test 0.8 < flagged_sd / manual_sd < 1.3
     end
 
+    @testset "ncc_batched_backend" begin
+        points = [0.6 -0.4; -1.1 0.8]
+        batched_values = batched_logjoint_unconstrained(ncc_funnel_flagged, points, (), ncc_constraints)
+        reference_values =
+            [logjoint_unconstrained(ncc_funnel_flagged, points[:, i], (), ncc_constraints) for i = 1:2]
+        @test batched_values ≈ reference_values atol = 1e-8
+
+        cache = BatchedLogjointGradientCache(ncc_funnel_flagged, points, (), ncc_constraints)
+        @test !isnothing(cache.backend_cache)
+        batched_gradients = batched_logjoint_gradient_unconstrained(ncc_funnel_flagged, points, (), ncc_constraints)
+        reference_gradients = hcat(
+            [logjoint_gradient_unconstrained(ncc_funnel_flagged, points[:, i], (), ncc_constraints) for i = 1:2]...,
+        )
+        @test batched_gradients ≈ reference_gradients atol = 1e-8
+
+        # the constrained entry must keep scoring theta space (per-column
+        # fallback behind the z-space backend plan)
+        theta_points = hcat([transform_to_constrained(ncc_funnel_flagged, points[:, i]) for i = 1:2]...)
+        @test batched_logjoint(ncc_funnel_flagged, theta_points, (), ncc_constraints) ≈
+              [logjoint(ncc_funnel_flagged, theta_points[:, i], (), ncc_constraints) for i = 1:2] atol = 1e-8
+
+        batched = batched_nuts(
+            ncc_funnel_flagged,
+            (),
+            ncc_constraints;
+            num_chains=3,
+            num_samples=25,
+            num_warmup=25,
+            rng=MersenneTwister(5),
+        )
+        @test length(batched.chains) == 3
+        @test all(all(isfinite, chain.constrained_samples) for chain in batched.chains)
+    end
+
+    @testset "ncc_backend_guards" begin
+        # a noncentered location fed by a slotless (discrete) latent is
+        # rejected at lowering, matching the CPU transform
+        report = backend_report(ncc_slotless_dependent_model)
+        @test report.supported == false
+        @test any(occursin("without a parameter slot", issue) for issue in report.issues)
+    end
+
     @testset "ncc_sbc" begin
         result = sbc(
             ncc_sbc_model;

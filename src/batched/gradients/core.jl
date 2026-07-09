@@ -131,7 +131,10 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
     logabsdet = _batched_logabsdet_buffer!(workspace, size(params, 2), T)
     for slot in layout.slots
         slot_index = slot.index
-        if slot.transform isa IdentityTransform
+        if slot.transform isa IdentityTransform || slot.transform isa NoncenteredTransform
+            # noncentered slots pass z through: the z-space plan step scores
+            # N(z; 0, 1) and carries theta itself, so no Jacobian or
+            # chain-rule correction applies
             for batch_index = 1:size(params, 2)
                 constrained[slot_index, batch_index] = T(params[slot_index, batch_index])
             end
@@ -171,6 +174,8 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
 
     for slot in layout.slots
         if slot.transform isa IdentityTransform
+            continue
+        elseif slot.transform isa NoncenteredTransform
             continue
         elseif slot.transform isa VectorIdentityTransform
             continue

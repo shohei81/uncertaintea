@@ -147,6 +147,24 @@ function _score_backend_step!(
     return _backend_normal_logpdf(mu, sigma, value)
 end
 
+# The scalar path always receives CONSTRAINED values (it backs the
+# per-column fallback of the constrained batched_logjoint entry), so it
+# scores the centered density on theta; only the BATCHED methods run in z
+# space behind the identity pre-pass.
+function _score_backend_step!(
+    step::BackendNoncenteredNormalChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_value(step.parameter_slot, params, constraints, address)
+    mu = _eval_backend_numeric_expr(env, step.mu)
+    sigma = _eval_backend_numeric_expr(env, step.sigma)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_normal_logpdf(mu, sigma, value)
+end
+
 function _score_backend_step!(
     step::BackendLognormalChoicePlanStep,
     env::PlanEnvironment,
@@ -233,6 +251,41 @@ function _score_backend_step!(
             else
                 env.generic_values[step.binding_slot][batch_index] = value
             end
+        end
+    end
+    isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)
+    return totals
+end
+
+function _score_backend_step!(
+    step::BackendNoncenteredNormalChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = env.observed_values
+    mu_values = _batched_numeric_scratch!(env, 1)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
+    _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
+    for batch_index = 1:env.batch_size
+        z = choice_values[batch_index]
+        sigma = sigma_values[batch_index]
+        (isfinite(sigma) && sigma > 0) || throw(
+            BatchedBackendFallback("noncentered normal requires a finite positive scale, got $sigma"),
+        )
+        totals[batch_index] += _backend_normal_logpdf(zero(z), one(z), z)
+        if !isnothing(step.binding_slot)
+            theta = mu_values[batch_index] + sigma * z
+            env.numeric_slots[step.binding_slot] || throw(
+                BatchedBackendFallback(
+                    "noncentered normal binding slot $(step.binding_slot) must be numeric",
+                ),
+            )
+            env.numeric_values[step.binding_slot, batch_index] = convert(eltype(env.numeric_values), theta)
         end
     end
     isnothing(step.binding_slot) || (env.assigned[step.binding_slot] = true)

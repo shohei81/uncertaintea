@@ -12,6 +12,13 @@
     return theta
 end
 
+@tea static function reparam_studentt_flagged_model()
+    mu ~ normal(0.0, 1.0)
+    theta ~ studentt(4.0, mu, 2.0; reparam=:noncentered)
+    {:y} ~ normal(theta, 0.5)
+    return theta
+end
+
 @tea static function reparam_centered_model()
     mu ~ normal(0.0, 1.0)
     theta ~ normal(mu, 1.0; reparam=:centered)
@@ -84,18 +91,12 @@ end
     end
 
     @testset "reparam_honest_rejections" begin
-        # CPU semantics landed in PR-3 (see reparam_noncentered_cpu.jl); the
-        # batched/backend paths stay honestly rejected until PR-4
-        constraints = choicemap((:y, 0.4))
-        report = backend_report(reparam_flagged_model)
+        # normal lowers natively since PR-4; the other location-scale families
+        # stay honestly rejected pending their standardized backend steps
+        @test backend_report(reparam_flagged_model).supported == true
+        report = backend_report(reparam_studentt_flagged_model)
         @test report.supported == false
         @test any(occursin("reparam=:noncentered", issue) for issue in report.issues)
-        @test_throws ErrorException batched_logjoint_unconstrained(
-            reparam_flagged_model,
-            zeros(3, 2),
-            (),
-            constraints,
-        )
     end
 
     @testset "reparam_macro_validation" begin
