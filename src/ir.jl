@@ -69,6 +69,15 @@ struct LogitTransform <: AbstractParameterTransform end
 # slot holds the standardized z; the constrained value loc + scale * z is
 # materialized during the plan walk (PR-3), not by the slot transform pass.
 struct NoncenteredTransform <: AbstractParameterTransform end
+# iid vector variant: an n-wide slot of standardized z's (docs/noncentered-reparam.md, PR-6)
+struct VectorNoncenteredTransform <: AbstractParameterTransform
+    size::Int
+
+    function VectorNoncenteredTransform(size::Int)
+        size >= 1 || throw(ArgumentError("vector noncentered transform requires size >= 1"))
+        return new(size)
+    end
+end
 # Per-element unconstrained -> positive transform for `iid` latents over families
 # whose scalar transform is `LogTransform` (lognormal/exponential/gamma/...).
 struct VectorLogTransform <: AbstractParameterTransform
@@ -578,6 +587,11 @@ end
 function _parameter_transform(rhs::DistributionSpec)
     if rhs.reparam === :noncentered
         # family eligibility was validated at macro expansion
+        if rhs.family === :iid
+            size = _iid_static_size(rhs.arguments)
+            isnothing(size) && return nothing
+            return VectorNoncenteredTransform(size)
+        end
         return NoncenteredTransform()
     end
     if rhs.family === :normal || rhs.family === :laplace || rhs.family === :studentt
@@ -649,6 +663,7 @@ end
 
 _parameter_dimensions(::IdentityTransform) = (1, 1)
 _parameter_dimensions(::NoncenteredTransform) = (1, 1)
+_parameter_dimensions(transform::VectorNoncenteredTransform) = (transform.size, transform.size)
 _parameter_dimensions(transform::VectorIdentityTransform) = (transform.size, transform.size)
 _parameter_dimensions(::LogTransform) = (1, 1)
 _parameter_dimensions(::LogitTransform) = (1, 1)
