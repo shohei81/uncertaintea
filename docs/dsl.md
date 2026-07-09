@@ -354,6 +354,39 @@ Requirements:
   declaring a latent mixture with any other component family raises an
   `ArgumentError` at macro-expansion time.
 
+## Non-Centered Reparameterization
+
+Hierarchical location-scale latents can opt into the non-centered
+parameterization without changing how the model reads:
+
+```julia
+@tea (static) function eight_schools()
+    mu ~ normal(0.0, 5.0)
+    log_tau ~ normal(0.0, 1.5)
+    tau = exp(log_tau)
+    theta ~ iid(normal(mu, tau), 8; reparam=:noncentered)
+    for i in 1:8
+        {:y => i} ~ normal(theta[i], 10.0)
+    end
+    return mu
+end
+```
+
+- The NUTS/HMC parameter slot holds the standardized `z`; traces, choicemaps,
+  constrained samples, and summaries keep `theta` at its own address.
+- `generate`/`assess` semantics are unchanged (the runtime path stays
+  centered); only the sampler geometry changes -- on funnel-shaped posteriors
+  this removes the divergences that defeat the centered form.
+- Eligible: `normal`, `studentt`, `laplace` (real line), `lognormal`
+  (log-space affine), directly or as the base of an `iid` vector latent
+  (real-line bases only). The flag must sit on the top-level call of `~`.
+- `reparam=:auto` picks `:noncentered` whenever the location or scale is a
+  non-literal expression, `:centered` otherwise.
+- Scalar noncentered `normal` runs on the backend-native batched and device
+  paths; the other variants use the CPU reference path and are reported
+  honestly by `backend_report`/`device_lowering_report`.
+- See docs/noncentered-reparam.md for the staged design.
+
 ## User-Defined Distributions
 
 A distribution defined outside the package participates in `@tea` models on

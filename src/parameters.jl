@@ -297,7 +297,7 @@ function _transform_slot_to_constrained!(
     slot::ParameterSlotSpec,
     params::AbstractVector,
 )
-    slot.transform isa NoncenteredTransform && throw(
+    (slot.transform isa NoncenteredTransform || slot.transform isa VectorNoncenteredTransform) && throw(
         ErrorException(
             "reparam=:noncentered is accepted by the frontend but its dependent transforms " *
             "are not implemented yet (docs/noncentered-reparam.md, PR-3)",
@@ -361,7 +361,7 @@ function _transform_slot_to_unconstrained!(
     slot::ParameterSlotSpec,
     params::AbstractVector,
 )
-    slot.transform isa NoncenteredTransform && throw(
+    (slot.transform isa NoncenteredTransform || slot.transform isa VectorNoncenteredTransform) && throw(
         ErrorException(
             "reparam=:noncentered is accepted by the frontend but its dependent transforms " *
             "are not implemented yet (docs/noncentered-reparam.md, PR-3)",
@@ -423,8 +423,10 @@ function parameter_vector(trace::TeaTrace)
     return params
 end
 
-_has_dependent_transforms(layout::ParameterLayout) =
-    any(slot.transform isa NoncenteredTransform for slot in layout.slots)
+_has_dependent_transforms(layout::ParameterLayout) = any(
+    slot.transform isa NoncenteredTransform || slot.transform isa VectorNoncenteredTransform for
+    slot in layout.slots
+)
 
 function transform_to_constrained(model::TeaModel, params::AbstractVector, args::Tuple=())
     layout = parameterlayout(model)

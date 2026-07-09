@@ -78,6 +78,44 @@ end
     return theta
 end
 
+# eight-schools shape (weak observations): the issue #19 acceptance model
+@tea static function ncc_eight_schools_centered()
+    mu ~ normal(0.0, 5.0)
+    log_tau ~ normal(0.0, 1.5)
+    tau = exp(log_tau)
+    theta ~ iid(normal(mu, tau), 8)
+    for i = 1:8
+        {:y => i} ~ normal(theta[i], 10.0)
+    end
+    return mu
+end
+
+@tea static function ncc_eight_schools_flagged()
+    mu ~ normal(0.0, 5.0)
+    log_tau ~ normal(0.0, 1.5)
+    tau = exp(log_tau)
+    theta ~ iid(normal(mu, tau), 8; reparam=:noncentered)
+    for i = 1:8
+        {:y => i} ~ normal(theta[i], 10.0)
+    end
+    return mu
+end
+
+@tea static function ncc_lognormal_model()
+    mu ~ normal(0.0, 1.0)
+    theta ~ lognormal(mu, 0.7; reparam=:noncentered)
+    {:y} ~ normal(theta, 0.5)
+    return theta
+end
+
+@tea static function ncc_auto_model()
+    mu ~ normal(0.0, 1.0)
+    latent_loc ~ normal(mu, 2.0; reparam=:auto)
+    literal_args ~ normal(0.0, 1.0; reparam=:auto)
+    {:y} ~ normal(latent_loc + literal_args, 0.5)
+    return latent_loc
+end
+
 @testset "reparam_noncentered_cpu" begin
     ncc_constraints = choicemap((:y, 0.5))
 
@@ -305,6 +343,131 @@ end
             rng=MersenneTwister(7),
         )
         @test all(all(isfinite, chain.constrained_samples) for chain in device_nuts.chains)
+    end
+
+    @testset "ncc_iid_eight_schools" begin
+        eight_ys = [2.8, 0.8, -0.3, 0.7, -0.1, 0.1, 1.8, 1.2]
+        eight_constraints = choicemap([(:y => i, eight_ys[i]) for i = 1:8]...)
+
+        # z-space density identity (theta = mu .+ tau .* z)
+        z = [0.4, -0.7, 0.3, 1.1, -0.2, 0.6, -0.9, 0.5, 0.1, -0.4]
+        constrained = transform_to_constrained(ncc_eight_schools_flagged, z)
+        tau = exp(z[2])
+        expected_theta = z[1] .+ tau .* z[3:10]
+        @test constrained[3:10] ≈ expected_theta atol = 1e-12
+        @test transform_to_unconstrained(ncc_eight_schools_flagged, constrained) ≈ z atol = 1e-12
+        manual =
+            UncertainTea.logpdf(normal(0.0, 5.0), z[1]) +
+            UncertainTea.logpdf(normal(0.0, 1.5), z[2]) +
+            sum(UncertainTea.logpdf(normal(0.0, 1.0), z[2+i]) for i = 1:8) +
+            sum(UncertainTea.logpdf(normal(expected_theta[i], 10.0), eight_ys[i]) for i = 1:8)
+        @test logjoint_unconstrained(ncc_eight_schools_flagged, z, (), eight_constraints) ≈ manual atol = 1e-10
+
+        gradient = logjoint_gradient_unconstrained(ncc_eight_schools_flagged, z, (), eight_constraints)
+        step_size = cbrt(eps(Float64))
+        for i in eachindex(z)
+            up = copy(z)
+            up[i] += step_size
+            down = copy(z)
+            down[i] -= step_size
+            fd =
+                (
+                    logjoint_unconstrained(ncc_eight_schools_flagged, up, (), eight_constraints) -
+                    logjoint_unconstrained(ncc_eight_schools_flagged, down, (), eight_constraints)
+                ) / (2 * step_size)
+            @test gradient[i] ≈ fd atol = 1e-5
+        end
+
+        # acceptance: near-zero divergences vs the centered form
+        total_centered = 0.0
+        total_flagged = 0.0
+        for chain_seed = 1:4
+            centered = nuts(
+                ncc_eight_schools_centered,
+                (),
+                eight_constraints;
+                num_samples=250,
+                num_warmup=200,
+                rng=MersenneTwister(800 + chain_seed),
+            )
+            flagged = nuts(
+                ncc_eight_schools_flagged,
+                (),
+                eight_constraints;
+                num_samples=250,
+                num_warmup=200,
+                rng=MersenneTwister(800 + chain_seed),
+            )
+            total_centered += divergencerate(centered)
+            total_flagged += divergencerate(flagged)
+        end
+        @test total_flagged / 4 < 0.01
+        @test total_flagged < total_centered
+
+        # backend/device stay honest for the vector form...
+        @test backend_report(ncc_eight_schools_flagged).supported == false
+        # ...while the batched fallback routes through the dependent walk
+        # (codex review on PR-6): value/gradient parity and batched_nuts work
+        points = randn(MersenneTwister(31), 10, 2) .* 0.5
+        batched_values = batched_logjoint_unconstrained(ncc_eight_schools_flagged, points, (), eight_constraints)
+        reference_values =
+            [logjoint_unconstrained(ncc_eight_schools_flagged, points[:, i], (), eight_constraints) for i = 1:2]
+        @test batched_values ≈ reference_values atol = 1e-8
+        batched_gradients =
+            batched_logjoint_gradient_unconstrained(ncc_eight_schools_flagged, points, (), eight_constraints)
+        reference_gradients = hcat(
+            [
+                logjoint_gradient_unconstrained(ncc_eight_schools_flagged, points[:, i], (), eight_constraints) for
+                i = 1:2
+            ]...,
+        )
+        @test batched_gradients ≈ reference_gradients atol = 1e-8
+        batched_chains = batched_nuts(
+            ncc_eight_schools_flagged,
+            (),
+            eight_constraints;
+            num_chains=2,
+            num_samples=15,
+            num_warmup=15,
+            rng=MersenneTwister(32),
+        )
+        @test all(all(isfinite, chain.constrained_samples) for chain in batched_chains.chains)
+    end
+
+    @testset "ncc_lognormal_logspace" begin
+        z = [0.3, -0.6]
+        observation = choicemap((:y, 0.8))
+        constrained = transform_to_constrained(ncc_lognormal_model, z)
+        @test constrained[2] ≈ exp(0.3 + 0.7 * -0.6) atol = 1e-12
+        @test transform_to_unconstrained(ncc_lognormal_model, constrained) ≈ z atol = 1e-12
+        manual =
+            UncertainTea.logpdf(normal(0.0, 1.0), z[1]) +
+            UncertainTea.logpdf(normal(0.0, 1.0), z[2]) +
+            UncertainTea.logpdf(normal(constrained[2], 0.5), 0.8)
+        @test logjoint_unconstrained(ncc_lognormal_model, z, (), observation) ≈ manual atol = 1e-10
+        gradient = logjoint_gradient_unconstrained(ncc_lognormal_model, z, (), observation)
+        step_size = cbrt(eps(Float64))
+        for i = 1:2
+            up = copy(z)
+            up[i] += step_size
+            down = copy(z)
+            down[i] -= step_size
+            fd =
+                (
+                    logjoint_unconstrained(ncc_lognormal_model, up, (), observation) -
+                    logjoint_unconstrained(ncc_lognormal_model, down, (), observation)
+                ) / (2 * step_size)
+            @test gradient[i] ≈ fd atol = 1e-5
+        end
+    end
+
+    @testset "ncc_auto_resolution" begin
+        layout = parameterlayout(ncc_auto_model)
+        @test layout.slots[2].transform isa UncertainTea.NoncenteredTransform
+        @test layout.slots[3].transform isa IdentityTransform
+        trace, _ = generate(ncc_auto_model, (), choicemap((:y, 0.4)); rng=MersenneTwister(8))
+        unconstrained = transform_to_unconstrained(trace)
+        @test transform_to_constrained(ncc_auto_model, unconstrained) ≈ parameter_vector(trace) atol = 1e-12
     end
 
     @testset "ncc_sbc" begin

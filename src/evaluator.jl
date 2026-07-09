@@ -93,6 +93,14 @@ struct CompiledAddressSpec{P<:Tuple}
     parts::P
 end
 
+# reparam=:noncentered walk data: theta = location + scale * z, or
+# exp(location + scale * z) for the log-space (lognormal) variant.
+struct CompiledNoncentered
+    location::Any
+    scale::Any
+    logspace::Bool
+end
+
 struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCompiledPlanStep
     binding_slot::Union{Nothing,Int}
     address::AD
@@ -100,9 +108,9 @@ struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCom
     arguments::A
     parameter_value_indices::Union{Nothing,UnitRange{Int}}
     parameter_slot::Union{Nothing,Int}
-    # (location, scale) positions in `arguments` for reparam=:noncentered
+    # compiled location/scale (plus log-space flag) for reparam=:noncentered
     # latents; `nothing` for centered choices
-    noncentered_location_scale::Union{Nothing,Tuple{Int,Int}}
+    noncentered::Union{Nothing,CompiledNoncentered}
 end
 
 struct CompiledDeterministicPlanStep{E<:AbstractCompiledExpr} <: AbstractCompiledPlanStep
@@ -231,9 +239,25 @@ function _compile_plan_step(
     end
     parameter_value_indices =
         isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
-    noncentered_location_scale =
-        step.rhs isa DistributionSpec && step.rhs.reparam === :noncentered ?
-        _noncentered_location_scale_indices(step.rhs.family) : nothing
+    noncentered = nothing
+    if step.rhs isa DistributionSpec && step.rhs.reparam === :noncentered
+        if step.rhs.family === :iid
+            base = step.rhs.arguments[1]
+            location_index, scale_index = _noncentered_location_scale_indices(base.args[1])
+            noncentered = CompiledNoncentered(
+                _compile_plan_expr(model, layout, base.args[location_index+1]),
+                _compile_plan_expr(model, layout, base.args[scale_index+1]),
+                base.args[1] === :lognormal,
+            )
+        else
+            location_index, scale_index = _noncentered_location_scale_indices(step.rhs.family)
+            noncentered = CompiledNoncentered(
+                arguments[location_index],
+                arguments[scale_index],
+                step.rhs.family === :lognormal,
+            )
+        end
+    end
     return CompiledChoicePlanStep(
         step.binding_slot,
         _compile_address(layout, model, step.address),
@@ -241,7 +265,7 @@ function _compile_plan_step(
         arguments,
         parameter_value_indices,
         step.parameter_slot,
-        noncentered_location_scale,
+        noncentered,
     )
 end
 
@@ -526,7 +550,7 @@ function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, l
         return zero(eltype(destination))
     end
     slot = layout.slots[step.parameter_slot]
-    if isnothing(step.noncentered_location_scale)
+    if isnothing(step.noncentered)
         if inverse
             _transform_slot_to_unconstrained!(destination, slot, params)
             value = _parameter_slot_value(parametervalueindices(slot), params)
@@ -539,9 +563,8 @@ function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, l
         return logabsdet
     end
 
-    location_index, scale_index = step.noncentered_location_scale
-    location = _walk_transform_eval(env, step.arguments[location_index])
-    scale = _walk_transform_eval(env, step.arguments[scale_index])
+    location = _walk_transform_eval(env, step.noncentered.location)
+    scale = _walk_transform_eval(env, step.noncentered.scale)
     (location isa _TransformUnknownValue || scale isa _TransformUnknownValue) &&
         throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
     (location isa Real && scale isa Real && isfinite(location) && isfinite(scale)) || throw(
@@ -550,16 +573,26 @@ function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, l
             "location=$location, scale=$scale for the choice bound to :$(slot.binding)",
         ),
     )
+    logspace = step.noncentered.logspace
     if inverse
-        constrained_value = params[slot.value_index]
-        destination[slot.index] = (constrained_value - location) / scale
-        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
+        for (parameter_index, value_index) in zip(parameterindices(slot), parametervalueindices(slot))
+            constrained_value = params[value_index]
+            unconstrained_value = logspace ? log(constrained_value) : constrained_value
+            destination[parameter_index] = (unconstrained_value - location) / scale
+        end
+        value = _parameter_slot_value(parametervalueindices(slot), params)
+        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
         return zero(eltype(destination))
     end
-    constrained_value = location + scale * params[slot.index]
-    destination[slot.value_index] = constrained_value
-    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
-    return log(scale)
+    logabsdet = zero(eltype(destination))
+    for (parameter_index, value_index) in zip(parameterindices(slot), parametervalueindices(slot))
+        affine = location + scale * params[parameter_index]
+        destination[value_index] = logspace ? exp(affine) : affine
+        logabsdet += log(scale) + (logspace ? affine : zero(affine))
+    end
+    value = _parameter_slot_value(parametervalueindices(slot), destination)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return logabsdet
 end
 
 struct LogjointGradientCache{F,C,V}

@@ -184,7 +184,21 @@ function _choice_spec_expr(expr, loop_scopes, binding_override=nothing)
     return :($(_qualify(:ChoiceSpec))($binding, $address, $rhs_spec, $scopes_expr))
 end
 
-const _REPARAM_ELIGIBLE_FAMILIES = (:normal, :studentt, :laplace)
+const _REPARAM_ELIGIBLE_FAMILIES = (:normal, :studentt, :laplace, :lognormal)
+
+_reparam_location_scale_positions(family::Symbol) = family === :studentt ? (2, 3) : (1, 2)
+
+# reparam=:auto resolves at macro expansion: noncentered when the location or
+# scale argument is a non-literal expression (it may reference other latents,
+# which is the funnel-geometry case; a plain model-argument reference also
+# resolves noncentered, which is harmless -- both parameterizations are exact).
+function _resolve_auto_reparam(family::Symbol, positional)
+    location_index, scale_index = _reparam_location_scale_positions(family)
+    length(positional) >= scale_index || return :centered
+    location = positional[location_index]
+    scale = positional[scale_index]
+    return (location isa Number && scale isa Number) ? :centered : :noncentered
+end
 
 # The flag is only meaningful on the top-level distribution of a `~`; nested
 # occurrences (e.g. inside a mixture component) would otherwise diverge
@@ -206,8 +220,7 @@ end
 # normalized call plus the flag, so macro-time consumers (the parameter
 # layout pre-pass) see the same positional arguments as the emitted spec.
 function _normalized_rhs_call(rhs)
-    (rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] !== :iid) ||
-        return rhs, :centered
+    (rhs isa Expr && rhs.head == :call && !isempty(rhs.args)) || return rhs, :centered
     positional, reparam = _split_rhs_keywords(rhs)
     return Expr(:call, rhs.args[1], positional...), reparam
 end
@@ -228,9 +241,9 @@ function _split_rhs_keywords(rhs::Expr)
                 ),
             )
             value = kw.args[2]
-            (value isa QuoteNode && value.value in (:centered, :noncentered)) || throw(
+            (value isa QuoteNode && value.value in (:centered, :noncentered, :auto)) || throw(
                 ArgumentError(
-                    "reparam must be the literal :centered or :noncentered, got `$(value)` in `$rhs`",
+                    "reparam must be the literal :centered, :noncentered, or :auto, got `$(value)` in `$rhs`",
                 ),
             )
             reparam = value.value
@@ -246,15 +259,34 @@ function _split_rhs_keywords(rhs::Expr)
             push!(positional, arg)
         end
     end
-    if reparam === :noncentered && !(callee in _REPARAM_ELIGIBLE_FAMILIES)
-        throw(
+    if reparam !== :centered
+        eligible =
+            callee in _REPARAM_ELIGIBLE_FAMILIES ||
+            (callee === :iid && _iid_reparam_base_eligible(positional))
+        eligible || throw(
             ArgumentError(
-                "reparam=:noncentered supports the location-scale families " *
-                "$(_REPARAM_ELIGIBLE_FAMILIES), got `$callee`",
+                "reparam=$(QuoteNode(reparam)) supports the location-scale families " *
+                "$(_REPARAM_ELIGIBLE_FAMILIES) (directly or as an iid base), got `$callee`",
             ),
         )
     end
+    if reparam === :auto
+        if callee === :iid
+            base = positional[1]
+            reparam = _resolve_auto_reparam(base.args[1], base.args[2:end])
+        else
+            reparam = _resolve_auto_reparam(callee, positional)
+        end
+    end
     return positional, reparam
+end
+
+function _iid_reparam_base_eligible(positional)
+    isempty(positional) && return false
+    base = positional[1]
+    base isa Expr && base.head == :call && !isempty(base.args) || return false
+    # log-space vector form is not implemented yet; real-line families only
+    return base.args[1] in (:normal, :studentt, :laplace)
 end
 
 # Drop `reparam=` keywords from a distribution call in the rewritten runtime
@@ -288,24 +320,22 @@ function _rhs_spec_expr(rhs)
     end
 
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :iid
-        any(
-            arg isa Expr && arg.head in (:parameters, :kw) for
-            arg in Iterators.flatten((rhs.args, (b for a in rhs.args if a isa Expr for b in a.args)))
-        ) && throw(
-            ArgumentError(
-                "keyword arguments (including reparam=) are not supported on iid latents yet: `$rhs`",
-            ),
-        )
-        length(rhs.args) == 3 ||
+        iid_positional, iid_reparam = _split_rhs_keywords(rhs)
+        length(iid_positional) == 2 ||
             throw(ArgumentError("iid expects `iid(distribution_call, n)`"))
-        base = rhs.args[2]
-        n = rhs.args[3]
+        base = iid_positional[1]
+        n = iid_positional[2]
         n isa Integer ||
             throw(ArgumentError("iid requires a literal Int count `n`, got `$(n)`"))
         (base isa Expr && base.head == :call && !isempty(base.args) && base.args[1] isa Symbol) ||
             throw(ArgumentError("iid first argument must be a distribution constructor call"))
         arguments = Expr(:vect, QuoteNode(base), QuoteNode(n))
-        return :($(_qualify(:DistributionSpec))($(QuoteNode(:iid)), $arguments))
+        return :($(_qualify(:DistributionSpec))(
+            $(QuoteNode(:iid)),
+            $arguments,
+            nothing,
+            $(QuoteNode(iid_reparam)),
+        ))
     end
 
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args)
@@ -482,7 +512,12 @@ function _parameter_layout_sizes(rhs)
 end
 
 function _parameter_transform_expr(rhs, reparam::Symbol=:centered)
-    reparam === :noncentered && return :($(_qualify(:NoncenteredTransform))())
+    if reparam === :noncentered
+        if rhs isa Expr && rhs.head == :call && rhs.args[1] === :iid
+            return :($(_qualify(:VectorNoncenteredTransform))($(rhs.args[3])))
+        end
+        return :($(_qualify(:NoncenteredTransform))())
+    end
     family = _supported_distribution_family(rhs)
     isnothing(family) && throw(ArgumentError("unsupported parameter transform for $rhs"))
 

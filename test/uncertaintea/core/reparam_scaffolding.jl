@@ -116,9 +116,9 @@ end
             x ~ gamma(2.0, 2.0; reparam=:noncentered)
             return x
         end
-        # iid latents are planned but not supported yet
-        @test_throws LoadError @eval @tea static function reparam_iid_model()
-            x ~ iid(normal(0.0, 1.0), 4; reparam=:noncentered)
+        # iid base families outside the eligible set are rejected
+        @test_throws LoadError @eval @tea static function reparam_iid_bad_base_model()
+            x ~ iid(gamma(2.0, 2.0), 4; reparam=:noncentered)
             return x
         end
         # nested reparam (e.g. on a mixture component) would diverge between
