@@ -47,6 +47,7 @@ core_test_files = [
     ("per_chain_warmup_batched.jl", "inference"),
     ("dense_mass_matrix_single_chain.jl", "inference"),
     ("masked_batched_nuts.jl", "inference"),
+    ("sbc_calibration.jl", "inference"),
 ]
 
 let registered = Set(first.(core_test_files)), on_disk = Set(f for f in readdir(joinpath(@__DIR__, "core")) if endswith(f, ".jl"))
