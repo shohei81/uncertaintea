@@ -186,6 +186,32 @@ end
 
 const _REPARAM_ELIGIBLE_FAMILIES = (:normal, :studentt, :laplace)
 
+# The flag is only meaningful on the top-level distribution of a `~`; nested
+# occurrences (e.g. inside a mixture component) would otherwise diverge
+# between the runtime body (keyword stripped) and the static spec.
+function _reject_nested_reparam(expr)
+    expr isa Expr || return nothing
+    if expr.head == :kw && expr.args[1] === :reparam
+        throw(
+            ArgumentError(
+                "reparam= is only supported on the top-level distribution call of `~`, found it nested in `$expr`",
+            ),
+        )
+    end
+    foreach(_reject_nested_reparam, expr.args)
+    return nothing
+end
+
+# Strip `reparam=` keywords from a distribution-call RHS and return the
+# normalized call plus the flag, so macro-time consumers (the parameter
+# layout pre-pass) see the same positional arguments as the emitted spec.
+function _normalized_rhs_call(rhs)
+    (rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] !== :iid) ||
+        return rhs, :centered
+    positional, reparam = _split_rhs_keywords(rhs)
+    return Expr(:call, rhs.args[1], positional...), reparam
+end
+
 # Split the keyword arguments off a `~` distribution call. Only
 # `reparam=:centered|:noncentered` is recognized; any other keyword is a
 # macro-time error (previously keywords were silently spliced into the
@@ -197,7 +223,7 @@ function _split_rhs_keywords(rhs::Expr)
     handle_kw =
         kw -> begin
             (kw isa Expr && kw.head == :kw && kw.args[1] === :reparam) || throw(
-                ArgumentError(
+                ArgumentError(  # also fires for generative (submodel) calls, which never supported keywords
                     "unsupported keyword argument in `~` distribution call `$rhs`; only `reparam=` is recognized",
                 ),
             )
@@ -216,6 +242,7 @@ function _split_rhs_keywords(rhs::Expr)
         elseif arg isa Expr && arg.head == :kw
             handle_kw(arg)
         else
+            _reject_nested_reparam(arg)
             push!(positional, arg)
         end
     end
@@ -338,9 +365,10 @@ function _parameter_layout_expr(choice_nodes)
         rhs = choice_expr.args[3]
         binding_symbol = isnothing(binding_override) ? (lhs isa Symbol ? lhs : nothing) : binding_override
 
+        rhs, reparam = _normalized_rhs_call(rhs)
         if !isnothing(binding_symbol) && isempty(loop_scopes) && _supports_parameter_slot(rhs)
             address = _address_spec_expr(lhs)
-            transform = _parameter_transform_expr(rhs)
+            transform = _parameter_transform_expr(rhs, reparam)
             parameter_dimension, value_length = _parameter_layout_sizes(rhs)
             push!(
                 slot_exprs,
@@ -453,7 +481,8 @@ function _parameter_layout_sizes(rhs)
     return 1, 1
 end
 
-function _parameter_transform_expr(rhs)
+function _parameter_transform_expr(rhs, reparam::Symbol=:centered)
+    reparam === :noncentered && return :($(_qualify(:NoncenteredTransform))())
     family = _supported_distribution_family(rhs)
     isnothing(family) && throw(ArgumentError("unsupported parameter transform for $rhs"))
 

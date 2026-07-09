@@ -19,6 +19,14 @@ end
     return theta
 end
 
+# an explicit :centered flag must behave exactly like no flag even for
+# families whose macro-time layout pass inspects the positional arguments
+@tea static function reparam_centered_truncated_model()
+    x ~ truncatednormal(0.0, 1.0, -1.0, 2.0; reparam=:centered)
+    {:y} ~ normal(x, 0.5)
+    return x
+end
+
 @testset "reparam_scaffolding" begin
     @testset "reparam_spec_and_layout" begin
         spec = modelspec(reparam_flagged_model)
@@ -38,6 +46,21 @@ end
         constraints = choicemap((:y, 0.4))
         trace, _ = generate(reparam_centered_model, (), constraints; rng=MersenneTwister(2))
         @test isfinite(logjoint_unconstrained(reparam_centered_model, transform_to_unconstrained(trace), (), constraints))
+
+        # ... including for families whose layout pass reads positional
+        # arguments (static truncation bounds)
+        truncated_layout = parameterlayout(reparam_centered_truncated_model)
+        @test truncated_layout.slots[1].transform isa BoundedTransform
+        truncated_trace, _ =
+            generate(reparam_centered_truncated_model, (), constraints; rng=MersenneTwister(3))
+        @test isfinite(
+            logjoint_unconstrained(
+                reparam_centered_truncated_model,
+                transform_to_unconstrained(truncated_trace),
+                (),
+                constraints,
+            ),
+        )
     end
 
     @testset "reparam_runtime_path_stays_centered" begin
@@ -92,6 +115,12 @@ end
         # iid latents are planned but not supported yet
         @test_throws LoadError @eval @tea static function reparam_iid_model()
             x ~ iid(normal(0.0, 1.0), 4; reparam=:noncentered)
+            return x
+        end
+        # nested reparam (e.g. on a mixture component) would diverge between
+        # the runtime body and the static spec
+        @test_throws LoadError @eval @tea static function reparam_nested_model()
+            x ~ mixture((0.5, 0.5), normal(0.0, 1.0; reparam=:noncentered), normal(2.0, 1.0))
             return x
         end
         # observation-shaped site gets no parameter slot
