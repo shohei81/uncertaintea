@@ -1,5 +1,6 @@
 include("api_single_chain.jl")
 include("api_multichain.jl")
-include("api_batched.jl")
+include("api_batched_nuts.jl")
+include("api_batched_hmc.jl")
 include("vi.jl")
 include("smc.jl")
