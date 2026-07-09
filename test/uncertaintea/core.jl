@@ -32,6 +32,7 @@ core_test_files = [
     ("device_gradient_dual.jl", "backend-device"),
     ("device_hmc_advi.jl", "backend-device"),
     ("device_masked_nuts.jl", "backend-device"),
+    ("gradient_crosscheck.jl", "crosscheck"),
     ("batched_advi_particle.jl", "inference"),
     ("tempered_batched_smc.jl", "inference"),
     ("proposal_diagnostics_overflow.jl", "inference"),
@@ -59,7 +60,7 @@ let registered = Set(first.(core_test_files)),
 end
 
 test_group = get(ENV, "UNCERTAINTEA_TEST_GROUP", "all")
-known_test_groups = ("all", "dsl", "dist", "backend-device", "inference")
+known_test_groups = ("all", "dsl", "dist", "backend-device", "inference", "crosscheck")
 test_group in known_test_groups ||
     error("Unknown UNCERTAINTEA_TEST_GROUP=\"$test_group\"; expected one of $known_test_groups")
 
