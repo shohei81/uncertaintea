@@ -191,3 +191,45 @@ end
     @test g_a2 == g_a
     @test v_a2 == v_a
 end
+
+# issue #38 regression: model arguments stage into the device slot storage
+@tea static function devg_argument_model(offset)
+    tau ~ lognormal(0.0, 0.5)
+    theta ~ normal(offset, tau)
+    {:y} ~ normal(theta, 0.5)
+    return theta
+end
+
+@testset "devg_argument_staging" begin
+    constraints = choicemap((:y, 0.4))
+    points = [0.2 -0.3; 0.7 0.1]
+    values, gradients = device_batched_logjoint_gradient(
+        devg_argument_model,
+        points,
+        (2.5,),
+        constraints;
+    )
+    @test collect(values) ≈
+          [logjoint_unconstrained(devg_argument_model, points[:, i], (2.5,), constraints) for i = 1:2] atol = 1e-10
+    @test collect(gradients) ≈ hcat(
+        [logjoint_gradient_unconstrained(devg_argument_model, points[:, i], (2.5,), constraints) for i = 1:2]...,
+    ) atol = 1e-10
+
+    # per-chain argument tuples stage per column
+    batch_args = [(1.0,), (3.0,)]
+    batch_values, batch_gradients = device_batched_logjoint_gradient(
+        devg_argument_model,
+        points,
+        batch_args,
+        constraints;
+    )
+    @test collect(batch_values) ≈
+          [logjoint_unconstrained(devg_argument_model, points[:, i], batch_args[i], constraints) for i = 1:2] atol =
+        1e-10
+    @test collect(batch_gradients) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(devg_argument_model, points[:, i], batch_args[i], constraints) for
+            i = 1:2
+        ]...,
+    ) atol = 1e-10
+end

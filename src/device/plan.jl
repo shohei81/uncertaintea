@@ -502,11 +502,6 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         return issues, nothing
     end
 
-    argument_slots = BitSet(executionplan(model).environment_layout.argument_slots)
-    if !_device_steps_argument_free!(issues, out, argument_slots)
-        return issues, nothing
-    end
-
     slot_count = length(executionplan(model).environment_layout.symbols)
     steps = tuple(out...)
     plan = DeviceExecutionPlan{T}(steps, slot_count, loop_counter[])
@@ -520,40 +515,6 @@ Reports whether `model` can be lowered to the device (KernelAbstractions) logjoi
 path. `issues` is empty iff `supported` is `true`; otherwise each entry is a precise
 explanation of what is not representable.
 """
-# Device kernels never receive model-argument values (issue #38): only
-# choice bindings and deterministic steps write slot storage. Until argument
-# staging exists, reject any choice-step distribution expression that
-# references an argument slot; loop bounds are excluded (they work today).
-_device_expr_uses_slot(expr::DeviceLiteralExpr, slots) = false
-_device_expr_uses_slot(expr::DeviceSlotExpr, slots) = expr.slot in slots
-_device_expr_uses_slot(expr::DevicePrimitiveExpr, slots) =
-    any(_device_expr_uses_slot(arg, slots) for arg in expr.arguments)
-_device_expr_uses_slot(expr, slots) = false
-
-function _device_steps_argument_free!(issues::Vector{String}, steps, argument_slots)
-    isempty(argument_slots) && return true
-    ok = true
-    for step in steps
-        if step isa AbstractDeviceChoiceStep
-            for field in fieldnames(typeof(step))
-                value = getfield(step, field)
-                if value isa AbstractDeviceExpr && _device_expr_uses_slot(value, argument_slots)
-                    _device_issue!(
-                        issues,
-                        "device lowering does not support model-argument-referencing distribution " *
-                        "expressions yet (issue #38)",
-                    )
-                    ok = false
-                    break
-                end
-            end
-        elseif hasproperty(step, :body)
-            ok &= _device_steps_argument_free!(issues, step.body, argument_slots)
-        end
-    end
-    return ok
-end
-
 function device_lowering_report(model::TeaModel; precision::Type=Float64)
     issues, plan = _lower_device_plan(model, precision)
     return (isempty(issues) && !isnothing(plan), issues)

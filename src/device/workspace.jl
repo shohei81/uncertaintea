@@ -47,6 +47,9 @@ mutable struct DeviceBatchedWorkspace{T,B<:KernelAbstractions.Backend,P<:DeviceE
     totals_device::Any
     trip_counts_device::Any
     loop_starts_device::Any
+    # model arguments, kept for staging into the lazily allocated gradient
+    # slot scratch (issue #38)
+    args::Any
     # Gradient buffers (allocated lazily on the first gradient call). `grad_slots_device`
     # is a `DeviceDual{T}` scratch laid out (slot_count x parameter_count x batch).
     gradients_device::Any
@@ -74,6 +77,7 @@ function DeviceBatchedWorkspace(
 
     params_device = KernelAbstractions.allocate(backend, T, parameter_count, batch_size)
     slots_device = KernelAbstractions.allocate(backend, T, slot_count, batch_size)
+    _device_stage_arguments!(slots_device, model, args, batch_size, T)
     observed_device = KernelAbstractions.allocate(backend, T, size(bundle.observed, 1), batch_size)
     copyto!(observed_device, bundle.observed)
     totals_device = KernelAbstractions.allocate(backend, T, batch_size)
@@ -95,6 +99,7 @@ function DeviceBatchedWorkspace(
         totals_device,
         trip_counts_device,
         loop_starts_device,
+        args,
         nothing,
         nothing,
     )
@@ -117,6 +122,68 @@ function _device_ensure_gradient_buffers!(workspace::DeviceBatchedWorkspace{T}) 
             workspace.parameter_count,
             workspace.batch_size,
         )
+        _device_stage_gradient_arguments!(
+            workspace.grad_slots_device,
+            workspace.model,
+            workspace.args,
+            workspace.parameter_count,
+            workspace.batch_size,
+            T,
+        )
+    end
+    return nothing
+end
+
+# Kernels never write argument slots, so staging their values once covers
+# every launch (issue #38). Non-Real arguments are skipped: expressions
+# referencing them are not device-lowerable in the first place, and integer
+# loop bounds are consumed host-side through the trip-count staging.
+function _device_stage_arguments!(slots_device, model::TeaModel, args, batch_size::Int, ::Type{T}) where {T}
+    argument_slots = executionplan(model).environment_layout.argument_slots
+    isempty(argument_slots) && return nothing
+    staged = Matrix{T}(undef, 1, batch_size)
+    for (argument_index, slot) in enumerate(argument_slots)
+        if args isa Tuple
+            value = args[argument_index]
+            value isa Real || continue
+            fill!(staged, convert(T, value))
+        else
+            all(args[batch_index][argument_index] isa Real for batch_index = 1:batch_size) || continue
+            for batch_index = 1:batch_size
+                staged[1, batch_index] = convert(T, args[batch_index][argument_index])
+            end
+        end
+        copyto!(view(slots_device, slot:slot, :), staged)
+    end
+    return nothing
+end
+
+function _device_stage_gradient_arguments!(
+    grad_slots_device,
+    model::TeaModel,
+    args,
+    parameter_count::Int,
+    batch_size::Int,
+    ::Type{T},
+) where {T}
+    argument_slots = executionplan(model).environment_layout.argument_slots
+    isempty(argument_slots) && return nothing
+    staged = Array{DeviceDual{T}}(undef, 1, parameter_count, batch_size)
+    for (argument_index, slot) in enumerate(argument_slots)
+        if args isa Tuple
+            value = args[argument_index]
+            value isa Real || continue
+            fill!(staged, DeviceDual{T}(convert(T, value), zero(T)))
+        else
+            all(args[batch_index][argument_index] isa Real for batch_index = 1:batch_size) || continue
+            for batch_index = 1:batch_size
+                dual = DeviceDual{T}(convert(T, args[batch_index][argument_index]), zero(T))
+                for parameter_index = 1:parameter_count
+                    staged[1, parameter_index, batch_index] = dual
+                end
+            end
+        end
+        copyto!(view(grad_slots_device, slot:slot, :, :), staged)
     end
     return nothing
 end
