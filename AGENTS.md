@@ -44,6 +44,8 @@ Before making changes, read these files:
 - Prefer backend-agnostic interfaces with backend-specific implementations
 - Keep large subsystems split across focused source files; do not regrow monolithic files like `src/inference.jl`
 - Aim to keep individual source and test files under roughly 1000 lines
+- Formatting is enforced by JuliaFormatter (.JuliaFormatter.toml, pinned in CI);
+  run `julia -e 'using JuliaFormatter; format(".")'` before committing
 - Default to ASCII unless an existing file clearly requires otherwise
 - Keep comments sparse and factual
 
