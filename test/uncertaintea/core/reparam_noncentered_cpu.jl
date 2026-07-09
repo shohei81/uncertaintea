@@ -245,6 +245,14 @@ end
         @test all(all(isfinite, chain.constrained_samples) for chain in batched.chains)
     end
 
+    @testset "ncc_backend_guards" begin
+        # a noncentered location fed by a slotless (discrete) latent is
+        # rejected at lowering, matching the CPU transform
+        report = backend_report(ncc_slotless_dependent_model)
+        @test report.supported == false
+        @test any(occursin("without a parameter slot", issue) for issue in report.issues)
+    end
+
     @testset "ncc_sbc" begin
         result = sbc(
             ncc_sbc_model;

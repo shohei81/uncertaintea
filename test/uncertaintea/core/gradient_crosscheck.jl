@@ -256,6 +256,15 @@
         return state
     end
 
+    # vector latent followed by a scalar latent: the slot ordinal and the
+    # constrained-matrix row differ, the exact gap of issue #36
+    @tea static function gxc_mvnormal_then_scalar()
+        w ~ mvnormal([0.0f0, 1.0f0], [1.5f0, 0.8f0])
+        s ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(s, 0.5f0)
+        return s
+    end
+
     @tea static function gxc_mvnormal_obs()
         m ~ normal(0.0f0, 1.0f0)
         {:y} ~ mvnormal([m, m], [1.0f0, 0.8f0])
@@ -349,6 +358,7 @@
         :mvnormal => [
             (gxc_mvnormal_latent, (), choicemap()),
             (gxc_mvnormal_obs, (), choicemap((:y, Float32[0.4, -0.2]))),
+            (gxc_mvnormal_then_scalar, (), choicemap((:y, 0.4f0))),
         ],
         :truncatednormal => [
             (gxc_truncatednormal_obs, (), choicemap((:y, 0.9f0))),

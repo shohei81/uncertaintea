@@ -273,9 +273,13 @@ function _score_backend_step!(
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
     for batch_index = 1:env.batch_size
         z = choice_values[batch_index]
+        sigma = sigma_values[batch_index]
+        (isfinite(sigma) && sigma > 0) || throw(
+            BatchedBackendFallback("noncentered normal requires a finite positive scale, got $sigma"),
+        )
         totals[batch_index] += _backend_normal_logpdf(zero(z), one(z), z)
         if !isnothing(step.binding_slot)
-            theta = mu_values[batch_index] + sigma_values[batch_index] * z
+            theta = mu_values[batch_index] + sigma * z
             env.numeric_slots[step.binding_slot] || throw(
                 BatchedBackendFallback(
                     "noncentered normal binding slot $(step.binding_slot) must be numeric",

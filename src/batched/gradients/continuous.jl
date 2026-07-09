@@ -319,8 +319,12 @@ function _score_backend_step_and_gradient!(
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 6)
     for batch_index in eachindex(totals)
         z = z_values[batch_index]
+        sigma = sigma_values[batch_index]
+        (isfinite(sigma) && sigma > 0) || throw(
+            BatchedBackendFallback("noncentered normal requires a finite positive scale, got $sigma"),
+        )
         totals[batch_index] += _backend_normal_logpdf(zero(z), one(z), z)
-        theta_values[batch_index] = mu_values[batch_index] + sigma_values[batch_index] * z
+        theta_values[batch_index] = mu_values[batch_index] + sigma * z
     end
     # d logpdf(N(0,1), z)/dz = -z through the slot seed of z
     for batch_index in eachindex(totals), parameter_index in axes(gradients, 1)

@@ -78,7 +78,7 @@ function _backend_lower_truncatednormal_choice_step(
         sigma,
         lower,
         upper,
-        step.parameter_slot,
+        _backend_scalar_parameter_row(model, step.parameter_slot, issues)[1],
     )
 end
 
@@ -127,7 +127,7 @@ function _backend_lower_truncatedstudentt_choice_step(
         sigma,
         lower,
         upper,
-        step.parameter_slot,
+        _backend_scalar_parameter_row(model, step.parameter_slot, issues)[1],
     )
 end
 
