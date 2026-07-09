@@ -31,6 +31,10 @@ function _backend_gradient_supported_step(step::BackendNormalChoicePlanStep)
     return _backend_gradient_supported_expr(step.mu) && _backend_gradient_supported_expr(step.sigma)
 end
 
+function _backend_gradient_supported_step(step::BackendNoncenteredNormalChoicePlanStep)
+    return _backend_gradient_supported_expr(step.mu) && _backend_gradient_supported_expr(step.sigma)
+end
+
 function _backend_gradient_supported_step(step::BackendLaplaceChoicePlanStep)
     return _backend_gradient_supported_expr(step.mu) && _backend_gradient_supported_expr(step.scale)
 end
@@ -161,6 +165,8 @@ function _backend_gradient_supported_step(step::BackendLoopPlanStep, numeric_slo
 end
 
 _backend_gradient_supported_step(step::BackendNormalChoicePlanStep, numeric_slots::BitVector) =
+    _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendNoncenteredNormalChoicePlanStep, numeric_slots::BitVector) =
     _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendLaplaceChoicePlanStep, numeric_slots::BitVector) =
     _backend_gradient_supported_step(step)

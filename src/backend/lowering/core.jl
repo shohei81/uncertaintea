@@ -267,8 +267,11 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
         return nothing
     end
-    step.rhs.reparam === :noncentered && begin
-        _backend_issue!(issues, "reparam=:noncentered is not lowered yet (docs/noncentered-reparam.md, PR-4)")
+    if step.rhs.reparam === :noncentered && step.rhs.family !== :normal
+        _backend_issue!(
+            issues,
+            "reparam=:noncentered is lowered for normal only; $(step.rhs.family) is pending (docs/noncentered-reparam.md)",
+        )
         return nothing
     end
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
@@ -286,6 +289,13 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
             _backend_issue!(issues, "normal expects exactly 2 backend arguments")
             return nothing
         end
+        step.rhs.reparam === :noncentered && return BackendNoncenteredNormalChoicePlanStep(
+            step.binding_slot,
+            address,
+            arguments[1],
+            arguments[2],
+            step.parameter_slot,
+        )
         return BackendNormalChoicePlanStep(step.binding_slot, address, arguments[1], arguments[2], step.parameter_slot)
     elseif step.rhs.family === :laplace
         length(arguments) == 2 || begin

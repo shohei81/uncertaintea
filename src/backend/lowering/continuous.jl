@@ -33,6 +33,19 @@ struct BackendNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr
     parameter_slot::Union{Nothing,Int}
 end
 
+# reparam=:noncentered normal latent: the raw slot value is the standardized
+# z scored against N(0, 1); the binding materializes theta = mu + sigma * z,
+# so downstream expressions and slot gradients flow through the affine form
+# (docs/noncentered-reparam.md, PR-4).
+struct BackendNoncenteredNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
+       BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    mu::M
+    sigma::S
+    parameter_slot::Union{Nothing,Int}
+end
+
 struct BackendLognormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
        BackendChoicePlanStep
     binding_slot::Union{Nothing,Int}
@@ -83,6 +96,19 @@ end
 
 function _collect_backend_slot_kinds!(
     step::BackendNormalChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
+    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendNoncenteredNormalChoicePlanStep,
     numeric_slots::BitVector,
     index_slots::BitVector,
     generic_slots::BitVector,

@@ -84,6 +84,17 @@
         return a
     end
 
+    # reparam=:noncentered lowers to the z-space backend step (PR-4 of
+    # docs/noncentered-reparam.md); the cross-check exercises its analytic
+    # gradient against finite differences like any other family entry
+    @tea static function gxc_normal_noncentered()
+        a ~ normal(0.0f0, 1.0f0)
+        s ~ normal(0.0f0, 0.3f0)
+        theta ~ normal(a, exp(s); reparam=:noncentered)
+        {:y} ~ normal(theta, 0.5f0)
+        return theta
+    end
+
     @tea static function gxc_lognormal_obs()
         a ~ normal(0.0f0, 1.0f0)
         s ~ normal(0.0f0, 0.3f0)
@@ -292,7 +303,10 @@
     # family => [(model, args, constraints), ...]; every registry family must
     # have an entry (enforced below).
     gxc_models = Dict(
-        :normal => [(gxc_normal_obs, (), choicemap((:y, 0.4f0)))],
+        :normal => [
+            (gxc_normal_obs, (), choicemap((:y, 0.4f0))),
+            (gxc_normal_noncentered, (), choicemap((:y, 0.4f0))),
+        ],
         :lognormal => [
             (gxc_lognormal_obs, (), choicemap((:y, 1.3f0))),
             (gxc_lognormal_latent, (), choicemap((:y, 1.1f0))),
