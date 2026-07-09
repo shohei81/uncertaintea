@@ -41,16 +41,30 @@ end
 
 _chisq_ccdf(dof::Int, x::Real) = gamma_inc(dof / 2, x / 2)[2]
 
-# Chi-squared uniformity p-value for one parameter's rank statistics, binning
-# the L+1 possible ranks into num_bins equal-width bins.
+_sbc_bin(rank::Int, num_bins::Int, num_posterior_draws::Int) =
+    min(num_bins, fld(rank * num_bins, num_posterior_draws + 1) + 1)
+
+# Chi-squared uniformity p-value for one parameter's rank statistics. The L+1
+# possible ranks are binned equal-width, but when num_bins does not divide
+# L+1 the bins hold different numbers of possible ranks, so each bin's
+# expected count is proportional to the ranks it can receive (a uniform
+# expected count would false-alarm on perfectly calibrated ranks).
 function _sbc_uniformity_pvalue(ranks::AbstractVector{Int}, num_posterior_draws::Int, num_bins::Int)
+    num_bins = min(num_bins, num_posterior_draws + 1)
+    possible = zeros(Int, num_bins)
+    for rank = 0:num_posterior_draws
+        possible[_sbc_bin(rank, num_bins, num_posterior_draws)] += 1
+    end
     counts = zeros(Int, num_bins)
     for rank in ranks
-        bin = min(num_bins, fld(rank * num_bins, num_posterior_draws + 1) + 1)
-        counts[bin] += 1
+        counts[_sbc_bin(rank, num_bins, num_posterior_draws)] += 1
     end
-    expected = length(ranks) / num_bins
-    statistic = sum((count - expected)^2 / expected for count in counts)
+    total = length(ranks)
+    statistic = 0.0
+    for bin = 1:num_bins
+        expected = total * possible[bin] / (num_posterior_draws + 1)
+        statistic += (counts[bin] - expected)^2 / expected
+    end
     return _chisq_ccdf(num_bins - 1, statistic)
 end
 

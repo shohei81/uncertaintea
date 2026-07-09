@@ -21,6 +21,11 @@ end
         @test UncertainTea._sbc_uniformity_pvalue(uniform_ranks, 24, 5) > 0.5
         # all mass on one rank -> vanishing p-value
         @test UncertainTea._sbc_uniformity_pvalue(fill(2, 100), 24, 5) < 1e-12
+        # uneven binning must not false-alarm: 6 possible ranks, 20 requested
+        # bins (capped to 6), 4 requested bins (6 ranks -> 2+1+1+2 per bin)
+        balanced = repeat(0:5, 20)
+        @test UncertainTea._sbc_uniformity_pvalue(balanced, 5, 20) > 0.5
+        @test UncertainTea._sbc_uniformity_pvalue(balanced, 5, 4) > 0.5
     end
 
     @testset "sbc_conjugate_passes" begin
