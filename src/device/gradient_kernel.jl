@@ -67,6 +67,18 @@ end
     return (_device_normal_logpdf(m, s, v) + lad, cur)
 end
 
+@inline function _device_grad_score_step(step::DeviceNoncenteredNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    T = _device_dual_basetype(eltype(slots))
+    mu = _device_grad_eval(step.mu, slots, pidx, b)
+    sigma = _device_grad_eval(step.sigma, slots, pidx, b)
+    raw = @inbounds params[step.value_source, b]
+    seed = ifelse(step.value_source == Int32(pidx), one(T), zero(T))
+    z = DeviceDual{T}(convert(T, raw), seed)
+    m, s, zz = promote(mu, sigma, z)
+    _device_grad_store_binding!(slots, step.binding_slot, m + s * zz, pidx, b)
+    return (_device_normal_logpdf(zero(zz), one(zz), zz), cursor)
+end
+
 @inline function _device_grad_score_step(step::DeviceLognormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
     mu = _device_grad_eval(step.mu, slots, pidx, b)
     sigma = _device_grad_eval(step.sigma, slots, pidx, b)

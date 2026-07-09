@@ -176,3 +176,38 @@ end
     @test isapprox(sum(samples) / length(samples), 0.15; atol=0.15)
     @test all(<(1.3), rhat(chains))
 end
+
+@tea static function gpu_noncentered_funnel()
+    v ~ normal(0.0, 3.0)
+    x ~ normal(0.0, exp(v / 2); reparam=:noncentered)
+    {:y} ~ normal(x, 10.0)
+    return v
+end
+
+@testset "device Metal GPU noncentered normal parity" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU smoke test."
+        @test true
+        return
+    end
+    constraints = choicemap((:y, 0.5))
+    points = Float64[0.3 -0.5; 0.9 0.2]
+    supported, _ = device_lowering_report(gpu_noncentered_funnel)
+    @test supported
+    values, gradients = device_batched_logjoint_gradient(
+        gpu_noncentered_funnel,
+        Float32.(points),
+        (),
+        constraints;
+        backend=Metal.MetalBackend(),
+        precision=Float32,
+    )
+    reference_values =
+        [logjoint_unconstrained(gpu_noncentered_funnel, points[:, i], (), constraints) for i = 1:2]
+    reference_gradients = hcat(
+        [logjoint_gradient_unconstrained(gpu_noncentered_funnel, points[:, i], (), constraints) for i = 1:2]...,
+    )
+    # Metal runs Float32
+    @test Float64.(collect(values)) ≈ reference_values atol = 1e-4
+    @test Float64.(collect(gradients)) ≈ reference_gradients atol = 1e-4
+end
