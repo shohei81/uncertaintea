@@ -68,8 +68,12 @@ Accepted batching modes:
 
 The current reference inference layer now includes:
 
-- `batched_advi`, which uses a mean-field Gaussian in unconstrained space and
-  reuses `BatchedLogjointGradientCache`
+- `batched_advi`, which fits a Gaussian in unconstrained space and reuses
+  `BatchedLogjointGradientCache`. `guide=:meanfield` (default, also the
+  device-supported variant) uses a diagonal covariance; `guide=:fullrank`
+  parameterizes a full Cholesky factor; `guide=:lowrank` with `lowrank_rank=k`
+  uses `Sigma = D^2 + B B'`. The fitted covariance is exposed through
+  `variational_covariance`
 - `batched_importance_sampling`, which evaluates particle weights through the
   same batched unconstrained target density
 - `batched_sir`, which is the current one-stage sampling-importance-resampling
