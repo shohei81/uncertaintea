@@ -21,9 +21,13 @@ struct DistributionSpec <: AbstractChoiceRhsSpec
     # defined, so later re-registration cannot desynchronize an existing model
     # from its parameter layout. `nothing` for built-ins (resolved by family).
     builder::Any
+    # :centered (default) or :noncentered -- the staged reparameterization of
+    # docs/noncentered-reparam.md (issue #19).
+    reparam::Symbol
 end
 
-DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing)
+DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing, :centered)
+DistributionSpec(family::Symbol, arguments, builder) = DistributionSpec(family, arguments, builder, :centered)
 
 struct GenerativeCallSpec <: AbstractChoiceRhsSpec
     callee::Any
@@ -61,6 +65,10 @@ struct VectorIdentityTransform <: AbstractParameterTransform
 end
 struct LogTransform <: AbstractParameterTransform end
 struct LogitTransform <: AbstractParameterTransform end
+# Marker for reparam=:noncentered latents (docs/noncentered-reparam.md): the
+# slot holds the standardized z; the constrained value loc + scale * z is
+# materialized during the plan walk (PR-3), not by the slot transform pass.
+struct NoncenteredTransform <: AbstractParameterTransform end
 # Per-element unconstrained -> positive transform for `iid` latents over families
 # whose scalar transform is `LogTransform` (lognormal/exponential/gamma/...).
 struct VectorLogTransform <: AbstractParameterTransform
@@ -386,7 +394,12 @@ function _collect_bound_symbols!(steps::Vector{AbstractPlanStep}, bindings::Set{
 end
 
 function _substitute_rhs(rhs::DistributionSpec, substitutions::Dict{Symbol,Any})
-    return DistributionSpec(rhs.family, Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments], rhs.builder)
+    return DistributionSpec(
+        rhs.family,
+        Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments],
+        rhs.builder,
+        rhs.reparam,
+    )
 end
 
 function _substitute_rhs(rhs::GenerativeCallSpec, substitutions::Dict{Symbol,Any})
@@ -563,6 +576,10 @@ function _mixture_latent_eligible(arguments)
 end
 
 function _parameter_transform(rhs::DistributionSpec)
+    if rhs.reparam === :noncentered
+        # family eligibility was validated at macro expansion
+        return NoncenteredTransform()
+    end
     if rhs.family === :normal || rhs.family === :laplace || rhs.family === :studentt
         return IdentityTransform()
     elseif rhs.family === :mvnormal
@@ -631,6 +648,7 @@ function _iid_parameter_transform(arguments)
 end
 
 _parameter_dimensions(::IdentityTransform) = (1, 1)
+_parameter_dimensions(::NoncenteredTransform) = (1, 1)
 _parameter_dimensions(transform::VectorIdentityTransform) = (transform.size, transform.size)
 _parameter_dimensions(::LogTransform) = (1, 1)
 _parameter_dimensions(::LogitTransform) = (1, 1)
@@ -713,6 +731,13 @@ function _parameterize_step(
     transform = isnothing(step.binding) ? nothing : _parameter_transform(step.rhs)
 
     if isnothing(transform) || !isempty(step.scopes) || !isstaticaddress(step.address)
+        step.rhs isa DistributionSpec && step.rhs.reparam === :noncentered &&
+            throw(
+                ArgumentError(
+                    "reparam=:noncentered requires a bound, static-address, unscoped latent choice; " *
+                    "the choice at $(step.address) gets no parameter slot",
+                ),
+            )
         return ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, step.scopes, nothing)
     end
 
