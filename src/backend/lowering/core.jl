@@ -267,6 +267,10 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
         return nothing
     end
+    step.rhs.reparam === :noncentered && begin
+        _backend_issue!(issues, "reparam=:noncentered is not lowered yet (docs/noncentered-reparam.md, PR-4)")
+        return nothing
+    end
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
     step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, step, issues)
     step.rhs.family === :truncatednormal && return _backend_lower_truncatednormal_choice_step(model, layout, step, issues)

@@ -297,6 +297,12 @@ function _transform_slot_to_constrained!(
     slot::ParameterSlotSpec,
     params::AbstractVector,
 )
+    slot.transform isa NoncenteredTransform && throw(
+        ErrorException(
+            "reparam=:noncentered is accepted by the frontend but its dependent transforms " *
+            "are not implemented yet (docs/noncentered-reparam.md, PR-3)",
+        ),
+    )
     if slot.transform isa IdentityTransform
         destination[slot.value_index] = params[slot.index]
         return zero(params[slot.index])
@@ -355,6 +361,12 @@ function _transform_slot_to_unconstrained!(
     slot::ParameterSlotSpec,
     params::AbstractVector,
 )
+    slot.transform isa NoncenteredTransform && throw(
+        ErrorException(
+            "reparam=:noncentered is accepted by the frontend but its dependent transforms " *
+            "are not implemented yet (docs/noncentered-reparam.md, PR-3)",
+        ),
+    )
     if slot.transform isa IdentityTransform
         destination[slot.index] = params[slot.value_index]
     elseif slot.transform isa VectorIdentityTransform

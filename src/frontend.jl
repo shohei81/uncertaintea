@@ -109,7 +109,13 @@ function _rewrite_tea_expr(expr, ctxsym)
 
     rewritten_args = Any[_rewrite_tea_expr(arg, ctxsym) for arg in expr.args]
     if expr.head == :call && !isempty(rewritten_args) && rewritten_args[1] isa Symbol
-        rewritten_args[1] = _qualify_builtin_distribution(rewritten_args[1])
+        qualified = _qualify_builtin_distribution(rewritten_args[1])
+        if qualified !== rewritten_args[1]
+            # runtime distribution calls stay centered: the reparam flag lives
+            # on the spec/plan only
+            rewritten_args = _strip_reparam_arguments(rewritten_args)
+        end
+        rewritten_args[1] = qualified
     end
     return Expr(expr.head, rewritten_args...)
 end
@@ -178,6 +184,70 @@ function _choice_spec_expr(expr, loop_scopes, binding_override=nothing)
     return :($(_qualify(:ChoiceSpec))($binding, $address, $rhs_spec, $scopes_expr))
 end
 
+const _REPARAM_ELIGIBLE_FAMILIES = (:normal, :studentt, :laplace)
+
+# Split the keyword arguments off a `~` distribution call. Only
+# `reparam=:centered|:noncentered` is recognized; any other keyword is a
+# macro-time error (previously keywords were silently spliced into the
+# positional argument list as a malformed `Expr(:parameters, ...)`).
+function _split_rhs_keywords(rhs::Expr)
+    callee = rhs.args[1]
+    positional = Any[]
+    reparam = :centered
+    handle_kw =
+        kw -> begin
+            (kw isa Expr && kw.head == :kw && kw.args[1] === :reparam) || throw(
+                ArgumentError(
+                    "unsupported keyword argument in `~` distribution call `$rhs`; only `reparam=` is recognized",
+                ),
+            )
+            value = kw.args[2]
+            (value isa QuoteNode && value.value in (:centered, :noncentered)) || throw(
+                ArgumentError(
+                    "reparam must be the literal :centered or :noncentered, got `$(value)` in `$rhs`",
+                ),
+            )
+            reparam = value.value
+            return nothing
+        end
+    for arg in rhs.args[2:end]
+        if arg isa Expr && arg.head == :parameters
+            foreach(handle_kw, arg.args)
+        elseif arg isa Expr && arg.head == :kw
+            handle_kw(arg)
+        else
+            push!(positional, arg)
+        end
+    end
+    if reparam === :noncentered && !(callee in _REPARAM_ELIGIBLE_FAMILIES)
+        throw(
+            ArgumentError(
+                "reparam=:noncentered supports the location-scale families " *
+                "$(_REPARAM_ELIGIBLE_FAMILIES), got `$callee`",
+            ),
+        )
+    end
+    return positional, reparam
+end
+
+# Drop `reparam=` keywords from a distribution call in the rewritten runtime
+# body: `generate`/`assess` semantics stay centered, only the spec/plan carry
+# the flag.
+function _strip_reparam_arguments(arguments::Vector{Any})
+    stripped = Any[]
+    for arg in arguments
+        if arg isa Expr && arg.head == :parameters
+            kept = Any[kw for kw in arg.args if !(kw isa Expr && kw.head == :kw && kw.args[1] === :reparam)]
+            isempty(kept) || push!(stripped, Expr(:parameters, kept...))
+        elseif arg isa Expr && arg.head == :kw && arg.args[1] === :reparam
+            continue
+        else
+            push!(stripped, arg)
+        end
+    end
+    return stripped
+end
+
 function _rhs_spec_expr(rhs)
     if rhs isa Expr && rhs.head == :. && length(rhs.args) == 2 &&
        rhs.args[1] isa Symbol && rhs.args[2] isa Expr && rhs.args[2].head == :tuple &&
@@ -191,6 +261,14 @@ function _rhs_spec_expr(rhs)
     end
 
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :iid
+        any(
+            arg isa Expr && arg.head in (:parameters, :kw) for
+            arg in Iterators.flatten((rhs.args, (b for a in rhs.args if a isa Expr for b in a.args)))
+        ) && throw(
+            ArgumentError(
+                "keyword arguments (including reparam=) are not supported on iid latents yet: `$rhs`",
+            ),
+        )
         length(rhs.args) == 3 ||
             throw(ArgumentError("iid expects `iid(distribution_call, n)`"))
         base = rhs.args[2]
@@ -205,10 +283,11 @@ function _rhs_spec_expr(rhs)
 
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args)
         callee = rhs.args[1]
-        arguments = Expr(:vect, map(QuoteNode, rhs.args[2:end])...)
+        positional, reparam = _split_rhs_keywords(rhs)
+        arguments = Expr(:vect, map(QuoteNode, positional)...)
 
         if callee === :lkjcholesky
-            spec_arguments = rhs.args[2:end]
+            spec_arguments = positional
             (length(spec_arguments) == 2 && spec_arguments[1] isa Integer && spec_arguments[1] >= 2) ||
                 throw(
                     ArgumentError(
@@ -219,7 +298,12 @@ function _rhs_spec_expr(rhs)
         end
 
         if callee isa Symbol && callee in BUILTIN_DISTRIBUTION_FAMILIES
-            return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
+            return :($(_qualify(:DistributionSpec))(
+                $(QuoteNode(callee)),
+                $arguments,
+                nothing,
+                $(QuoteNode(reparam)),
+            ))
         end
         if callee isa Symbol && haskey(USER_DISTRIBUTION_REGISTRY, callee)
             registration = USER_DISTRIBUTION_REGISTRY[callee]
