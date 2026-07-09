@@ -17,7 +17,7 @@
 
     # Fixed-seed regression: per_chain_adaptation=false reproduces the shared
     # driver's adapted step size / mass matrix exactly (values captured from the
-    # code prior to this change; these match the part33 shared-driver regression).
+    # code prior to this change; these match the warmup_driver_regression shared-driver regression).
     pca_reg = batched_nuts(
         pca_gaussian_model,
         (),
@@ -30,7 +30,7 @@
     )
     for pca_reg_chain in pca_reg.chains
         # Re-pinned after the batched-NUTS merge-cohort stale-select fix
-        # (PR 6.4); still matches the part33 shared-driver regression.
+        # (PR 6.4); still matches the warmup_driver_regression shared-driver regression.
         @test pca_reg_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
         @test length(pca_reg_chain.mass_matrix) == 1
         @test pca_reg_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12

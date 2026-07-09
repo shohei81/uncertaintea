@@ -25,7 +25,7 @@
 # preserved; the only residual is the fused device gradient's ~1e-16 disagreement
 # with the host gradient cache, which flips no accept decision). With step-size
 # adaptation, dual averaging amplifies that 1e-16 difference, so the adaptive path
-# is only statistically equivalent. `test/uncertaintea/core/part51.jl` checks both.
+# is only statistically equivalent. `test/uncertaintea/core/device_masked_nuts.jl` checks both.
 # Everything is `T`-generic (diagonal mass only), so the CPU reference backend and
 # a GPU backend (e.g. Metal at Float32) share one path.
 
@@ -49,7 +49,7 @@ end
 # host integrator's association bit-for-bit -- `signed_step * (inverse_mass * p)`
 # with `signed_step = direction * step` -- because floating-point multiply is not
 # associative and a 1-ulp energy difference amplifies through dual-averaging step
-# adaptation into a macroscopic trajectory divergence (see part51's tight oracle).
+# adaptation into a macroscopic trajectory divergence (see device_masked_nuts.jl's tight oracle).
 @kernel function _device_nuts_drift!(q, @Const(p), @Const(inverse_mass), @Const(active), @Const(sign), step)
     idx = @index(Global, NTuple)
     pidx = idx[1]

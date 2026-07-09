@@ -31,7 +31,7 @@ end
     return eps
 end
 
-@testset "part45 vectorized observations and iid latents" begin
+@testset "vectorized observations and iid latents" begin
     bc_xs = collect(0.0:0.5:2.0)
     bc_n = length(bc_xs)
     bc_y = [0.1, 0.7, 1.4, 2.0, 2.9]

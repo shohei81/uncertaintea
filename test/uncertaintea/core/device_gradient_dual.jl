@@ -14,7 +14,7 @@
 const devg_FD = UncertainTea.ForwardDiff
 const DeviceDual = UncertainTea.DeviceDual
 
-# --- shared device-lowerable models (mirroring part42) -----------------------
+# --- shared device-lowerable models (mirroring device_lowering_parity.jl) -----------------------
 @tea static function devg_gauss_model(n)
     mu ~ normal(0.0, 1.0)
     s ~ gamma(2.0, 1.0)
