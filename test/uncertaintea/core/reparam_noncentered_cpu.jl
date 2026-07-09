@@ -404,8 +404,34 @@ end
         @test total_flagged / 4 < 0.01
         @test total_flagged < total_centered
 
-        # backend/device stay honest for the vector form
+        # backend/device stay honest for the vector form...
         @test backend_report(ncc_eight_schools_flagged).supported == false
+        # ...while the batched fallback routes through the dependent walk
+        # (codex review on PR-6): value/gradient parity and batched_nuts work
+        points = randn(MersenneTwister(31), 10, 2) .* 0.5
+        batched_values = batched_logjoint_unconstrained(ncc_eight_schools_flagged, points, (), eight_constraints)
+        reference_values =
+            [logjoint_unconstrained(ncc_eight_schools_flagged, points[:, i], (), eight_constraints) for i = 1:2]
+        @test batched_values ≈ reference_values atol = 1e-8
+        batched_gradients =
+            batched_logjoint_gradient_unconstrained(ncc_eight_schools_flagged, points, (), eight_constraints)
+        reference_gradients = hcat(
+            [
+                logjoint_gradient_unconstrained(ncc_eight_schools_flagged, points[:, i], (), eight_constraints) for
+                i = 1:2
+            ]...,
+        )
+        @test batched_gradients ≈ reference_gradients atol = 1e-8
+        batched_chains = batched_nuts(
+            ncc_eight_schools_flagged,
+            (),
+            eight_constraints;
+            num_chains=2,
+            num_samples=15,
+            num_warmup=15,
+            rng=MersenneTwister(32),
+        )
+        @test all(all(isfinite, chain.constrained_samples) for chain in batched_chains.chains)
     end
 
     @testset "ncc_lognormal_logspace" begin

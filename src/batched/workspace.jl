@@ -343,6 +343,12 @@ function _logjoint_unconstrained_with_workspace!(
 
     layout = parameterlayout(model)
     constrained = _constrained_buffer!(workspace, params)
+    if _has_dependent_transforms(layout)
+        # dependent transforms (reparam=:noncentered) need the plan walk; the
+        # per-slot loop below would throw on their marker transforms
+        logabsdet = _dependent_transform_walk!(constrained, model, params, args, false)
+        return _logjoint_with_workspace!(workspace, constrained, args, constraints) + logabsdet
+    end
     logabsdet = workspace.parameter_count == 0 ? zero(float(eltype(params))) : zero(params[firstindex(params)])
     for slot in layout.slots
         logabsdet += _transform_slot_to_constrained!(constrained, slot, params)
