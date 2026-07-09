@@ -43,6 +43,14 @@ end
     return theta
 end
 
+# the codex-review case: the slotless dependency flows through a comparison
+@tea static function ncc_slotless_branch_model()
+    k ~ bernoulli(0.5)
+    theta ~ normal(ifelse(k > 0, 2.0, 0.0), 1.0; reparam=:noncentered)
+    {:y} ~ normal(theta, 1.0)
+    return theta
+end
+
 @tea static function ncc_studentt_model()
     mu ~ normal(0.0, 1.0)
     theta ~ studentt(4.0, mu, 2.0; reparam=:noncentered)
@@ -127,6 +135,9 @@ end
 
     @testset "ncc_slotless_dependent_location_rejected" begin
         @test_throws ArgumentError transform_to_constrained(ncc_slotless_dependent_model, [0.5])
+        # comparisons and branching must not swallow the poison (NaN > 0 would
+        # silently be false); the sentinel throws instead
+        @test_throws ArgumentError transform_to_constrained(ncc_slotless_branch_model, [0.5])
     end
 
     @testset "ncc_studentt_laplace_density" begin

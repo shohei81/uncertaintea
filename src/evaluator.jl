@@ -439,6 +439,37 @@ end
 # positions of (location, scale) among the family's arguments
 _noncentered_location_scale_indices(family::Symbol) = family === :studentt ? (2, 3) : (1, 2)
 
+# Poison bound to slotless choices during the walk. Unlike NaN it cannot be
+# swallowed by comparisons or branching (`NaN > 0` is silently false): it is
+# not a Number, so arithmetic and ordered comparisons raise MethodError, and
+# equality is overloaded to throw outright.
+struct _TransformUnknownValue end
+
+const _TRANSFORM_UNKNOWN_MESSAGE =
+    "reparam=:noncentered location/scale expressions may only depend on model arguments " *
+    "and earlier latents with parameter slots; this model routes a choice without a slot " *
+    "(an observation or a discrete latent) into one"
+
+Base.:(==)(::_TransformUnknownValue, ::Any) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.:(==)(::Any, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.:(==)(::_TransformUnknownValue, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.isequal(::_TransformUnknownValue, ::Any) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.isequal(::Any, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.isequal(::_TransformUnknownValue, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+
+# Evaluate an expression during the walk, converting the poison's MethodError
+# into the informative rejection.
+function _walk_transform_eval(env::PlanEnvironment, expr)
+    try
+        return _eval_compiled_expr(env, expr)
+    catch err
+        if err isa MethodError && any(arg isa _TransformUnknownValue for arg in err.args)
+            throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+        end
+        rethrow()
+    end
+end
+
 function _dependent_transform_walk!(
     destination::AbstractVector,
     model::TeaModel,
@@ -469,12 +500,12 @@ function _walk_transform_steps!(destination, steps::Tuple, env, layout, params, 
 end
 
 function _walk_transform_step!(destination, step::CompiledDeterministicPlanStep, env, layout, params, inverse)
-    _environment_set!(env, step.binding_slot, _eval_compiled_expr(env, step.expr))
+    _environment_set!(env, step.binding_slot, _walk_transform_eval(env, step.expr))
     return zero(eltype(destination))
 end
 
 function _walk_transform_step!(destination, step::CompiledLoopPlanStep, env, layout, params, inverse)
-    iterable = _eval_compiled_expr(env, step.iterable)
+    iterable = _walk_transform_eval(env, step.iterable)
     had_previous = _environment_hasvalue(env, step.iterator_slot)
     previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
     total = zero(eltype(destination))
@@ -488,9 +519,10 @@ end
 
 function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, layout, params, inverse)
     if isnothing(step.parameter_slot)
-        # observation: its value is unknown during a transform; poison the
-        # binding so a location/scale depending on it fails the check below
-        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, NaN)
+        # observation or slotless latent: its value is unknown during a
+        # transform; poison the binding so any dependence fails loudly
+        isnothing(step.binding_slot) ||
+            _environment_set!(env, step.binding_slot, _TransformUnknownValue())
         return zero(eltype(destination))
     end
     slot = layout.slots[step.parameter_slot]
@@ -508,13 +540,14 @@ function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, l
     end
 
     location_index, scale_index = step.noncentered_location_scale
-    location = _eval_compiled_expr(env, step.arguments[location_index])
-    scale = _eval_compiled_expr(env, step.arguments[scale_index])
+    location = _walk_transform_eval(env, step.arguments[location_index])
+    scale = _walk_transform_eval(env, step.arguments[scale_index])
+    (location isa _TransformUnknownValue || scale isa _TransformUnknownValue) &&
+        throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
     (location isa Real && scale isa Real && isfinite(location) && isfinite(scale)) || throw(
         ArgumentError(
-            "reparam=:noncentered location/scale must evaluate to finite reals from model " *
-            "arguments and earlier latents (never observations); got location=$location, " *
-            "scale=$scale for the choice bound to :$(slot.binding)",
+            "reparam=:noncentered location/scale must evaluate to finite reals; got " *
+            "location=$location, scale=$scale for the choice bound to :$(slot.binding)",
         ),
     )
     if inverse
