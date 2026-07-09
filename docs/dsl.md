@@ -354,6 +354,71 @@ Requirements:
   declaring a latent mixture with any other component family raises an
   `ArgumentError` at macro-expansion time.
 
+## User-Defined Distributions
+
+A distribution defined outside the package participates in `@tea` models on
+the CPU reference path once registered with `register_distribution`. The
+family stays honestly unsupported in `backend_report`/`device_report` (same
+tier as the built-in CPU-only families), so scoring and gradients use the
+compiled CPU logjoint and the ForwardDiff column fallback.
+
+The builder must return a subtype of `AbstractTeaDistribution` implementing
+`UncertainTea.logpdf(dist, x)` (return `-Inf` outside the support, and keep it
+ForwardDiff-Dual-friendly if the family will be a latent) and
+`Random.rand(rng::AbstractRNG, dist)`:
+
+```julia
+using UncertainTea, Random
+
+struct SkewNormalDist{T<:Real} <: AbstractTeaDistribution
+    location::T
+    scale::T
+    shape::T
+    function SkewNormalDist(location::T, scale::T, shape::T) where {T<:Real}
+        scale > zero(T) || throw(ArgumentError("skewnormal requires scale > 0"))
+        return new{T}(location, scale, shape)
+    end
+end
+
+skewnormal(location, scale, shape) = SkewNormalDist(promote(location, scale, shape)...)
+
+function UncertainTea.logpdf(dist::SkewNormalDist, x)
+    z = (x - dist.location) / dist.scale
+    return log(2) - z^2 / 2 - log(2 * pi) / 2 - log(dist.scale) +
+           log(UncertainTea._std_normal_cdf(dist.shape * z))
+end
+
+function Random.rand(rng::AbstractRNG, dist::SkewNormalDist)
+    delta = dist.shape / sqrt(1 + dist.shape^2)
+    u0, v = randn(rng), randn(rng)
+    return dist.location + dist.scale * (delta * abs(u0) + sqrt(1 - delta^2) * v)
+end
+
+register_distribution(:skewnormal; builder=skewnormal, transform=IdentityTransform())
+
+@tea static function model()
+    x ~ skewnormal(0.0, 1.0, 3.0)
+    {:y} ~ normal(x, 0.5)
+    return x
+end
+```
+
+`transform` declares the unconstrained parameterization for latent use --
+`IdentityTransform()` (real line), `LogTransform()` (positive),
+`LogitTransform()` ((0,1)), or `BoundedTransform(lower, upper)`. Omit it for
+observation-only families; a latent then gets no parameter slot.
+
+Rules and caveats:
+
+- Register **before** defining models that use the family (registration is
+  consulted at model definition).
+- Models capture the builder and transform at definition, so re-registering a
+  family affects only models defined afterwards.
+- Built-in family names and expression primitives (`exp`, `log`, ...) cannot
+  be registered.
+- Broadcast observations (`family.(...)`) and `iid(family(...), n)` are not
+  supported for registered families.
+
 ## Inference-Oriented Consequences
 
 ### VI / SVI

@@ -13,6 +13,7 @@ core_test_files = [
     # (file, group)
     ("dsl_static_models_and_backend.jl", "dsl"),
     ("tuple_and_loop_addresses.jl", "dsl"),
+    ("custom_distribution_registration.jl", "dsl"),
     ("dist_exponential_poisson.jl", "dist"),
     ("dist_gamma_studentt.jl", "dist"),
     ("dist_beta_categorical.jl", "dist"),

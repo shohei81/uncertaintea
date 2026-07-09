@@ -17,7 +17,13 @@ abstract type AbstractChoiceRhsSpec end
 struct DistributionSpec <: AbstractChoiceRhsSpec
     family::Symbol
     arguments::Vector{Any}
+    # For registered user families: the builder captured when the model was
+    # defined, so later re-registration cannot desynchronize an existing model
+    # from its parameter layout. `nothing` for built-ins (resolved by family).
+    builder::Any
 end
+
+DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing)
 
 struct GenerativeCallSpec <: AbstractChoiceRhsSpec
     callee::Any
@@ -380,7 +386,7 @@ function _collect_bound_symbols!(steps::Vector{AbstractPlanStep}, bindings::Set{
 end
 
 function _substitute_rhs(rhs::DistributionSpec, substitutions::Dict{Symbol,Any})
-    return DistributionSpec(rhs.family, Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments])
+    return DistributionSpec(rhs.family, Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments], rhs.builder)
 end
 
 function _substitute_rhs(rhs::GenerativeCallSpec, substitutions::Dict{Symbol,Any})
@@ -586,6 +592,8 @@ function _parameter_transform(rhs::DistributionSpec)
     elseif rhs.family === :iid
         return _iid_parameter_transform(rhs.arguments)
     end
+    registration = _registered_user_distribution(rhs.family)
+    isnothing(registration) || return registration.transform
     return nothing
 end
 
