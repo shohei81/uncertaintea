@@ -502,6 +502,18 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         return issues, nothing
     end
 
+    # argument slots are staged once per workspace (issue #38); a model that
+    # rebinds an argument symbol would have kernels overwrite that slot and
+    # break workspace reuse, so reject the rebinding shape outright
+    argument_slots = BitSet(executionplan(model).environment_layout.argument_slots)
+    if !isempty(argument_slots) && _device_steps_rebind_argument(out, argument_slots)
+        _device_issue!(
+            issues,
+            "device lowering does not support rebinding a model argument symbol; rename the binding",
+        )
+        return issues, nothing
+    end
+
     slot_count = length(executionplan(model).environment_layout.symbols)
     steps = tuple(out...)
     plan = DeviceExecutionPlan{T}(steps, slot_count, loop_counter[])
@@ -515,6 +527,15 @@ Reports whether `model` can be lowered to the device (KernelAbstractions) logjoi
 path. `issues` is empty iff `supported` is `true`; otherwise each entry is a precise
 explanation of what is not representable.
 """
+function _device_steps_rebind_argument(steps, argument_slots::BitSet)
+    for step in steps
+        binding = hasproperty(step, :binding_slot) ? step.binding_slot : Int32(-1)
+        binding isa Integer && Int(binding) in argument_slots && return true
+        hasproperty(step, :body) && _device_steps_rebind_argument(step.body, argument_slots) && return true
+    end
+    return false
+end
+
 function device_lowering_report(model::TeaModel; precision::Type=Float64)
     issues, plan = _lower_device_plan(model, precision)
     return (isempty(issues) && !isnothing(plan), issues)

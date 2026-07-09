@@ -200,7 +200,19 @@ end
     return theta
 end
 
+# rebinding an argument symbol would let kernels overwrite the staged slot
+@tea static function devg_rebinding_model(x)
+    x = x + 1.0
+    theta ~ normal(x, 1.0)
+    {:y} ~ normal(theta, 0.5)
+    return theta
+end
+
 @testset "devg_argument_staging" begin
+    rebind_supported, rebind_issues = device_lowering_report(devg_rebinding_model)
+    @test !rebind_supported
+    @test any(occursin("rebinding", issue) for issue in rebind_issues)
+
     constraints = choicemap((:y, 0.4))
     points = [0.2 -0.3; 0.7 0.1]
     values, gradients = device_batched_logjoint_gradient(
