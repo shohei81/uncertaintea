@@ -84,15 +84,18 @@ end
     end
 
     @testset "reparam_honest_rejections" begin
+        # CPU semantics landed in PR-3 (see reparam_noncentered_cpu.jl); the
+        # batched/backend paths stay honestly rejected until PR-4
         constraints = choicemap((:y, 0.4))
-        trace, _ = generate(reparam_flagged_model, (), constraints; rng=MersenneTwister(7))
-        @test_throws ErrorException transform_to_unconstrained(trace)
-        @test_throws ErrorException transform_to_constrained(reparam_flagged_model, zeros(3))
-        @test_throws ErrorException logjoint_unconstrained(reparam_flagged_model, zeros(3), (), constraints)
-
         report = backend_report(reparam_flagged_model)
         @test report.supported == false
         @test any(occursin("reparam=:noncentered", issue) for issue in report.issues)
+        @test_throws ErrorException batched_logjoint_unconstrained(
+            reparam_flagged_model,
+            zeros(3, 2),
+            (),
+            constraints,
+        )
     end
 
     @testset "reparam_macro_validation" begin

@@ -129,7 +129,7 @@ function _initial_hmc_position(
     if length(initial_params) == expected
         return Float64[value for value in initial_params]
     elseif length(initial_params) == constrained_expected
-        return transform_to_unconstrained(model, Float64[value for value in initial_params])
+        return transform_to_unconstrained(model, Float64[value for value in initial_params], args)
     end
     throw(
         DimensionMismatch(

@@ -423,17 +423,25 @@ function parameter_vector(trace::TeaTrace)
     return params
 end
 
-function transform_to_constrained(model::TeaModel, params::AbstractVector)
+_has_dependent_transforms(layout::ParameterLayout) =
+    any(slot.transform isa NoncenteredTransform for slot in layout.slots)
+
+function transform_to_constrained(model::TeaModel, params::AbstractVector, args::Tuple=())
     layout = parameterlayout(model)
     expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
     constrained = similar(params, parametervaluecount(layout))
-    _transform_to_constrained!(constrained, model, params)
+    _transform_to_constrained!(constrained, model, params, args)
     return constrained
 end
 
-function _transform_to_constrained!(destination::AbstractVector, model::TeaModel, params::AbstractVector)
+function _transform_to_constrained!(
+    destination::AbstractVector,
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple=(),
+)
     layout = parameterlayout(model)
     expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
@@ -441,18 +449,26 @@ function _transform_to_constrained!(destination::AbstractVector, model::TeaModel
     length(destination) == constrained_expected ||
         throw(DimensionMismatch("expected constrained destination of length $constrained_expected, got $(length(destination))"))
 
+    if _has_dependent_transforms(layout)
+        _dependent_transform_walk!(destination, model, params, args, false)
+        return destination
+    end
     for slot in layout.slots
         _transform_slot_to_constrained!(destination, slot, params)
     end
     return destination
 end
 
-function transform_to_constrained_with_logabsdet(model::TeaModel, params::AbstractVector)
+function transform_to_constrained_with_logabsdet(model::TeaModel, params::AbstractVector, args::Tuple=())
     layout = parameterlayout(model)
     expected = parametercount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
     constrained = similar(params, parametervaluecount(layout))
+    if _has_dependent_transforms(layout)
+        logabsdet = _dependent_transform_walk!(constrained, model, params, args, false)
+        return constrained, logabsdet
+    end
     logabsdet = expected == 0 ? 0.0 : zero(params[firstindex(params)])
     for slot in layout.slots
         logabsdet += _transform_slot_to_constrained!(constrained, slot, params)
@@ -460,19 +476,24 @@ function transform_to_constrained_with_logabsdet(model::TeaModel, params::Abstra
     return constrained, logabsdet
 end
 
-function transform_to_unconstrained(model::TeaModel, params::AbstractVector)
+function transform_to_unconstrained(model::TeaModel, params::AbstractVector, args::Tuple=())
     layout = parameterlayout(model)
     expected = parametervaluecount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
     unconstrained = similar(params, parametercount(layout))
+    if _has_dependent_transforms(layout)
+        _dependent_transform_walk!(unconstrained, model, params, args, true)
+        return unconstrained
+    end
     for slot in layout.slots
         _transform_slot_to_unconstrained!(unconstrained, slot, params)
     end
     return unconstrained
 end
 
-transform_to_unconstrained(trace::TeaTrace) = transform_to_unconstrained(trace.model, parameter_vector(trace))
+transform_to_unconstrained(trace::TeaTrace) =
+    transform_to_unconstrained(trace.model, parameter_vector(trace), trace.args)
 
 function initialparameters(model::TeaModel, args::Tuple=(); rng::AbstractRNG=Random.default_rng())
     trace, _ = generate(model, args, choicemap(); rng=rng)
