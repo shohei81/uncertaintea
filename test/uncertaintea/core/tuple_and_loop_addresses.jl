@@ -1,3 +1,4 @@
+@testset "tuple_and_loop_addresses" begin
     @tea static function tuple_address_model(n)
         mu ~ normal(0.0f0, 1.0f0)
         for i in 1:n
@@ -123,3 +124,4 @@
     @test pairarg_trace[:obs => 2] == 0.4f0
     @test logjoint(pair_arg_address_model, pairarg_params, (:obs => 2,), pairarg_constraints) ≈
         pairarg_expected atol=1e-6
+end

@@ -7,6 +7,7 @@
     using LinearAlgebra
 
     # --- metric operations ---------------------------------------------------
+@testset "dense_mass_matrix_single_chain" begin
     @testset "dm_metric_operations" begin
         dm_rng_seed = 424242
         dm_imm = [0.5, 2.0, 1.3, 0.75]
@@ -199,3 +200,4 @@
         # the same sampling budget (the pre-fix precision convention reversed this).
         @test mmfix_ess_min(mmfix_adapted) >= mmfix_ess_min(mmfix_identity)
     end
+end

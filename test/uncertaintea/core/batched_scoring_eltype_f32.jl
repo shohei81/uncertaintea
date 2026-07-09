@@ -3,6 +3,7 @@
     # results that match the Float64 path within Float32 precision. Float64 stays
     # bit-for-bit unchanged (default type parameter remains Float64).
 
+@testset "batched_scoring_eltype_f32" begin
     @tea static function f32_normal_scale_model()
         logsigma ~ normal(0.0f0, 1.0f0)
         sigma = exp(logsigma)
@@ -102,3 +103,4 @@
             f32_studentt_constraints[f32_studentt_index],
         ) atol=1e-8
     end
+end

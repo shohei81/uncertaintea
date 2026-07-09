@@ -1,3 +1,4 @@
+@testset "integrator_nuts_proposal" begin
     @tea static function integrator_model()
         mu ~ normal(0.0f0, 1.0f0)
         {:y} ~ normal(mu, 0.8f0)
@@ -198,3 +199,4 @@
         @test treetgt_prop_model.logjoint == treetgt_prop_tempered.logjoint
         @test treetgt_moved_model == treetgt_moved_tempered
     end
+end

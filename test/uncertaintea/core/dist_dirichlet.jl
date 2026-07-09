@@ -1,3 +1,4 @@
+@testset "dist_dirichlet" begin
     @test UncertainTea.logpdf(dirichlet([2.0, 3.0, 4.0]), [0.2, 0.3, 0.5]) ≈
         (UncertainTea.loggamma(9.0) - UncertainTea.loggamma(2.0) - UncertainTea.loggamma(3.0) - UncertainTea.loggamma(4.0) +
          log(0.2) + 2 * log(0.3) + 3 * log(0.5)) atol=1e-8
@@ -93,3 +94,4 @@
     @test constrained_summary.parameters[3].address == (:weights, 3)
     @test unconstrained_summary.parameters[1].address == (:weights, 1)
     @test unconstrained_summary.parameters[2].address == (:weights, 2)
+end

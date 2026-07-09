@@ -1,3 +1,4 @@
+@testset "dist_beta_categorical" begin
     @test UncertainTea.logpdf(beta(2.0, 3.0), 0.4) ≈
         UncertainTea.loggamma(5.0) - UncertainTea.loggamma(2.0) - UncertainTea.loggamma(3.0) +
         log(0.4) + 2 * log(0.6) atol=1e-8
@@ -135,3 +136,4 @@
     @test !isnothing(categorical_batch_cache.backend_cache)
     @test isnothing(categorical_batch_cache.flat_cache)
     @test isempty(categorical_batch_cache.column_caches)
+end

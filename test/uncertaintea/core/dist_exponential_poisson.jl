@@ -1,3 +1,4 @@
+@testset "dist_exponential_poisson" begin
     @test UncertainTea.logpdf(exponential(2.0), 0.5) ≈ log(2.0) - 1.0 atol=1e-8
     @test UncertainTea.logpdf(exponential(2.0), -0.5) == -Inf
     @test UncertainTea.logpdf(poisson(3.0), 4) ≈ 4 * log(3.0) - 3.0 - log(24.0) atol=1e-8
@@ -125,3 +126,4 @@
     ] atol=1e-8
     @test poisson_combined_gradient === poisson_batch_cache.gradient_buffer
     @test poisson_combined_gradient ≈ poisson_batch_gradient atol=1e-8
+end
