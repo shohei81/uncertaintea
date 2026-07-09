@@ -45,12 +45,12 @@ function _score_backend_step!(
     params::AbstractMatrix,
     constraints,
 )
-    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
-    alpha_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
+    choice_values = [_batched_numeric_scratch!(env, index) for index = 1:step.value_length]
+    alpha_values = [_batched_numeric_scratch!(env, step.value_length + index) for index = 1:step.value_length]
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
-    for component_index in 1:step.value_length
+    for component_index = 1:step.value_length
         _eval_backend_numeric_expr!(
             alpha_values[component_index],
             env,
@@ -59,10 +59,10 @@ function _score_backend_step!(
         )
     end
 
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         total_alpha = 0.0
         accumulator = 0.0
-        for component_index in 1:step.value_length
+        for component_index = 1:step.value_length
             alpha = alpha_values[component_index][batch_index]
             alpha > 0 || throw(ArgumentError("dirichlet requires alpha > 0 in every dimension"))
             total_alpha += alpha
@@ -72,7 +72,7 @@ function _score_backend_step!(
 
         total = 0.0
         valid = true
-        for component_index in 1:step.value_length
+        for component_index = 1:step.value_length
             value = choice_values[component_index][batch_index]
             value > 0 || begin
                 valid = false
@@ -138,7 +138,7 @@ function _score_backend_step!(
     mu1 = _eval_backend_broadcast_element(env, step.mu, 1)
     sigma1 = _eval_backend_broadcast_element(env, step.sigma, 1)
     total = _backend_normal_logpdf(mu1, sigma1, float(values[1]))
-    for element_index in 2:n
+    for element_index = 2:n
         mu = _eval_backend_broadcast_element(env, step.mu, element_index)
         sigma = _eval_backend_broadcast_element(env, step.sigma, element_index)
         total += _backend_normal_logpdf(mu, sigma, float(values[element_index]))
@@ -240,7 +240,7 @@ function _batched_broadcast_observed_values(
 )
     T = eltype(env.numeric_values)
     observed = Vector{Vector{T}}(undef, env.batch_size)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         address = _concrete_batched_address(address_parts, batch_index)
         found, value = _choice_tryget_normalized(constraints, address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
@@ -259,7 +259,7 @@ function _batched_broadcast_observed_values(
         throw(DimensionMismatch("expected $(env.batch_size) batched constraints, got $(length(constraints))"))
     T = eltype(env.numeric_values)
     observed = Vector{Vector{T}}(undef, env.batch_size)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         address = _concrete_batched_address(address_parts, batch_index)
         found, value = _choice_tryget_normalized(constraints[batch_index], address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
@@ -292,10 +292,10 @@ function _score_backend_step!(
     n = _broadcast_uniform_length(observed)
     mu_values = _batched_numeric_scratch!(env, 1)
     sigma_values = _batched_numeric_scratch!(env, 2)
-    for element_index in 1:n
+    for element_index = 1:n
         _eval_backend_broadcast_numeric!(mu_values, env, step.mu, element_index, 3)
         _eval_backend_broadcast_numeric!(sigma_values, env, step.sigma, element_index, 5)
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             totals[batch_index] += _backend_normal_logpdf(
                 mu_values[batch_index],
                 sigma_values[batch_index],
@@ -307,7 +307,7 @@ function _score_backend_step!(
         env.generic_slots[step.binding_slot] ||
             throw(BatchedBackendFallback("broadcast normal binding slot must be generic"))
         storage = env.generic_values[step.binding_slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             storage[batch_index] = observed[batch_index]
         end
         env.assigned[step.binding_slot] = true

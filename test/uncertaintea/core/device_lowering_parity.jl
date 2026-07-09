@@ -12,7 +12,7 @@
 @tea static function dev_gauss_model(n)
     mu ~ normal(0.0, 1.0)
     s ~ gamma(2.0, 1.0)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ normal(mu, s)
     end
     return mu
@@ -23,7 +23,7 @@ end
     a ~ lognormal(0.0, 1.0)
     b ~ gamma(3.0, 2.0)
     scale = exp(a)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ normal(b, scale)
     end
     return a
@@ -32,7 +32,7 @@ end
 # bernoulli observations governed by a logit-transformed (beta) latent probability.
 @tea static function dev_bernoulli_model(n)
     p ~ beta(2.0, 3.0)
-    for i in 1:n
+    for i = 1:n
         {:z => i} ~ bernoulli(p)
     end
     return p
@@ -72,7 +72,7 @@ end
 
 @testset "dev_plan_isbits" begin
     ys = [0.4, -0.7, 1.1, 0.2]
-    cm = choicemap((:y => i, ys[i]) for i in 1:4)
+    cm = choicemap((:y => i, ys[i]) for i = 1:4)
     ws = DeviceBatchedWorkspace(dev_gauss_model, 3; args=(4,), constraints=cm)
     @test isbits(ws.plan)
     @test ws.plan isa DeviceExecutionPlan{Float64}
@@ -84,7 +84,7 @@ end
 @testset "dev_device_loggamma_grid" begin
     max_rel64 = 0.0
     max_rel32 = 0.0
-    for x in 0.05:0.05:20.0
+    for x = 0.05:0.05:20.0
         ref = UncertainTea.loggamma(x)
         d64 = UncertainTea._device_loggamma(x)
         max_rel64 = max(max_rel64, abs(d64 - ref) / max(1.0, abs(ref)))
@@ -100,7 +100,7 @@ end
 @testset "dev_numerical_parity" begin
     # --- model 1: gaussian with loop observations, log latent ---
     ys = [0.4, -0.7, 1.1, 0.2, 0.9]
-    cm = choicemap((:y => i, ys[i]) for i in 1:5)
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
     params = [0.5 -0.3 1.2 0.05; 0.1 0.7 -0.2 0.4]
     dev = device_batched_logjoint(dev_gauss_model, params, (5,), cm)
     ref = batched_logjoint_unconstrained(dev_gauss_model, params, (5,), cm)
@@ -110,7 +110,7 @@ end
 
     # --- model 2: lognormal + gamma latents, exp-derived arg ---
     ys2 = [0.4, 1.1, -0.7]
-    cm2 = choicemap((:y => i, ys2[i]) for i in 1:3)
+    cm2 = choicemap((:y => i, ys2[i]) for i = 1:3)
     params2 = [0.5 -0.3 0.9; 0.1 0.7 -0.2]
     dev2 = device_batched_logjoint(dev_lognormal_gamma_model, params2, (3,), cm2)
     ref2 = batched_logjoint_unconstrained(dev_lognormal_gamma_model, params2, (3,), cm2)
@@ -120,7 +120,7 @@ end
 
     # --- model 3: bernoulli observations, logit latent ---
     zs = [1.0, 0.0, 1.0, 1.0]
-    cm3 = choicemap((:z => i, zs[i]) for i in 1:4)
+    cm3 = choicemap((:z => i, zs[i]) for i = 1:4)
     params3 = reshape([0.3, -0.8, 1.5], 1, 3)
     dev3 = device_batched_logjoint(dev_bernoulli_model, params3, (4,), cm3)
     ref3 = batched_logjoint_unconstrained(dev_bernoulli_model, params3, (4,), cm3)
@@ -131,7 +131,7 @@ end
 
 @testset "dev_workspace_reuse" begin
     ys = [0.4, -0.7, 1.1, 0.2]
-    cm = choicemap((:y => i, ys[i]) for i in 1:4)
+    cm = choicemap((:y => i, ys[i]) for i = 1:4)
     ws = DeviceBatchedWorkspace(dev_gauss_model, 3; args=(4,), constraints=cm)
 
     params_a = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
@@ -153,16 +153,16 @@ end
     params = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
 
     # identical-structure constraint vectors (per-column observation values).
-    cm_vec = [choicemap((:y => i, ys[i] + 0.1 * b) for i in 1:4) for b in 1:3]
+    cm_vec = [choicemap((:y => i, ys[i] + 0.1 * b) for i = 1:4) for b = 1:3]
     dev = device_batched_logjoint(dev_gauss_model, params, (4,), cm_vec)
     ref = batched_logjoint_unconstrained(dev_gauss_model, params, (4,), cm_vec)
     @test dev ≈ ref rtol = 1e-12
 
     # mismatched structure (a column missing an address) must throw during staging.
     cm_bad = [
-        choicemap((:y => i, ys[i]) for i in 1:4),
-        choicemap((:y => i, ys[i]) for i in 1:2),
-        choicemap((:y => i, ys[i]) for i in 1:4),
+        choicemap((:y => i, ys[i]) for i = 1:4),
+        choicemap((:y => i, ys[i]) for i = 1:2),
+        choicemap((:y => i, ys[i]) for i = 1:4),
     ]
     @test_throws Exception device_batched_logjoint(dev_gauss_model, params, (4,), cm_bad)
 end

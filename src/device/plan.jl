@@ -171,7 +171,10 @@ end
 
 function _lower_device_expr(expr::BackendSlotExpr, generic_slots, ::Type{T}, issues::Vector{String}, context::String) where {T}
     if generic_slots[expr.slot]
-        _device_issue!(issues, "device lowering cannot feed generic (non-numeric) slot $(expr.slot) into a numeric expression in $context")
+        _device_issue!(
+            issues,
+            "device lowering cannot feed generic (non-numeric) slot $(expr.slot) into a numeric expression in $context",
+        )
         return nothing
     end
     return DeviceSlotExpr(Int32(expr.slot))
@@ -228,23 +231,92 @@ end
 
 # ---- per-family choice lowering ----
 
-function _lower_device_step!(out, step::BackendNormalChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendNormalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     _lower_device_two_arg!(out, step, step.mu, step.sigma, DeviceNormalChoiceStep, backend, layout, T, issues, in_loop, "normal")
 end
-function _lower_device_step!(out, step::BackendLognormalChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
-    _lower_device_two_arg!(out, step, step.mu, step.sigma, DeviceLognormalChoiceStep, backend, layout, T, issues, in_loop, "lognormal")
+function _lower_device_step!(
+    out,
+    step::BackendLognormalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    _lower_device_two_arg!(
+        out,
+        step,
+        step.mu,
+        step.sigma,
+        DeviceLognormalChoiceStep,
+        backend,
+        layout,
+        T,
+        issues,
+        in_loop,
+        "lognormal",
+    )
 end
-function _lower_device_step!(out, step::BackendGammaChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendGammaChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     _lower_device_two_arg!(out, step, step.shape, step.rate, DeviceGammaChoiceStep, backend, layout, T, issues, in_loop, "gamma")
 end
-function _lower_device_step!(out, step::BackendLaplaceChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendLaplaceChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     _lower_device_two_arg!(out, step, step.mu, step.scale, DeviceLaplaceChoiceStep, backend, layout, T, issues, in_loop, "laplace")
 end
-function _lower_device_step!(out, step::BackendBetaChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendBetaChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     _lower_device_two_arg!(out, step, step.alpha, step.beta, DeviceBetaChoiceStep, backend, layout, T, issues, in_loop, "beta")
 end
 
-function _lower_device_two_arg!(out, step, arg1_expr, arg2_expr, Ctor, backend, layout, ::Type{T}, issues, in_loop, family) where {T}
+function _lower_device_two_arg!(
+    out,
+    step,
+    arg1_expr,
+    arg2_expr,
+    Ctor,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    in_loop,
+    family,
+) where {T}
     src = _device_choice_value_source(step, layout, in_loop, issues, family)
     a1 = _lower_device_expr(arg1_expr, backend.generic_slots, T, issues, "$family argument")
     a2 = _lower_device_expr(arg2_expr, backend.generic_slots, T, issues, "$family argument")
@@ -254,7 +326,16 @@ function _lower_device_two_arg!(out, step, arg1_expr, arg2_expr, Ctor, backend, 
     return nothing
 end
 
-function _lower_device_step!(out, step::BackendExponentialChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendExponentialChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     src = _device_choice_value_source(step, layout, in_loop, issues, "exponential")
     rate = _lower_device_expr(step.rate, backend.generic_slots, T, issues, "exponential argument")
     (isnothing(src) || isnothing(rate)) && return nothing
@@ -263,7 +344,16 @@ function _lower_device_step!(out, step::BackendExponentialChoicePlanStep, backen
     return nothing
 end
 
-function _lower_device_step!(out, step::BackendBernoulliChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendBernoulliChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     src = _device_choice_value_source(step, layout, in_loop, issues, "bernoulli")
     p = _lower_device_expr(step.probability, backend.generic_slots, T, issues, "bernoulli argument")
     (isnothing(src) || isnothing(p)) && return nothing
@@ -272,7 +362,16 @@ function _lower_device_step!(out, step::BackendBernoulliChoicePlanStep, backend,
     return nothing
 end
 
-function _lower_device_step!(out, step::BackendPoissonChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendPoissonChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     src = _device_choice_value_source(step, layout, in_loop, issues, "poisson")
     lambda = _lower_device_expr(step.lambda, backend.generic_slots, T, issues, "poisson argument")
     (isnothing(src) || isnothing(lambda)) && return nothing
@@ -288,7 +387,16 @@ function _lower_device_step!(out, step::BackendChoicePlanStep, backend, layout, 
     return nothing
 end
 
-function _lower_device_step!(out, step::BackendDeterministicPlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
+function _lower_device_step!(
+    out,
+    step::BackendDeterministicPlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
     slot = step.binding_slot
     if backend.numeric_slots[slot]
         expr = _lower_device_expr(step.expr, backend.generic_slots, T, issues, "deterministic assignment")

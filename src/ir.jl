@@ -226,7 +226,11 @@ function ModelSpec(
     return_expr::Any,
 )
     argument_symbols = Symbol[arg for arg in arguments]
-    environment_layout = EnvironmentLayout(copy(argument_symbols), Dict(arg => idx for (idx, arg) in enumerate(argument_symbols)), collect(eachindex(argument_symbols)))
+    environment_layout = EnvironmentLayout(
+        copy(argument_symbols),
+        Dict(arg => idx for (idx, arg) in enumerate(argument_symbols)),
+        collect(eachindex(argument_symbols)),
+    )
     plan = ExecutionPlan(name, AbstractPlanStep[], parameter_layout, environment_layout)
     return ModelSpec(name, mode, argument_symbols, choices, shape_specialized, parameter_layout, return_expr, plan)
 end
@@ -266,8 +270,8 @@ hasrepeatedchoices(spec::ModelSpec) = any(isrepeatedchoice, spec.choices)
 parametercount(layout::ParameterLayout) = layout.parameter_count
 parametervaluecount(layout::ParameterLayout) = layout.value_count
 
-parameterindices(slot::ParameterSlotSpec) = slot.index:(slot.index + slot.dimension - 1)
-parametervalueindices(slot::ParameterSlotSpec) = slot.value_index:(slot.value_index + slot.value_length - 1)
+parameterindices(slot::ParameterSlotSpec) = slot.index:(slot.index+slot.dimension-1)
+parametervalueindices(slot::ParameterSlotSpec) = slot.value_index:(slot.value_index+slot.value_length-1)
 isscalarparameterslot(slot::ParameterSlotSpec) = slot.dimension == 1 && slot.value_length == 1
 
 function _parameter_slot_index(layout::ParameterLayout, choice_index::Int)
@@ -389,7 +393,8 @@ function _substitute_rhs(rhs::BroadcastDistributionSpec, substitutions::Dict{Sym
     return BroadcastDistributionSpec(rhs.family, Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments])
 end
 
-_substitute_rhs(rhs::RawChoiceRhsSpec, substitutions::Dict{Symbol,Any}) = RawChoiceRhsSpec(_substitute_expr(rhs.expr, substitutions))
+_substitute_rhs(rhs::RawChoiceRhsSpec, substitutions::Dict{Symbol,Any}) =
+    RawChoiceRhsSpec(_substitute_expr(rhs.expr, substitutions))
 
 function _substitute_loop_scopes(scopes::Vector{LoopScopeSpec}, substitutions::Dict{Symbol,Any})
     replaced = LoopScopeSpec[]
@@ -401,7 +406,12 @@ function _substitute_loop_scopes(scopes::Vector{LoopScopeSpec}, substitutions::D
     return replaced
 end
 
-function _substitute_step(step::ChoicePlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
+function _substitute_step(
+    step::ChoicePlanStep,
+    substitutions::Dict{Symbol,Any};
+    prefix::Union{Nothing,AddressSpec}=nothing,
+    parameter_slot=nothing,
+)
     address = _substitute_address(step.address, substitutions)
     prefixed = isnothing(prefix) ? address : _prefix_address(prefix, address)
     binding = isnothing(step.binding) ? nothing : get(substitutions, step.binding, step.binding)
@@ -418,7 +428,12 @@ function _substitute_step(step::ChoicePlanStep, substitutions::Dict{Symbol,Any};
     )
 end
 
-function _substitute_step(step::DeterministicPlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
+function _substitute_step(
+    step::DeterministicPlanStep,
+    substitutions::Dict{Symbol,Any};
+    prefix::Union{Nothing,AddressSpec}=nothing,
+    parameter_slot=nothing,
+)
     binding = get(substitutions, step.binding, step.binding)
     binding isa Symbol || throw(ArgumentError("deterministic binding substitution must stay a Symbol"))
     return DeterministicPlanStep(
@@ -429,7 +444,12 @@ function _substitute_step(step::DeterministicPlanStep, substitutions::Dict{Symbo
     )
 end
 
-function _substitute_step(step::LoopPlanStep, substitutions::Dict{Symbol,Any}; prefix::Union{Nothing,AddressSpec}=nothing, parameter_slot=nothing)
+function _substitute_step(
+    step::LoopPlanStep,
+    substitutions::Dict{Symbol,Any};
+    prefix::Union{Nothing,AddressSpec}=nothing,
+    parameter_slot=nothing,
+)
     iterator = get(substitutions, step.iterator, step.iterator)
     iterator isa Symbol || throw(ArgumentError("loop iterator substitution must stay a Symbol"))
     body = AbstractPlanStep[_substitute_step(inner, substitutions; prefix=prefix, parameter_slot=nothing) for inner in step.body]
@@ -790,7 +810,17 @@ end
 
 function _inline_plan_step(step::ChoicePlanStep)
     if step.rhs isa DistributionSpec || step.rhs isa RawChoiceRhsSpec || step.rhs isa BroadcastDistributionSpec
-        return _wrap_steps_with_scopes(AbstractPlanStep[ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, LoopScopeSpec[], step.parameter_slot)], step.scopes)
+        return _wrap_steps_with_scopes(
+            AbstractPlanStep[ChoicePlanStep(
+                step.choice_index,
+                step.binding,
+                step.address,
+                step.rhs,
+                LoopScopeSpec[],
+                step.parameter_slot,
+            )],
+            step.scopes,
+        )
     elseif step.rhs isa GenerativeCallSpec
         callee = step.rhs.callee
         callee isa TeaModel || throw(ArgumentError("generative call inlining requires a TeaModel callee, got $(typeof(callee))"))
@@ -825,7 +855,13 @@ function _inline_plan_step(step::ChoicePlanStep)
     throw(ArgumentError("unsupported choice RHS in execution-plan inlining: $(typeof(step.rhs))"))
 end
 
-function build_execution_plan(name::Symbol, arguments::Vector{Symbol}, raw_steps::Vector{AbstractPlanStep}, layout::ParameterLayout, return_expr::Any)
+function build_execution_plan(
+    name::Symbol,
+    arguments::Vector{Symbol},
+    raw_steps::Vector{AbstractPlanStep},
+    layout::ParameterLayout,
+    return_expr::Any,
+)
     if isempty(raw_steps)
         environment_layout = _build_environment_layout(arguments, AbstractPlanStep[])
         return ExecutionPlan(name, AbstractPlanStep[], layout, environment_layout)

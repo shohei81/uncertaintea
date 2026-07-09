@@ -127,7 +127,7 @@ function predict(
 )
     num_draws > 0 || throw(ArgumentError("predict requires num_draws > 0"))
     draws = ChoiceMap[]
-    for _ in 1:num_draws
+    for _ = 1:num_draws
         trace, _ = generate(model, args, choicemap(); rng=rng)
         draw = ChoiceMap()
         for entry in trace.choices

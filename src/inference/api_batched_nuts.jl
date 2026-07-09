@@ -41,10 +41,12 @@ function batched_nuts(
             throw(ArgumentError("batched_nuts `backend` must be a KernelAbstractions.Backend or nothing, got $(typeof(backend))"))
         tree_strategy === :masked ||
             throw(ArgumentError("batched_nuts device backend requires tree_strategy=:masked, got $(repr(tree_strategy))"))
-        per_chain_adaptation && throw(ArgumentError(
-            "batched_nuts per-chain adaptation is not supported on the device backend; " *
-            "run with backend=nothing or per_chain_adaptation=false",
-        ))
+        per_chain_adaptation && throw(
+            ArgumentError(
+                "batched_nuts per-chain adaptation is not supported on the device backend; " *
+                "run with backend=nothing or per_chain_adaptation=false",
+            ),
+        )
         device_precision = precision === nothing ? default_device_precision(backend) : precision
     end
     num_params = parametercount(parameterlayout(model))
@@ -63,10 +65,12 @@ function batched_nuts(
         args,
         constraints,
     )
-    device_nuts_workspace = backend === nothing ? nothing : DeviceNUTSWorkspace(
-        model, num_chains, max_tree_depth;
-        backend=backend, precision=device_precision, args=args, constraints=constraints,
-    )
+    device_nuts_workspace =
+        backend === nothing ? nothing :
+        DeviceNUTSWorkspace(
+            model, num_chains, max_tree_depth;
+            backend=backend, precision=device_precision, args=args, constraints=constraints,
+        )
 
     batch_args = _validate_batched_args(args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
@@ -193,7 +197,7 @@ function batched_nuts(
 
     sample_index = 0
     cumulative_divergences = 0
-    for iteration in 1:total_iterations
+    for iteration = 1:total_iterations
         nuts_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
         if tree_strategy === :masked && device_nuts_workspace !== nothing
@@ -244,7 +248,7 @@ function batched_nuts(
             )
         end
 
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if workspace.control.accepted_step[chain_index]
                 copyto!(view(position, :, chain_index), view(workspace.proposal_position, :, chain_index))
                 copyto!(view(current_gradient, :, chain_index), view(workspace.proposal_gradient, :, chain_index))
@@ -255,7 +259,7 @@ function batched_nuts(
         cumulative_divergences += count(workspace.control.divergent_step)
 
         if iteration <= num_warmup
-            @inbounds for chain_index in 1:num_chains
+            @inbounds for chain_index = 1:num_chains
                 workspace.mass_adaptation_weights[chain_index] = _mass_adaptation_weight(
                     driver.variance_state,
                     false,
@@ -282,7 +286,7 @@ function batched_nuts(
                 callback, callback_every, :warmup, iteration, num_warmup, nuts_step_size, cumulative_divergences)
         else
             sample_index += 1
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
                 _transform_to_constrained!(
                     view(workspace.constrained_position, :, chain_index),
@@ -309,7 +313,7 @@ function batched_nuts(
 
     mass_matrix = copy(driver.inverse_mass_matrix)
     chains = Vector{HMCChain}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chains[chain_index] = HMCChain(
             :nuts,
             model,
@@ -415,7 +419,7 @@ function _batched_nuts_per_chain!(
             adapt_mass_matrix=adapt_mass_matrix,
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
-        ) for chain_index in 1:num_chains
+        ) for chain_index = 1:num_chains
     ]
     # Per-chain re-search: each chain re-runs the single-chain reasonable step-size
     # search on its own column at its own warmup window ends (chain-major RNG).
@@ -428,13 +432,13 @@ function _batched_nuts_per_chain!(
             rng,
             collect(view(position, :, chain_index)),
             current_logjoint[chain_index],
-        ) for chain_index in 1:num_chains
+        ) for chain_index = 1:num_chains
     ]
 
     sample_index = 0
     cumulative_divergences = 0
-    for iteration in 1:total_iterations
-        for chain_index in 1:num_chains
+    for iteration = 1:total_iterations
+        for chain_index = 1:num_chains
             step_sizes[chain_index] = drivers[chain_index].step_size
             @inbounds copyto!(
                 view(inverse_mass_matrices, :, chain_index),
@@ -475,7 +479,7 @@ function _batched_nuts_per_chain!(
             )
         end
 
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if workspace.control.accepted_step[chain_index]
                 copyto!(view(position, :, chain_index), view(workspace.proposal_position, :, chain_index))
                 copyto!(view(current_gradient, :, chain_index), view(workspace.proposal_gradient, :, chain_index))
@@ -486,7 +490,7 @@ function _batched_nuts_per_chain!(
         cumulative_divergences += count(workspace.control.divergent_step)
 
         if iteration <= num_warmup
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 mass_weight = _mass_adaptation_weight(
                     drivers[chain_index].variance_state,
                     false,
@@ -494,7 +498,7 @@ function _batched_nuts_per_chain!(
                     workspace.control.divergent_step[chain_index],
                 )
                 accept_statistic = workspace.control.divergent_step[chain_index] ? 0.0 :
-                    workspace.accept_prob[chain_index]
+                                   workspace.accept_prob[chain_index]
                 refinds[chain_index].position = collect(view(position, :, chain_index))
                 refinds[chain_index].current_logjoint = current_logjoint[chain_index]
                 warmup_update!(
@@ -513,7 +517,7 @@ function _batched_nuts_per_chain!(
                 callback, callback_every, :warmup, iteration, num_warmup, mean_step_size, cumulative_divergences)
         else
             sample_index += 1
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
                 _transform_to_constrained!(
                     view(workspace.constrained_position, :, chain_index),
@@ -539,7 +543,7 @@ function _batched_nuts_per_chain!(
     end
 
     chains = Vector{HMCChain}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         mass_matrix = copy(drivers[chain_index].inverse_mass_matrix)
         chains[chain_index] = HMCChain(
             :nuts,

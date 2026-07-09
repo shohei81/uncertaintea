@@ -29,10 +29,12 @@ function batched_hmc(
         # untouched when `backend === nothing`.
         backend isa KernelAbstractions.Backend ||
             throw(ArgumentError("batched_hmc `backend` must be a KernelAbstractions.Backend or nothing, got $(typeof(backend))"))
-        per_chain_adaptation && throw(ArgumentError(
-            "batched_hmc per-chain adaptation is not supported on the device backend; " *
-            "run with backend=nothing or per_chain_adaptation=false",
-        ))
+        per_chain_adaptation && throw(
+            ArgumentError(
+                "batched_hmc per-chain adaptation is not supported on the device backend; " *
+                "run with backend=nothing or per_chain_adaptation=false",
+            ),
+        )
         device_precision = precision === nothing ? default_device_precision(backend) : precision
         return _run_device_batched_hmc(
             model, args, constraints;
@@ -192,7 +194,7 @@ function batched_hmc(
 
     sample_index = 0
     cumulative_divergences = 0
-    for iteration in 1:total_iterations
+    for iteration = 1:total_iterations
         hmc_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
         _update_sqrt_inverse_mass_matrix!(workspace.sqrt_inverse_mass_matrix, inverse_mass_matrix)
@@ -224,7 +226,7 @@ function batched_hmc(
         divergent_step = workspace.divergent_step
         fill!(divergent_step, true)
 
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if valid[chain_index]
                 proposed_hamiltonian[chain_index] = _hamiltonian(
                     proposed_logjoint[chain_index],
@@ -243,7 +245,7 @@ function batched_hmc(
         accept_prob = _batched_acceptance_probability!(workspace.accept_prob, log_accept_ratio)
         accepted_step = workspace.accepted_step
         fill!(accepted_step, false)
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if valid[chain_index] && log(rand(rng)) < min(0.0, log_accept_ratio[chain_index])
                 copyto!(view(position, :, chain_index), view(proposal_position, :, chain_index))
                 copyto!(view(current_gradient, :, chain_index), view(proposal_gradient, :, chain_index))
@@ -280,7 +282,7 @@ function batched_hmc(
 
         if iteration > num_warmup
             sample_index += 1
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
                 _transform_to_constrained!(
                     view(workspace.constrained_position, :, chain_index),
@@ -306,7 +308,7 @@ function batched_hmc(
 
     mass_matrix = copy(driver.inverse_mass_matrix)
     chains = Vector{HMCChain}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chains[chain_index] = HMCChain(
             :hmc,
             model,
@@ -403,7 +405,7 @@ function _batched_hmc_per_chain!(
             adapt_mass_matrix=adapt_mass_matrix,
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
-        ) for chain_index in 1:num_chains
+        ) for chain_index = 1:num_chains
     ]
     # Per-chain re-search uses a single-chain reasonable step-size search on each
     # chain's own column gradient cache (chain-major RNG at warmup window ends).
@@ -421,13 +423,13 @@ function _batched_hmc_per_chain!(
             rng,
             collect(view(position, :, chain_index)),
             current_logjoint[chain_index],
-        ) for chain_index in 1:num_chains
+        ) for chain_index = 1:num_chains
     ]
 
     sample_index = 0
     cumulative_divergences = 0
-    for iteration in 1:total_iterations
-        for chain_index in 1:num_chains
+    for iteration = 1:total_iterations
+        for chain_index = 1:num_chains
             step_sizes[chain_index] = drivers[chain_index].step_size
             @inbounds copyto!(
                 view(inverse_mass_matrices, :, chain_index),
@@ -465,7 +467,7 @@ function _batched_hmc_per_chain!(
         divergent_step = workspace.divergent_step
         fill!(divergent_step, true)
 
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if valid[chain_index]
                 proposed_hamiltonian[chain_index] = _hamiltonian(
                     proposed_logjoint[chain_index],
@@ -484,7 +486,7 @@ function _batched_hmc_per_chain!(
         accept_prob = _batched_acceptance_probability!(workspace.accept_prob, log_accept_ratio)
         accepted_step = workspace.accepted_step
         fill!(accepted_step, false)
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if valid[chain_index] && log(rand(rng)) < min(0.0, log_accept_ratio[chain_index])
                 copyto!(view(position, :, chain_index), view(proposal_position, :, chain_index))
                 copyto!(view(current_gradient, :, chain_index), view(proposal_gradient, :, chain_index))
@@ -496,7 +498,7 @@ function _batched_hmc_per_chain!(
         cumulative_divergences += count(divergent_step)
 
         if iteration <= num_warmup
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 mass_weight = _mass_adaptation_weight(
                     drivers[chain_index].variance_state,
                     accepted_step[chain_index],
@@ -524,7 +526,7 @@ function _batched_hmc_per_chain!(
 
         if iteration > num_warmup
             sample_index += 1
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
                 _transform_to_constrained!(
                     view(workspace.constrained_position, :, chain_index),
@@ -549,7 +551,7 @@ function _batched_hmc_per_chain!(
     end
 
     chains = Vector{HMCChain}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         mass_matrix = copy(drivers[chain_index].inverse_mass_matrix)
         chains[chain_index] = HMCChain(
             :hmc,

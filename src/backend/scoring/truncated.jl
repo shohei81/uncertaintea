@@ -55,7 +55,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(upper_values, env, step.upper, 8)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         totals[batch_index] += _backend_truncatednormal_logpdf(
             mu_values[batch_index],
@@ -135,7 +135,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(upper_values, env, step.upper, 10)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         totals[batch_index] += _backend_truncatedstudentt_logpdf(
             nu_values[batch_index],

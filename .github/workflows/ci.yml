@@ -25,6 +25,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  format:
+    name: format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      # Pin the formatter: different JuliaFormatter versions format differently.
+      - run: julia -e 'using Pkg; Pkg.add(name="JuliaFormatter", version="2.10.1")'
+      - run: julia -e 'using JuliaFormatter; format(".")'
+      - run: git diff --exit-code
+
   test:
     name: julia ${{ matrix.julia-version }} / ${{ matrix.test-group }}
     runs-on: ubuntu-latest

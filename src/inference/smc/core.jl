@@ -140,7 +140,7 @@ function _adaptive_tempering_beta(
 
     lower = beta_start
     upper = 1.0
-    for _ in 1:32
+    for _ = 1:32
         midpoint = (lower + upper) / 2
         midpoint_ess = effective_sample_size_at(midpoint)
         if midpoint_ess >= min_effective_sample_size
@@ -182,7 +182,7 @@ function _systematic_resample_indices(
     threshold = rand(rng) * step
     cumulative = normalized_weights[1]
     source_index = 1
-    for sample_index in 1:num_samples
+    for sample_index = 1:num_samples
         position = threshold + (sample_index - 1) * step
         while position > cumulative && source_index < length(normalized_weights)
             source_index += 1
@@ -205,7 +205,7 @@ function _stratified_resample_indices(
     step = 1.0 / num_samples
     cumulative = normalized_weights[1]
     source_index = 1
-    for sample_index in 1:num_samples
+    for sample_index = 1:num_samples
         position = (sample_index - 1) * step + rand(rng) * step
         while position > cumulative && source_index < length(normalized_weights)
             source_index += 1
@@ -225,7 +225,7 @@ function _multinomial_resample_indices(
     isempty(normalized_weights) && throw(ArgumentError("multinomial resampling requires non-empty weights"))
 
     indices = Vector{Int}(undef, num_samples)
-    for sample_index in 1:num_samples
+    for sample_index = 1:num_samples
         indices[sample_index] = _inverse_cdf_index(normalized_weights, rand(rng))
     end
     return indices
@@ -245,7 +245,7 @@ function _residual_resample_indices(
     for source_index in eachindex(normalized_weights)
         copies = floor(Int, num_samples * normalized_weights[source_index])
         deterministic_total += copies
-        for _ in 1:copies
+        for _ = 1:copies
             indices[position] = source_index
             position += 1
         end
@@ -257,14 +257,14 @@ function _residual_resample_indices(
         residual_total = 0.0
         for source_index in eachindex(normalized_weights)
             value = num_samples * normalized_weights[source_index] -
-                floor(num_samples * normalized_weights[source_index])
+                    floor(num_samples * normalized_weights[source_index])
             residual[source_index] = value
             residual_total += value
         end
         for source_index in eachindex(residual)
             residual[source_index] /= residual_total
         end
-        for _ in 1:remaining
+        for _ = 1:remaining
             indices[position] = _inverse_cdf_index(residual, rand(rng))
             position += 1
         end
@@ -340,7 +340,11 @@ function _gaussian_logdensity_from_particles!(
             ),
         )
     size(particles, 2) == length(destination) ||
-        throw(DimensionMismatch("expected Gaussian log-density destination of length $(size(particles, 2)), got $(length(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected Gaussian log-density destination of length $(size(particles, 2)), got $(length(destination))",
+            ),
+        )
 
     for parameter_index in eachindex(location, log_scale)
         scale = exp(log_scale[parameter_index])
@@ -444,4 +448,3 @@ function _batched_tempered_target!(
     _tempered_gradient!(tempered_gradient, beta, logjoint_gradient, logproposal_gradient)
     return tempered_values, tempered_gradient
 end
-

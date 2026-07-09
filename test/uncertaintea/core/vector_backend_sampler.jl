@@ -119,13 +119,13 @@
     @test size(dirichlet_batched_hmc[1].constrained_samples) == (3, 6)
     @test size(dirichlet_batched_nuts[1].constrained_samples) == (3, 6)
     for chain in dirichlet_batched_hmc
-        for sample_index in 1:size(chain.constrained_samples, 2)
+        for sample_index = 1:size(chain.constrained_samples, 2)
             @test all(>(0.0), chain.constrained_samples[:, sample_index])
             @test sum(chain.constrained_samples[:, sample_index]) ≈ 1.0 atol=1e-6
         end
     end
     for chain in dirichlet_batched_nuts
-        for sample_index in 1:size(chain.constrained_samples, 2)
+        for sample_index = 1:size(chain.constrained_samples, 2)
             @test all(>(0.0), chain.constrained_samples[:, sample_index])
             @test sum(chain.constrained_samples[:, sample_index]) ≈ 1.0 atol=1e-6
         end

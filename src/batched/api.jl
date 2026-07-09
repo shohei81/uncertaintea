@@ -111,7 +111,8 @@ function BatchedLogjointGradientCache(
         return BatchedLogjointGradientCache(model, Any[], backend_cache, nothing, gradient_buffer, parameter_count, batch_size)
     end
 
-    flat_cache = isnothing(_backend_execution_plan(model)) ? nothing :
+    flat_cache =
+        isnothing(_backend_execution_plan(model)) ? nothing :
         _batched_flat_gradient_cache(model, gradient_buffer, params, batch_args, batch_constraints)
     if !isnothing(flat_cache)
         return BatchedLogjointGradientCache(model, Any[], nothing, flat_cache, gradient_buffer, parameter_count, batch_size)
@@ -120,7 +121,7 @@ function BatchedLogjointGradientCache(
     first_cache = _batched_gradient_column_cache(model, gradient_buffer, params, batch_args, batch_constraints, 1)
     column_caches = Vector{typeof(first_cache)}(undef, batch_size)
     column_caches[1] = first_cache
-    for batch_index in 2:batch_size
+    for batch_index = 2:batch_size
         column_caches[batch_index] = _batched_gradient_column_cache(
             model,
             gradient_buffer,
@@ -145,7 +146,13 @@ function batched_logjoint_gradient_unconstrained!(
 
     if !isnothing(cache.backend_cache)
         totals = _batched_totals_buffer!(cache.backend_cache.workspace, cache.batch_size, eltype(cache.gradient_buffer))
-        _batched_backend_logjoint_and_gradient_unconstrained!(totals, cache.gradient_buffer, cache.model, cache.backend_cache, params)
+        _batched_backend_logjoint_and_gradient_unconstrained!(
+            totals,
+            cache.gradient_buffer,
+            cache.model,
+            cache.backend_cache,
+            params,
+        )
         return cache.gradient_buffer
     end
 
@@ -154,7 +161,7 @@ function batched_logjoint_gradient_unconstrained!(
         return cache.gradient_buffer
     end
 
-    for batch_index in 1:cache.batch_size
+    for batch_index = 1:cache.batch_size
         column_cache = cache.column_caches[batch_index]
         ForwardDiff.gradient!(column_cache.buffer, column_cache.objective, view(params, :, batch_index), column_cache.config)
     end
@@ -192,7 +199,7 @@ function _batched_logjoint_unconstrained_from_gradient_cache!(
         )
     end
 
-    for batch_index in 1:cache.batch_size
+    for batch_index = 1:cache.batch_size
         column_cache = cache.column_caches[batch_index]
         objective = column_cache.objective
         destination[batch_index] = _logjoint_unconstrained_with_workspace!(

@@ -127,7 +127,7 @@ end
     start = @inbounds ls[step.loop_id]
     total = zero(Tt)
     cur = cursor
-    for t in Int32(0):(count - Int32(1))
+    for t = Int32(0):(count-Int32(1))
         if step.iterator_slot > Int32(0)
             @inbounds slots[step.iterator_slot, col] = Tt(start + t)
         end

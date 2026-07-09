@@ -51,7 +51,7 @@ end
 @kernel function _device_hmc_validity_init!(valid, @Const(grad), num_params::Int)
     b = @index(Global)
     ok = true
-    for pidx in 1:num_params
+    for pidx = 1:num_params
         ok &= isfinite(@inbounds grad[pidx, b])
     end
     @inbounds valid[b] = ok ? 0x01 : 0x00
@@ -62,7 +62,7 @@ end
     b = @index(Global)
     if @inbounds(valid[b]) != 0x00
         ok = true
-        for pidx in 1:num_params
+        for pidx = 1:num_params
             ok &= isfinite(@inbounds grad[pidx, b])
         end
         @inbounds valid[b] = ok ? 0x01 : 0x00
@@ -74,7 +74,7 @@ end
     b = @index(Global)
     if @inbounds(valid[b]) != 0x00
         ok = isfinite(@inbounds logjoint[b])
-        for pidx in 1:num_params
+        for pidx = 1:num_params
             ok &= isfinite(@inbounds grad[pidx, b])
         end
         @inbounds valid[b] = ok ? 0x01 : 0x00
@@ -85,7 +85,7 @@ end
 @kernel function _device_hmc_hamiltonian!(hamiltonian, @Const(momentum), @Const(inverse_mass), @Const(logjoint), num_params::Int)
     b = @index(Global)
     kinetic = zero(eltype(hamiltonian))
-    for pidx in 1:num_params
+    for pidx = 1:num_params
         m = @inbounds momentum[pidx, b]
         kinetic += m * m * @inbounds(inverse_mass[pidx])
     end
@@ -214,7 +214,7 @@ function _device_leapfrog_integrate!(ws::DeviceHMCWorkspace{T}, step_size::Real,
     _device_hmc_validity_init!(be)(ws.valid, ws.current_gradient, P; ndrange=C)
     _device_hmc_kick!(be)(p, ws.current_gradient, ws.valid, half; ndrange=(P, C))
 
-    for leapfrog_step in 1:num_steps
+    for leapfrog_step = 1:num_steps
         _device_hmc_drift!(be)(q, p, ws.inverse_mass, ws.valid, h; ndrange=(P, C))
         _device_launch_gradient!(inner)
         if leapfrog_step < num_steps
@@ -402,7 +402,7 @@ function _run_device_batched_hmc(
 
     sample_index = 0
     cumulative_divergences = 0
-    for iteration in 1:total_iterations
+    for iteration = 1:total_iterations
         hmc_step_size = driver.step_size
         inverse_mass_matrix = driver.inverse_mass_matrix
         inverse_mass_upload .= inverse_mass_matrix
@@ -428,7 +428,7 @@ function _run_device_batched_hmc(
 
         fill!(accepted_step, false)
         fill!(divergent_step, true)
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             if host_valid[chain_index] != 0x00
                 current_ham = Float64(host_current_ham[chain_index])
                 proposed_ham = Float64(host_proposed_ham[chain_index])
@@ -471,16 +471,16 @@ function _run_device_batched_hmc(
         # warmup also grab the gradient so the step-size re-search sees fresh state.
         copyto!(position_download, ws.position)
         copyto!(logjoint_download, ws.current_logjoint)
-        for chain_index in 1:num_chains
-            for parameter_index in 1:num_params
+        for chain_index = 1:num_chains
+            for parameter_index = 1:num_params
                 position[parameter_index, chain_index] = Float64(position_download[parameter_index, chain_index])
             end
             current_logjoint[chain_index] = Float64(logjoint_download[chain_index])
         end
         if iteration <= num_warmup
             copyto!(gradient_download, ws.current_gradient)
-            for chain_index in 1:num_chains
-                for parameter_index in 1:num_params
+            for chain_index = 1:num_chains
+                for parameter_index = 1:num_params
                     current_gradient[parameter_index, chain_index] =
                         Float64(gradient_download[parameter_index, chain_index])
                 end
@@ -513,7 +513,7 @@ function _run_device_batched_hmc(
 
         if iteration > num_warmup
             sample_index += 1
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
                 _transform_to_constrained!(
                     view(host_workspace.constrained_position, :, chain_index),
@@ -539,7 +539,7 @@ function _run_device_batched_hmc(
 
     mass_matrix = copy(driver.inverse_mass_matrix)
     chains = Vector{HMCChain}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chains[chain_index] = HMCChain(
             :hmc,
             model,

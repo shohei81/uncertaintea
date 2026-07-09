@@ -1,7 +1,7 @@
-    # PR 6.0: element-type generalization of the batched CPU scoring/gradient path.
-    # Contract: outputs adopt float(eltype(params)); Float32 inputs yield Float32
-    # results that match the Float64 path within Float32 precision. Float64 stays
-    # bit-for-bit unchanged (default type parameter remains Float64).
+# PR 6.0: element-type generalization of the batched CPU scoring/gradient path.
+# Contract: outputs adopt float(eltype(params)); Float32 inputs yield Float32
+# results that match the Float64 path within Float32 precision. Float64 stays
+# bit-for-bit unchanged (default type parameter remains Float64).
 
 @testset "batched_scoring_eltype_f32" begin
     @tea static function f32_normal_scale_model()
@@ -21,8 +21,10 @@
 
     f32_normal_values64 = batched_logjoint(f32_normal_scale_model, f32_normal_params64, (), f32_normal_constraints)
     f32_normal_values32 = batched_logjoint(f32_normal_scale_model, f32_normal_params32, (), f32_normal_constraints)
-    f32_normal_grad64 = batched_logjoint_gradient_unconstrained(f32_normal_scale_model, f32_normal_params64, (), f32_normal_constraints)
-    f32_normal_grad32 = batched_logjoint_gradient_unconstrained(f32_normal_scale_model, f32_normal_params32, (), f32_normal_constraints)
+    f32_normal_grad64 =
+        batched_logjoint_gradient_unconstrained(f32_normal_scale_model, f32_normal_params64, (), f32_normal_constraints)
+    f32_normal_grad32 =
+        batched_logjoint_gradient_unconstrained(f32_normal_scale_model, f32_normal_params32, (), f32_normal_constraints)
 
     @test eltype(f32_normal_values32) == Float32
     @test eltype(f32_normal_grad32) == Float32
@@ -30,7 +32,7 @@
     @test eltype(f32_normal_grad64) == Float64
     @test f32_normal_values32 ≈ f32_normal_values64 rtol=1e-5
     @test f32_normal_grad32 ≈ f32_normal_grad64 rtol=1e-4
-    for f32_normal_index in 1:3
+    for f32_normal_index = 1:3
         @test f32_normal_values64[f32_normal_index] ≈ logjoint(
             f32_normal_scale_model,
             f32_normal_params64[:, f32_normal_index],
@@ -63,7 +65,7 @@
     @test eltype(f32_gamma_grad32) == Float32
     @test f32_gamma_values32 ≈ f32_gamma_values64 rtol=1e-5
     @test f32_gamma_grad32 ≈ f32_gamma_grad64 rtol=1e-4
-    for f32_gamma_index in 1:3
+    for f32_gamma_index = 1:3
         @test f32_gamma_values64[f32_gamma_index] ≈ logjoint(
             f32_gamma_shape_model,
             f32_gamma_params64[:, f32_gamma_index],
@@ -88,14 +90,16 @@
 
     f32_studentt_values64 = batched_logjoint(f32_studentt_scale_model, f32_studentt_params64, (), f32_studentt_constraints)
     f32_studentt_values32 = batched_logjoint(f32_studentt_scale_model, f32_studentt_params32, (), f32_studentt_constraints)
-    f32_studentt_grad64 = batched_logjoint_gradient_unconstrained(f32_studentt_scale_model, f32_studentt_params64, (), f32_studentt_constraints)
-    f32_studentt_grad32 = batched_logjoint_gradient_unconstrained(f32_studentt_scale_model, f32_studentt_params32, (), f32_studentt_constraints)
+    f32_studentt_grad64 =
+        batched_logjoint_gradient_unconstrained(f32_studentt_scale_model, f32_studentt_params64, (), f32_studentt_constraints)
+    f32_studentt_grad32 =
+        batched_logjoint_gradient_unconstrained(f32_studentt_scale_model, f32_studentt_params32, (), f32_studentt_constraints)
 
     @test eltype(f32_studentt_values32) == Float32
     @test eltype(f32_studentt_grad32) == Float32
     @test f32_studentt_values32 ≈ f32_studentt_values64 rtol=1e-5
     @test f32_studentt_grad32 ≈ f32_studentt_grad64 rtol=1e-4
-    for f32_studentt_index in 1:3
+    for f32_studentt_index = 1:3
         @test f32_studentt_values64[f32_studentt_index] ≈ logjoint(
             f32_studentt_scale_model,
             f32_studentt_params64[:, f32_studentt_index],

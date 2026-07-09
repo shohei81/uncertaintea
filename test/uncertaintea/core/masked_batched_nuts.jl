@@ -76,7 +76,7 @@ end
     hybrid_draws = posterior_array(hybrid)
     masked_draws = posterior_array(masked)
     @test all(isfinite, masked_draws)
-    for parameter_index in 1:2
+    for parameter_index = 1:2
         hybrid_param = hybrid_draws[:, :, parameter_index]
         masked_param = masked_draws[:, :, parameter_index]
         @test abs(mnuts_mean(masked_param) - mnuts_mean(hybrid_param)) < 0.1

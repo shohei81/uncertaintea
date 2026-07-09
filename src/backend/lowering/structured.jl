@@ -96,7 +96,12 @@ function _backend_lower_broadcast_arg(model::TeaModel, layout::EnvironmentLayout
     return _backend_lower_expr(model, layout, expr, issues, context)
 end
 
-function _backend_lower_broadcast_normal_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_broadcast_normal_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     step.rhs.family === :normal || begin
         _backend_issue!(issues, "broadcast observations only support the normal family in backend lowering")
         return nothing
@@ -139,7 +144,12 @@ function _backend_lower_tuple_argument(model::TeaModel, layout::EnvironmentLayou
     return lowered.arguments
 end
 
-function _backend_lower_mvnormal_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_mvnormal_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     length(step.rhs.arguments) == 2 || begin
         _backend_issue!(issues, "mvnormal expects exactly 2 backend arguments")
         return nothing
@@ -182,7 +192,12 @@ function _backend_lower_mvnormal_choice_step(model::TeaModel, layout::Environmen
     )
 end
 
-function _backend_lower_dirichlet_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_dirichlet_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     length(step.rhs.arguments) == 1 || begin
         _backend_issue!(issues, "dirichlet expects exactly 1 backend argument")
         return nothing
@@ -235,7 +250,12 @@ function _backend_lower_mixture_component(model::TeaModel, layout::EnvironmentLa
     return nothing
 end
 
-function _backend_lower_mixture_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_mixture_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     length(step.rhs.arguments) >= 2 || begin
         _backend_issue!(issues, "mixture expects a weights argument and at least one component")
         return nothing
@@ -273,7 +293,12 @@ function _backend_lower_mixture_choice_step(model::TeaModel, layout::Environment
     )
 end
 
-function _backend_lower_mvnormaldense_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_mvnormaldense_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     length(step.rhs.arguments) == 2 || begin
         _backend_issue!(issues, "mvnormaldense expects exactly 2 backend arguments")
         return nothing

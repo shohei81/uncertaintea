@@ -32,18 +32,18 @@
     @test exponential_unconstrained[1] ≈ log(exponential_params[1])
     @test transform_to_constrained(exponential_wait_model, exponential_unconstrained) ≈ exponential_params atol=1e-8
     @test logjoint(exponential_wait_model, exponential_params, (), exponential_constraints) ≈
-        assess(
-            exponential_wait_model,
-            (),
-            choicemap((:wait, exponential_trace[:wait]), (:y, 0.8f0)),
-        ) atol=1e-6
+          assess(
+        exponential_wait_model,
+        (),
+        choicemap((:wait, exponential_trace[:wait]), (:y, 0.8f0)),
+    ) atol=1e-6
     @test logjoint_unconstrained(
         exponential_wait_model,
         exponential_unconstrained,
         (),
         exponential_constraints,
     ) ≈ logjoint(exponential_wait_model, exponential_params, (), exponential_constraints) +
-        exponential_unconstrained[1] atol=1e-6
+          exponential_unconstrained[1] atol=1e-6
 
     @tea static function poisson_rate_model()
         rate ~ exponential(1.0f0)
@@ -97,22 +97,24 @@
     @test poisson_backend_plan.steps[1] isa UncertainTea.BackendExponentialChoicePlanStep
     @test poisson_backend_plan.steps[2] isa UncertainTea.BackendPoissonChoicePlanStep
     @test logjoint(poisson_rate_model, poisson_params, (), poisson_constraints) ≈
-        assess(
-            poisson_rate_model,
-            (),
-            choicemap((:rate, poisson_trace[:rate]), (:y, 3)),
-        ) atol=1e-6
+          assess(
+        poisson_rate_model,
+        (),
+        choicemap((:rate, poisson_trace[:rate]), (:y, 3)),
+    ) atol=1e-6
     @test logjoint_unconstrained(poisson_rate_model, poisson_unconstrained, (), poisson_constraints) ≈
-        logjoint(poisson_rate_model, poisson_params, (), poisson_constraints) +
-        poisson_unconstrained[1] atol=1e-6
-    @test poisson_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            poisson_rate_model,
-            poisson_batch_params[:, index],
-            (),
-            poisson_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+          logjoint(poisson_rate_model, poisson_params, (), poisson_constraints) +
+          poisson_unconstrained[1] atol=1e-6
+    @test poisson_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                poisson_rate_model,
+                poisson_batch_params[:, index],
+                (),
+                poisson_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(poisson_batch_cache.backend_cache)
     @test isnothing(poisson_batch_cache.flat_cache)
     @test isempty(poisson_batch_cache.column_caches)
@@ -122,7 +124,7 @@
             poisson_batch_params[:, index],
             (),
             poisson_batch_constraints[index],
-        ) for index in 1:3
+        ) for index = 1:3
     ] atol=1e-8
     @test poisson_combined_gradient === poisson_batch_cache.gradient_buffer
     @test poisson_combined_gradient ≈ poisson_batch_gradient atol=1e-8

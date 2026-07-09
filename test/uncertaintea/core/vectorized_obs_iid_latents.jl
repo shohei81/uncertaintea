@@ -20,7 +20,7 @@ end
 @tea static function bc_loop_model(xs, n)
     slope ~ normal(0.0, 10.0)
     sigma ~ lognormal(0.0, 1.0)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ normal(slope * xs[i], sigma)
     end
 end
@@ -39,7 +39,7 @@ end
 
     @testset "bc_broadcast_matches_loop_logjoint" begin
         cm_bc = choicemap(:y => bc_y)
-        cm_loop = choicemap([(:y => i) => bc_y[i] for i in 1:bc_n]...)
+        cm_loop = choicemap([(:y => i) => bc_y[i] for i = 1:bc_n]...)
         lj_bc = logjoint_unconstrained(bc_broadcast_model, bc_theta, (bc_xs,), cm_bc)
         lj_loop = logjoint_unconstrained(bc_loop_model, bc_theta, (bc_xs, bc_n), cm_loop)
         @test lj_bc ≈ lj_loop atol = 1e-8
@@ -50,7 +50,7 @@ end
               logjoint(bc_loop_model, constrained, (bc_xs, bc_n), cm_loop) atol = 1e-8
         # a fully-constrained generate scores the whole joint, matching logjoint
         cm_full = choicemap((:slope, 1.3), (:sigma, 0.8), (:y, bc_y))
-        gen_trace, gen_weight = generate(bc_broadcast_model, (bc_xs,), cm_full; rng = MersenneTwister(7))
+        gen_trace, gen_weight = generate(bc_broadcast_model, (bc_xs,), cm_full; rng=MersenneTwister(7))
         gen_pv = parameter_vector(gen_trace)
         @test gen_weight ≈ logjoint(bc_broadcast_model, gen_pv, (bc_xs,), cm_bc) atol = 1e-8
     end
@@ -70,7 +70,7 @@ end
         params = randn(MersenneTwister(11), 2, batch_size)
 
         batched_lj = batched_logjoint_unconstrained(bc_broadcast_model, params, (bc_xs,), cm_bc)
-        for column in 1:batch_size
+        for column = 1:batch_size
             single = logjoint_unconstrained(bc_broadcast_model, params[:, column], (bc_xs,), cm_bc)
             @test batched_lj[column] ≈ single atol = 1e-8
         end
@@ -79,7 +79,7 @@ end
         @test cache.backend_cache !== nothing
 
         batched_grad = batched_logjoint_gradient_unconstrained(bc_broadcast_model, params, (bc_xs,), cm_bc)
-        for column in 1:batch_size
+        for column = 1:batch_size
             single = logjoint_gradient_unconstrained(bc_broadcast_model, params[:, column], (bc_xs,), cm_bc)
             @test batched_grad[:, column] ≈ single atol = 1e-8
         end
@@ -88,12 +88,12 @@ end
     @testset "bc_generate_semantics" begin
         cm_bc = choicemap(:y => bc_y)
         # constrained observation works
-        trace, weight = generate(bc_broadcast_model, (bc_xs,), cm_bc; rng = MersenneTwister(3))
+        trace, weight = generate(bc_broadcast_model, (bc_xs,), cm_bc; rng=MersenneTwister(3))
         @test isfinite(weight)
         @test length(trace[(:y,)]) == bc_n
 
         # unconstrained with a vector argument infers the sample length
-        trace2, _ = generate(bc_broadcast_model, (bc_xs,); rng = MersenneTwister(4))
+        trace2, _ = generate(bc_broadcast_model, (bc_xs,); rng=MersenneTwister(4))
         @test length(trace2[(:y,)]) == bc_n
 
         # unconstrained with all-scalar broadcast arguments cannot infer a length
@@ -101,7 +101,7 @@ end
             m ~ normal(0.0, 1.0)
             {:y} ~ normal.(m, 1.0)
         end
-        @test_throws ArgumentError generate(bc_scalar_model, (); rng = MersenneTwister(5))
+        @test_throws ArgumentError generate(bc_scalar_model, (); rng=MersenneTwister(5))
     end
 
     @testset "bc_broadcast_unsupported_family_throws" begin
@@ -128,14 +128,14 @@ end
         @test parametervaluecount(layout) == 8
         @test parametercount(layout) == 8
 
-        trace, _ = generate(bc_iid_model, (); rng = MersenneTwister(1))
+        trace, _ = generate(bc_iid_model, (); rng=MersenneTwister(1))
         @test length(trace[(:eps,)]) == 5
         @test length(trace[(:scales,)]) == 3
         @test all(>(0), trace[(:scales,)])
         pv = parameter_vector(trace)
         cm = choicemap((:eps, trace[(:eps,)]), (:scales, trace[(:scales,)]))
         # a fully-constrained re-generate scores the whole joint, matching logjoint
-        _, regen_weight = generate(bc_iid_model, (), cm; rng = MersenneTwister(2))
+        _, regen_weight = generate(bc_iid_model, (), cm; rng=MersenneTwister(2))
         @test regen_weight ≈ logjoint(bc_iid_model, pv, (), choicemap()) atol = 1e-8
     end
 
@@ -166,9 +166,9 @@ end
             bc_iid_model,
             (),
             choicemap();
-            num_samples = 60,
-            num_warmup = 60,
-            rng = MersenneTwister(99),
+            num_samples=60,
+            num_warmup=60,
+            rng=MersenneTwister(99),
         )
         @test size(chain.constrained_samples, 2) == 60
         @test all(isfinite, chain.constrained_samples)
@@ -196,12 +196,12 @@ end
             bc_broadcast_model,
             (recover_xs,),
             obs;
-            num_samples = 200,
-            num_warmup = 200,
-            rng = MersenneTwister(2024),
+            num_samples=200,
+            num_warmup=200,
+            rng=MersenneTwister(2024),
         )
         @test all(isfinite, chain.constrained_samples)
         slope_mean = sum(chain.constrained_samples[1, :]) / size(chain.constrained_samples, 2)
-        @test isapprox(slope_mean, true_slope; atol = 0.3)
+        @test isapprox(slope_mean, true_slope; atol=0.3)
     end
 end

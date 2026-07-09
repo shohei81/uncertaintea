@@ -217,7 +217,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
@@ -253,7 +253,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
@@ -287,7 +287,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(rate_values, env, step.rate, 2)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         rate = rate_values[batch_index]
         totals[batch_index] += _backend_exponential_logpdf(rate, value)
@@ -322,7 +322,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(rate_values, env, step.rate, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         shape = shape_values[batch_index]
         rate = rate_values[batch_index]
@@ -360,7 +360,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 6)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         nu = nu_values[batch_index]
         mu = mu_values[batch_index]
@@ -397,7 +397,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
@@ -420,7 +420,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         mu = mu_values[batch_index]
         sigma = sigma_values[batch_index]
@@ -441,7 +441,7 @@ function _score_backend_observed_loop_choice!(
     observed_values = env.observed_values
     _eval_backend_numeric_expr!(rate_values, env, step.rate, 2)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         rate = rate_values[batch_index]
         totals[batch_index] += _backend_exponential_logpdf(rate, value)
@@ -463,7 +463,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
     _eval_backend_numeric_expr!(rate_values, env, step.rate, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         shape = shape_values[batch_index]
         rate = rate_values[batch_index]
@@ -488,7 +488,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 5)
     _eval_backend_numeric_expr!(sigma_values, env, step.sigma, 6)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         nu = nu_values[batch_index]
         mu = mu_values[batch_index]
@@ -611,7 +611,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         mu = mu_values[batch_index]
         scale = scale_values[batch_index]
@@ -638,7 +638,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         shape = shape_values[batch_index]
         scale = scale_values[batch_index]
@@ -674,7 +674,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         shape = shape_values[batch_index]
         scale = scale_values[batch_index]
@@ -710,7 +710,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(beta_values, env, step.beta, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         alpha = alpha_values[batch_index]
         beta_parameter = beta_values[batch_index]
@@ -746,8 +746,9 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(mu_values, env, step.mu, 3)
     _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
-        totals[batch_index] += _backend_laplace_logpdf(mu_values[batch_index], scale_values[batch_index], observed_values[batch_index])
+    for batch_index = 1:env.batch_size
+        totals[batch_index] +=
+            _backend_laplace_logpdf(mu_values[batch_index], scale_values[batch_index], observed_values[batch_index])
     end
     return totals
 end
@@ -766,7 +767,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
     _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         shape = shape_values[batch_index]
         scale = scale_values[batch_index]
@@ -789,7 +790,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(shape_values, env, step.shape, 3)
     _eval_backend_numeric_expr!(scale_values, env, step.scale, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         shape = shape_values[batch_index]
         scale = scale_values[batch_index]
@@ -812,7 +813,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(alpha_values, env, step.alpha, 3)
     _eval_backend_numeric_expr!(beta_values, env, step.beta, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         alpha = alpha_values[batch_index]
         beta_parameter = beta_values[batch_index]

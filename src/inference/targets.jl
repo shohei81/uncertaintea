@@ -79,7 +79,8 @@ function batched_target_logdensity_and_gradient!(
     return values, gradient_destination
 end
 
-mutable struct BatchedTemperedDensityTarget{M<:TeaModel,A<:Tuple,C<:ChoiceMap,G<:BatchedLogjointGradientCache} <: AbstractBatchedDensityTarget
+mutable struct BatchedTemperedDensityTarget{M<:TeaModel,A<:Tuple,C<:ChoiceMap,G<:BatchedLogjointGradientCache} <:
+               AbstractBatchedDensityTarget
     const model::M
     const args::A
     const constraints::C

@@ -102,7 +102,7 @@ function _masked_nuts_doubling_round!(
 
     expand_access = _masked_nuts_expand_access(workspace, round_depth)
     any_expanding = true
-    for _ in 1:(1 << round_depth)
+    for _ = 1:(1<<round_depth)
         any_expanding || break
         _batched_nuts_kernel_leapfrog!(
             workspace,

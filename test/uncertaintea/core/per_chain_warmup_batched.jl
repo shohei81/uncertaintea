@@ -1,11 +1,11 @@
-    # PR 39: per-chain warmup adaptation for the batched samplers.
-    # Contract: batched_hmc / batched_nuts accept per_chain_adaptation (default
-    # false). When false the run is bitwise identical to the shared-driver path;
-    # when true each chain owns a WarmupDriver, adapting its own step size and
-    # diagonal inverse mass matrix. The batched integrators / momentum sampling /
-    # Hamiltonians gain per-chain overloads (step-size vector + inverse-mass
-    # matrix, one column per chain). The progress callback reports the mean of the
-    # per-chain step sizes.
+# PR 39: per-chain warmup adaptation for the batched samplers.
+# Contract: batched_hmc / batched_nuts accept per_chain_adaptation (default
+# false). When false the run is bitwise identical to the shared-driver path;
+# when true each chain owns a WarmupDriver, adapting its own step size and
+# diagonal inverse mass matrix. The batched integrators / momentum sampling /
+# Hamiltonians gain per-chain overloads (step-size vector + inverse-mass
+# matrix, one column per chain). The progress callback reports the mean of the
+# per-chain step sizes.
 
 @testset "per_chain_warmup_batched" begin
     @tea static function pca_gaussian_model()

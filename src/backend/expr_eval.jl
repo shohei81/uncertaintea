@@ -214,7 +214,9 @@ function _apply_backend_numeric_binary!(
     rhs::AbstractVector,
 )
     length(destination) == length(rhs) ||
-        throw(DimensionMismatch("expected backend numeric vectors of matching length, got $(length(destination)) and $(length(rhs))"))
+        throw(
+            DimensionMismatch("expected backend numeric vectors of matching length, got $(length(destination)) and $(length(rhs))"),
+        )
     for batch_index in eachindex(destination, rhs)
         destination[batch_index] = _require_numeric_value(
             env,
@@ -561,7 +563,7 @@ function _batched_index_iterable_reference(
     reference_arguments = ntuple(length(argument_buffers)) do argument_index
         values = argument_buffers[argument_index]
         reference_value = values[1]
-        for batch_index in 2:env.batch_size
+        for batch_index = 2:env.batch_size
             values[batch_index] == reference_value || throw(
                 BatchedBackendFallback(
                     "batched backend evaluation requires synchronized loop iterables across the batch",
@@ -649,4 +651,3 @@ function _concrete_batched_address_parts(parts::Tuple, batch_index::Int)
     head = source isa AbstractVector ? source[batch_index] : source
     return (head, _concrete_batched_address_parts(Base.tail(parts), batch_index)...)
 end
-

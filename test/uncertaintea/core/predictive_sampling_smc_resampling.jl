@@ -1,7 +1,7 @@
-    # PR 36: prior/posterior predictive sampling and SMC resampling schemes.
-    # Feature 1 exercises `predict` on pooled NUTS chains, weighted particle
-    # results, and the prior. Feature 2 exercises the resampling scheme dispatch
-    # plus the `log_evidence` accessor and `SMCResult` show.
+# PR 36: prior/posterior predictive sampling and SMC resampling schemes.
+# Feature 1 exercises `predict` on pooled NUTS chains, weighted particle
+# results, and the prior. Feature 2 exercises the resampling scheme dispatch
+# plus the `log_evidence` accessor and `SMCResult` show.
 
 @testset "predictive_sampling_smc_resampling" begin
     @tea static function pred_conjugate_model()
@@ -48,7 +48,7 @@
     # Loop-addressed observations round trip through predict.
     @tea static function pred_loop_model()
         mu ~ normal(0.0f0, 1.0f0)
-        for i in 1:3
+        for i = 1:3
             {:y => i} ~ normal(mu, 1.0f0)
         end
         return mu
@@ -72,7 +72,7 @@
     @test (:y, 1) in pred_loop_addrs
     @test (:y, 2) in pred_loop_addrs
     @test (:y, 3) in pred_loop_addrs
-    @test all(isfinite, Float64.(pred_loop_post[:y => 1]))
+    @test all(isfinite, Float64.(pred_loop_post[:y=>1]))
 
     # Weighted predict from a batched SIR result runs and returns finite values.
     pred_sir = batched_sir(pred_conjugate_model, (), pred_constraints; num_particles=500, rng=MersenneTwister(9))
@@ -103,7 +103,7 @@
         @test all(index -> 1 <= index <= 4, resamp_idx)
         # No scheme may ever select the zero-weight particle.
         @test !any(==(4), resamp_idx)
-        for particle in 1:4
+        for particle = 1:4
             resamp_share = count(==(particle), resamp_idx) / resamp_n
             @test isapprox(resamp_share, resamp_weights[particle]; atol=resamp_tol)
         end
@@ -116,9 +116,9 @@
         resamp_n,
         MersenneTwister(77),
     )
-    for particle in 1:4
+    for particle = 1:4
         @test count(==(particle), resamp_residual_idx) >=
-            floor(Int, resamp_n * resamp_weights[particle])
+              floor(Int, resamp_n * resamp_weights[particle])
     end
 
     # Unknown scheme is rejected.

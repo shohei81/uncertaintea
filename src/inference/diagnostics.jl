@@ -62,9 +62,23 @@ function Base.show(io::IO, ::MIME"text/plain", summary::HMCMassAdaptationWindowS
     println(io, "  pooled_samples: ", summary.pooled_samples)
     println(io, "  effective_count: ", _summary_float(summary.effective_count; digits=2))
     println(io, "  mean_weight: ", _summary_float(summary.mean_weight; digits=3))
-    println(io, "  clip_scale: ", _summary_float(summary.clip_scale_start; digits=2), " -> ", _summary_float(summary.clip_scale_end; digits=2))
+    println(
+        io,
+        "  clip_scale: ",
+        _summary_float(summary.clip_scale_start; digits=2),
+        " -> ",
+        _summary_float(summary.clip_scale_end; digits=2),
+    )
     println(io, "  updated: ", summary.updated)
-    print(io, "  mass: mean=", _summary_float(summary.mass_mean), " min=", _summary_float(summary.mass_min), " max=", _summary_float(summary.mass_max))
+    print(
+        io,
+        "  mass: mean=",
+        _summary_float(summary.mass_mean),
+        " min=",
+        _summary_float(summary.mass_min),
+        " max=",
+        _summary_float(summary.mass_max),
+    )
 end
 
 function Base.show(io::IO, summary::HMCMassAdaptationSummary)
@@ -96,7 +110,15 @@ function Base.show(io::IO, ::MIME"text/plain", summary::HMCMassAdaptationSummary
         " max=", _summary_float(summary.max_effective_count; digits=2))
     println(io, "  mean_weight: ", _summary_float(summary.mean_weight; digits=3))
     println(io, "  clip_scale_end_mean: ", _summary_float(summary.mean_clip_scale_end; digits=2))
-    print(io, "  mass: mean=", _summary_float(summary.mean_mass), " min=", _summary_float(summary.min_mass), " max=", _summary_float(summary.max_mass))
+    print(
+        io,
+        "  mass: mean=",
+        _summary_float(summary.mean_mass),
+        " min=",
+        _summary_float(summary.min_mass),
+        " max=",
+        _summary_float(summary.max_mass),
+    )
 end
 
 function Base.show(io::IO, diagnostics::HMCDiagnosticsSummary)
@@ -197,7 +219,7 @@ function Base.show(io::IO, ::MIME"text/plain", summary::HMCSummary)
     println(io, "  quantiles: ", summary.quantile_probs)
     println(io, "  parameters: ", length(summary))
     max_parameters = min(length(summary.parameters), 5)
-    for parameter_index in 1:max_parameters
+    for parameter_index = 1:max_parameters
         parameter = summary.parameters[parameter_index]
         mid_quantile = parameter.quantiles[cld(length(parameter.quantiles), 2)]
         println(
@@ -387,7 +409,7 @@ function _validate_summary_quantiles(quantile_probs)
 end
 
 function _mass_adaptation_diagnostics(chains::HMCChains)
-    groups = Dict{NTuple{4, Int}, Vector{HMCMassAdaptationWindowSummary}}()
+    groups = Dict{NTuple{4,Int},Vector{HMCMassAdaptationWindowSummary}}()
     for chain in chains.chains
         for window in chain.mass_adaptation_windows
             key = (window.window_index, window.iteration_start, window.iteration_end, window.window_length)
@@ -453,7 +475,7 @@ function _pooled_parameter_draws(chains::HMCChains, parameter_index::Int, space:
     offset = 1
     for chain in chains.chains
         samples = _diagnostic_space_samples(chain, space)
-        pooled[offset:(offset + num_samples - 1)] = samples[parameter_index, :]
+        pooled[offset:(offset+num_samples-1)] = samples[parameter_index, :]
         offset += num_samples
     end
     return pooled
@@ -485,8 +507,8 @@ function _split_chain_parameter_draws(chains::HMCChains, parameter_index::Int, s
 
     for (chain_index, chain) in enumerate(chains.chains)
         samples = _diagnostic_space_samples(chain, space)
-        split_draws[2 * chain_index - 1, :] = samples[parameter_index, 1:split_samples]
-        split_draws[2 * chain_index, :] = samples[parameter_index, split_samples + 1:even_samples]
+        split_draws[2*chain_index-1, :] = samples[parameter_index, 1:split_samples]
+        split_draws[2*chain_index, :] = samples[parameter_index, (split_samples+1):even_samples]
     end
 
     return split_draws
@@ -496,7 +518,7 @@ function _chain_draw_statistics(draws::AbstractMatrix)
     num_chains, num_samples = size(draws)
     chain_means = Vector{Float64}(undef, num_chains)
     chain_variances = Vector{Float64}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chain_draws = view(draws, chain_index, :)
         chain_means[chain_index] = _sample_mean(chain_draws)
         chain_variances[chain_index] = _sample_variance(chain_draws, chain_means[chain_index])
@@ -520,8 +542,8 @@ end
 function _autocovariance(draws::AbstractVector, lag::Int, mean_value::Real)
     num_samples = length(draws)
     total = 0.0
-    for index in 1:(num_samples - lag)
-        total += (draws[index] - mean_value) * (draws[index + lag] - mean_value)
+    for index = 1:(num_samples-lag)
+        total += (draws[index] - mean_value) * (draws[index+lag] - mean_value)
     end
     return total / num_samples
 end
@@ -539,10 +561,10 @@ function _split_ess(draws::AbstractMatrix)
 
     pair_sums = Float64[]
     autocovariance_means = Vector{Float64}(undef, num_chains)
-    for pair_start in 0:2:(num_samples - 1)
+    for pair_start = 0:2:(num_samples-1)
         pair_sum = 0.0
-        for lag in pair_start:min(pair_start + 1, num_samples - 1)
-            for chain_index in 1:num_chains
+        for lag = pair_start:min(pair_start+1, num_samples-1)
+            for chain_index = 1:num_chains
                 autocovariance_means[chain_index] = _autocovariance(view(draws, chain_index, :), lag, chain_means[chain_index])
             end
             mean_autocovariance = _sample_mean(autocovariance_means)
@@ -554,8 +576,8 @@ function _split_ess(draws::AbstractMatrix)
         push!(pair_sums, pair_sum)
     end
 
-    for index in 2:length(pair_sums)
-        pair_sums[index] = min(pair_sums[index], pair_sums[index - 1])
+    for index = 2:length(pair_sums)
+        pair_sums[index] = min(pair_sums[index], pair_sums[index-1])
     end
 
     tau_hat = -1 + 2 * sum(pair_sums)
@@ -566,7 +588,7 @@ end
 function rhat(chains::HMCChains; space::Symbol=:constrained)
     num_params, _ = _validate_hmc_diagnostics(chains, space)
     values = Vector{Float64}(undef, num_params)
-    for parameter_index in 1:num_params
+    for parameter_index = 1:num_params
         values[parameter_index] = _split_rhat(_split_chain_parameter_draws(chains, parameter_index, space))
     end
     return values
@@ -575,7 +597,7 @@ end
 function ess(chains::HMCChains; space::Symbol=:constrained)
     num_params, _ = _validate_hmc_diagnostics(chains, space)
     values = Vector{Float64}(undef, num_params)
-    for parameter_index in 1:num_params
+    for parameter_index = 1:num_params
         values[parameter_index] = _split_ess(_split_chain_parameter_draws(chains, parameter_index, space))
     end
     return values

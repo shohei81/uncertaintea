@@ -1,7 +1,9 @@
 @testset "dist_dirichlet" begin
     @test UncertainTea.logpdf(dirichlet([2.0, 3.0, 4.0]), [0.2, 0.3, 0.5]) ≈
-        (UncertainTea.loggamma(9.0) - UncertainTea.loggamma(2.0) - UncertainTea.loggamma(3.0) - UncertainTea.loggamma(4.0) +
-         log(0.2) + 2 * log(0.3) + 3 * log(0.5)) atol=1e-8
+          (
+        UncertainTea.loggamma(9.0) - UncertainTea.loggamma(2.0) - UncertainTea.loggamma(3.0) - UncertainTea.loggamma(4.0) +
+        log(0.2) + 2 * log(0.3) + 3 * log(0.5)
+    ) atol=1e-8
 
     @tea static function dirichlet_latent_model()
         weights ~ dirichlet([2.0f0, 3.0f0, 4.0f0])
@@ -31,7 +33,7 @@
     @test dirichlet_reconstrained ≈ dirichlet_params atol=1e-6
     @test dirichlet_choicemap[:weights] ≈ dirichlet_params atol=1e-6
     @test logjoint(dirichlet_latent_model, dirichlet_params) ≈
-        assess(dirichlet_latent_model, (), choicemap((:weights, dirichlet_trace[:weights]))) atol=1e-6
+          assess(dirichlet_latent_model, (), choicemap((:weights, dirichlet_trace[:weights]))) atol=1e-6
     @test dirichlet_backend_report.supported
     @test isempty(dirichlet_backend_report.issues)
     @test backend_execution_plan(dirichlet_latent_model).steps[1] isa UncertainTea.BackendDirichletChoicePlanStep
@@ -42,15 +44,19 @@
         dirichlet_unconstrained .+ Float64[-0.15, 0.05],
     )
     dirichlet_batch_values = batched_logjoint_unconstrained(dirichlet_latent_model, dirichlet_batch_params, (), choicemap())
-    dirichlet_batch_gradient = batched_logjoint_gradient_unconstrained(dirichlet_latent_model, dirichlet_batch_params, (), choicemap())
+    dirichlet_batch_gradient =
+        batched_logjoint_gradient_unconstrained(dirichlet_latent_model, dirichlet_batch_params, (), choicemap())
     dirichlet_batch_cache = BatchedLogjointGradientCache(dirichlet_latent_model, dirichlet_batch_params, (), choicemap())
 
     @test dirichlet_batch_values ≈ [
-        logjoint_unconstrained(dirichlet_latent_model, dirichlet_batch_params[:, index], (), choicemap()) for index in 1:3
+        logjoint_unconstrained(dirichlet_latent_model, dirichlet_batch_params[:, index], (), choicemap()) for index = 1:3
     ] atol=2e-6
-    @test dirichlet_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(dirichlet_latent_model, dirichlet_batch_params[:, index], (), choicemap()) for index in 1:3
-    ]...) atol=2e-6
+    @test dirichlet_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(dirichlet_latent_model, dirichlet_batch_params[:, index], (), choicemap()) for
+            index = 1:3
+        ]...,
+    ) atol=2e-6
     @test !isnothing(dirichlet_batch_cache.backend_cache)
     @test isnothing(dirichlet_batch_cache.flat_cache)
     @test isempty(dirichlet_batch_cache.column_caches)
@@ -69,7 +75,7 @@
 
     @test size(dirichlet_chain.unconstrained_samples) == (2, 6)
     @test size(dirichlet_chain.constrained_samples) == (3, 6)
-    for sample_index in 1:6
+    for sample_index = 1:6
         @test all(>(0.0), dirichlet_chain.constrained_samples[:, sample_index])
         @test sum(dirichlet_chain.constrained_samples[:, sample_index]) ≈ 1.0 atol=1e-6
     end

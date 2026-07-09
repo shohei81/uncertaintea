@@ -38,9 +38,11 @@ struct MixtureDist{W<:Real,C<:Tuple} <: AbstractTeaDistribution
 
     function MixtureDist(weights::Vector{W}, components::C) where {W<:Real,C<:Tuple}
         isempty(components) && throw(ArgumentError("mixture requires at least one component"))
-        length(weights) == length(components) || throw(ArgumentError(
-            "mixture requires one weight per component (got $(length(weights)) weights for $(length(components)) components)",
-        ))
+        length(weights) == length(components) || throw(
+            ArgumentError(
+                "mixture requires one weight per component (got $(length(weights)) weights for $(length(components)) components)",
+            ),
+        )
         total = zero(W)
         for w in weights
             w >= zero(W) || throw(ArgumentError("mixture weights must be nonnegative"))
@@ -71,10 +73,12 @@ struct MvNormalDenseDist{M<:AbstractVector,S<:AbstractMatrix} <: AbstractTeaDist
         size(scale_tril, 1) == size(scale_tril, 2) || throw(ArgumentError(
             "mvnormaldense requires a square scale_tril matrix, got size $(size(scale_tril))",
         ))
-        size(scale_tril, 1) == length(mu) || throw(ArgumentError(
-            "mvnormaldense requires scale_tril of size $(length(mu))x$(length(mu)) to match the mean length, got $(size(scale_tril))",
-        ))
-        for index in 1:size(scale_tril, 1)
+        size(scale_tril, 1) == length(mu) || throw(
+            ArgumentError(
+                "mvnormaldense requires scale_tril of size $(length(mu))x$(length(mu)) to match the mean length, got $(size(scale_tril))",
+            ),
+        )
+        for index = 1:size(scale_tril, 1)
             scale_tril[index, index] > 0 || throw(ArgumentError(
                 "mvnormaldense requires strictly positive scale_tril diagonal entries",
             ))
@@ -121,7 +125,11 @@ function _broadcast_normal_length(mu, sigma)
     sigma_length = _broadcast_arg_length(sigma)
     if !isnothing(mu_length) && !isnothing(sigma_length)
         mu_length == sigma_length ||
-            throw(DimensionMismatch("broadcast normal requires vector arguments of equal length, got $(mu_length) and $(sigma_length)"))
+            throw(
+                DimensionMismatch(
+                    "broadcast normal requires vector arguments of equal length, got $(mu_length) and $(sigma_length)",
+                ),
+            )
         return mu_length
     end
     return something(mu_length, sigma_length, Some(nothing))
@@ -184,7 +192,8 @@ end
 function mvnormal(mu, sigma)
     mu_values = _mvnormal_vector(mu)
     sigma_values = _mvnormal_vector(sigma)
-    length(mu_values) == length(sigma_values) || throw(ArgumentError("mvnormal requires mean and scale vectors with the same length"))
+    length(mu_values) == length(sigma_values) ||
+        throw(ArgumentError("mvnormal requires mean and scale vectors with the same length"))
     isempty(mu_values) && throw(ArgumentError("mvnormal requires at least one dimension"))
     promoted_type = _mvnormal_promoted_type(mu_values, sigma_values)
     return MvNormalDist(
@@ -227,7 +236,7 @@ end
 function _lkj_log_normalizing_constant(d::Int, eta)
     eta_f = float(eta)
     log_c = zero(eta_f)
-    for k in 1:(d - 1)
+    for k = 1:(d-1)
         a = eta_f + (d - 1 - k) / 2
         log_beta = loggamma(a) + loggamma(a) - loggamma(2 * a)
         log_c += (d - k) * ((2 * eta_f - 2 + d - k) * log(oftype(eta_f, 2)) + log_beta)
@@ -247,13 +256,15 @@ function scale_cholesky(scales::AbstractVector, packed_corr_chol::AbstractVector
     packed_values = map(identity, collect(packed_corr_chol))
     d = length(scale_values)
     expected = (d * (d + 1)) ÷ 2
-    length(packed_values) == expected || throw(DimensionMismatch(
-        "scale_cholesky expected a packed lower triangle of length $expected for $d scales, got $(length(packed_values))",
-    ))
+    length(packed_values) == expected || throw(
+        DimensionMismatch(
+            "scale_cholesky expected a packed lower triangle of length $expected for $d scales, got $(length(packed_values))",
+        ),
+    )
     T = promote_type(eltype(scale_values), eltype(packed_values))
     result = zeros(T, d, d)
-    for col in 1:d
-        for row in col:d
+    for col = 1:d
+        for row = col:d
             result[row, col] = scale_values[row] * packed_values[_packed_lower_index(d, row, col)]
         end
     end
@@ -294,9 +305,9 @@ function Random.rand(rng::AbstractRNG, dist::MvNormalDenseDist)
     T = float(promote_type(typeof(float(dist.mu[1])), typeof(float(dist.scale_tril[1, 1]))))
     noise = randn(rng, T, dimension)
     draws = Vector{T}(undef, dimension)
-    for row in 1:dimension
+    for row = 1:dimension
         accumulator = T(dist.mu[row])
-        for col in 1:row
+        for col = 1:row
             accumulator += T(dist.scale_tril[row, col]) * noise[col]
         end
         draws[row] = accumulator
@@ -314,9 +325,9 @@ function Random.rand(rng::AbstractRNG, dist::LKJCholeskyDist)
     eta = Float64(dist.eta)
     packed = Vector{Float64}(undef, (d * (d + 1)) ÷ 2)
     packed[_packed_lower_index(d, 1, 1)] = 1.0
-    for row in 2:d
+    for row = 2:d
         sum_sqs = 0.0
-        for col in 1:(row - 1)
+        for col = 1:(row-1)
             a = eta + (d - 1 - col) / 2
             w = 2.0 * rand(rng, BetaDist(a, a)) - 1.0
             entry = w * sqrt(1 - sum_sqs)
@@ -330,15 +341,17 @@ end
 
 function Random.rand(rng::AbstractRNG, dist::BroadcastNormalDist)
     n = _broadcast_normal_length(dist.mu, dist.sigma)
-    isnothing(n) && throw(ArgumentError(
-        "broadcast normal with all-scalar arguments cannot infer a sample length; " *
-        "constrain the observation or supply at least one vector argument",
-    ))
+    isnothing(n) && throw(
+        ArgumentError(
+            "broadcast normal with all-scalar arguments cannot infer a sample length; " *
+            "constrain the observation or supply at least one vector argument",
+        ),
+    )
     mu1 = float(_broadcast_arg_getindex(dist.mu, 1))
     sigma1 = float(_broadcast_arg_getindex(dist.sigma, 1))
     T = float(promote_type(typeof(mu1), typeof(sigma1)))
     draws = Vector{T}(undef, n)
-    for index in 1:n
+    for index = 1:n
         mu = _broadcast_arg_getindex(dist.mu, index)
         sigma = _broadcast_arg_getindex(dist.sigma, index)
         draws[index] = mu + sigma * randn(rng, T)
@@ -350,7 +363,7 @@ function Random.rand(rng::AbstractRNG, dist::IIDDist)
     first_draw = rand(rng, dist.base)
     draws = Vector{typeof(first_draw)}(undef, dist.n)
     draws[1] = first_draw
-    for index in 2:dist.n
+    for index = 2:dist.n
         draws[index] = rand(rng, dist.base)
     end
     return draws
@@ -393,7 +406,7 @@ function logpdf(dist::MvNormalDist, x)
     length(values) == length(dist.mu) || return -Inf
 
     accumulator = logpdf(normal(dist.mu[1], dist.sigma[1]), values[1])
-    for index in 2:length(values)
+    for index = 2:length(values)
         accumulator += logpdf(normal(dist.mu[index], dist.sigma[index]), values[index])
     end
     return accumulator
@@ -415,9 +428,9 @@ function logpdf(dist::MvNormalDenseDist, x)
     solved[1] = z1
     log_det = log(L[1, 1])
     quadratic = z1 * z1
-    for row in 2:dimension
+    for row = 2:dimension
         residual = values[row] - dist.mu[row]
-        for col in 1:(row - 1)
+        for col = 1:(row-1)
             residual -= L[row, col] * solved[col]
         end
         z = residual / L[row, row]
@@ -442,11 +455,11 @@ function logpdf(dist::LKJCholeskyDist, x)
 
     accumulator = _lkj_log_normalizing_constant(d, dist.eta) + zero(float(values[firstindex(values)]))
     tolerance = sqrt(eps(Float64)) * d * 16
-    for row in 1:d
+    for row = 1:d
         diagonal = values[_packed_lower_index(d, row, row)]
         diagonal > zero(diagonal) || return oftype(accumulator, -Inf)
         sum_sqs = zero(float(diagonal))
-        for col in 1:row
+        for col = 1:row
             entry = values[_packed_lower_index(d, row, col)]
             sum_sqs += entry * entry
         end
@@ -468,7 +481,7 @@ function logpdf(dist::BroadcastNormalDist, x)
         normal(_broadcast_arg_getindex(dist.mu, 1), _broadcast_arg_getindex(dist.sigma, 1)),
         values[1],
     )
-    for index in 2:n
+    for index = 2:n
         accumulator += logpdf(
             normal(_broadcast_arg_getindex(dist.mu, index), _broadcast_arg_getindex(dist.sigma, index)),
             values[index],
@@ -483,7 +496,7 @@ function logpdf(dist::IIDDist, x)
     length(values) == dist.n ||
         throw(DimensionMismatch("iid expects a value of length $(dist.n), got $(length(values))"))
     accumulator = logpdf(dist.base, values[1])
-    for index in 2:dist.n
+    for index = 2:dist.n
         accumulator += logpdf(dist.base, values[index])
     end
     return accumulator

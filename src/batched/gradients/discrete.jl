@@ -101,7 +101,8 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Bernoulli latent parameters"))
+    isnothing(step.parameter_slot) ||
+        throw(BatchedBackendFallback("batched backend gradient does not support Bernoulli latent parameters"))
     value_values = env.observed_values
     probability_values = _batched_numeric_scratch!(env, 1)
     probability_gradients = _batched_backend_gradient_scratch!(cache, 1)
@@ -132,7 +133,8 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Binomial latent parameters"))
+    isnothing(step.parameter_slot) ||
+        throw(BatchedBackendFallback("batched backend gradient does not support Binomial latent parameters"))
     value_values = env.observed_values
     trials_values = _batched_index_scratch!(env, 1)
     probability_values = _batched_numeric_scratch!(env, 1)
@@ -165,7 +167,8 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support categorical latent parameters"))
+    isnothing(step.parameter_slot) ||
+        throw(BatchedBackendFallback("batched backend gradient does not support categorical latent parameters"))
     value_values = env.observed_values
     probability_values = ntuple(index -> _batched_numeric_scratch!(env, index), length(step.probabilities))
     probability_gradients = ntuple(index -> _batched_backend_gradient_scratch!(cache, index), length(step.probabilities))
@@ -205,7 +208,8 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Poisson latent parameters"))
+    isnothing(step.parameter_slot) ||
+        throw(BatchedBackendFallback("batched backend gradient does not support Poisson latent parameters"))
     value_values = env.observed_values
     lambda_values = _batched_numeric_scratch!(env, 1)
     lambda_gradients = _batched_backend_gradient_scratch!(cache, 1)
@@ -284,7 +288,8 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    isnothing(step.parameter_slot) || throw(BatchedBackendFallback("batched backend gradient does not support Geometric latent parameters"))
+    isnothing(step.parameter_slot) ||
+        throw(BatchedBackendFallback("batched backend gradient does not support Geometric latent parameters"))
     value_values = env.observed_values
     probability_values = _batched_numeric_scratch!(env, 1)
     probability_gradients = _batched_backend_gradient_scratch!(cache, 1)

@@ -36,7 +36,7 @@ function leapfrog_trajectory(
     all(isfinite, gradient) || return nothing
     p .+= (step_size / 2) .* gradient
 
-    for leapfrog_step in 1:num_steps
+    for leapfrog_step = 1:num_steps
         q .+= step_size .* _mass_drift(inverse_mass_matrix, p)
         gradient = target_gradient!(target, q)
         all(isfinite, gradient) || return nothing
@@ -78,14 +78,16 @@ function batched_leapfrog_trajectory!(
     size(current_gradient) == size(position) ||
         throw(DimensionMismatch("expected current gradient workspace of size $(size(position)), got $(size(current_gradient))"))
     size(destination_gradient) == size(position) ||
-        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"))
+        throw(
+            DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"),
+        )
 
     copyto!(q, position)
     copyto!(p, momentum)
     fill!(valid, true)
     gradient = current_gradient
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         if !all(isfinite, view(gradient, :, chain_index))
             valid[chain_index] = false
         else
@@ -93,15 +95,15 @@ function batched_leapfrog_trajectory!(
         end
     end
 
-    for leapfrog_step in 1:num_steps
-        for chain_index in 1:num_chains
+    for leapfrog_step = 1:num_steps
+        for chain_index = 1:num_chains
             valid[chain_index] || continue
             q[:, chain_index] .+= step_size .* (inverse_mass_matrix .* p[:, chain_index])
         end
 
         if leapfrog_step < num_steps
             gradient = batched_target_gradient!(destination_gradient, target, q)
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 valid[chain_index] || continue
                 if !all(isfinite, view(gradient, :, chain_index))
                     valid[chain_index] = false
@@ -116,7 +118,7 @@ function batched_leapfrog_trajectory!(
                 target,
                 q,
             )
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 valid[chain_index] || continue
                 if !all(isfinite, view(destination_gradient, :, chain_index)) ||
                    !isfinite(proposed_logjoint[chain_index])
@@ -126,7 +128,7 @@ function batched_leapfrog_trajectory!(
         end
     end
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         valid[chain_index] || continue
         p[:, chain_index] .+= (step_size / 2) .* destination_gradient[:, chain_index]
         p[:, chain_index] .*= -1
@@ -163,7 +165,9 @@ function batched_leapfrog_trajectory!(
     size(current_gradient) == size(position) ||
         throw(DimensionMismatch("expected current gradient workspace of size $(size(position)), got $(size(current_gradient))"))
     size(destination_gradient) == size(position) ||
-        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"))
+        throw(
+            DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"),
+        )
     size(inverse_mass_matrices, 2) == num_chains ||
         throw(DimensionMismatch("expected $num_chains inverse-mass columns, got $(size(inverse_mass_matrices, 2))"))
     length(step_sizes) == num_chains ||
@@ -174,7 +178,7 @@ function batched_leapfrog_trajectory!(
     fill!(valid, true)
     gradient = current_gradient
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         if !all(isfinite, view(gradient, :, chain_index))
             valid[chain_index] = false
         else
@@ -183,8 +187,8 @@ function batched_leapfrog_trajectory!(
         end
     end
 
-    for leapfrog_step in 1:num_steps
-        for chain_index in 1:num_chains
+    for leapfrog_step = 1:num_steps
+        for chain_index = 1:num_chains
             valid[chain_index] || continue
             step_size = step_sizes[chain_index]
             q[:, chain_index] .+= step_size .* (view(inverse_mass_matrices, :, chain_index) .* p[:, chain_index])
@@ -192,7 +196,7 @@ function batched_leapfrog_trajectory!(
 
         if leapfrog_step < num_steps
             gradient = batched_target_gradient!(destination_gradient, target, q)
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 valid[chain_index] || continue
                 if !all(isfinite, view(gradient, :, chain_index))
                     valid[chain_index] = false
@@ -208,7 +212,7 @@ function batched_leapfrog_trajectory!(
                 target,
                 q,
             )
-            for chain_index in 1:num_chains
+            for chain_index = 1:num_chains
                 valid[chain_index] || continue
                 if !all(isfinite, view(destination_gradient, :, chain_index)) ||
                    !isfinite(proposed_logjoint[chain_index])
@@ -218,7 +222,7 @@ function batched_leapfrog_trajectory!(
         end
     end
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         valid[chain_index] || continue
         step_size = step_sizes[chain_index]
         p[:, chain_index] .+= (step_size / 2) .* destination_gradient[:, chain_index]
@@ -253,7 +257,9 @@ function batched_leapfrog_step_to!(
     size(p) == size(position) ||
         throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
     size(destination_gradient) == size(position) ||
-        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"))
+        throw(
+            DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"),
+        )
     length(destination_logjoint) == num_chains == length(valid) ||
         throw(DimensionMismatch("expected batched leapfrog vectors of length $num_chains"))
     length(direction) == num_chains ||
@@ -264,7 +270,7 @@ function batched_leapfrog_step_to!(
     copyto!(q, position)
     copyto!(p, momentum)
     fill!(valid, false)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         active[chain_index] || continue
         valid[chain_index] = true
         signed_step = direction[chain_index] * step_size
@@ -278,7 +284,7 @@ function batched_leapfrog_step_to!(
         target,
         q,
     )
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         valid[chain_index] || continue
         if !isfinite(proposed_logjoint[chain_index]) ||
            !all(isfinite, view(destination_gradient, :, chain_index))
@@ -319,7 +325,9 @@ function batched_leapfrog_step_to!(
     size(p) == size(position) ||
         throw(DimensionMismatch("expected proposal momentum workspace of size $(size(position)), got $(size(p))"))
     size(destination_gradient) == size(position) ||
-        throw(DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"))
+        throw(
+            DimensionMismatch("expected proposal gradient workspace of size $(size(position)), got $(size(destination_gradient))"),
+        )
     length(destination_logjoint) == num_chains == length(valid) ||
         throw(DimensionMismatch("expected batched leapfrog vectors of length $num_chains"))
     length(direction) == num_chains ||
@@ -334,7 +342,7 @@ function batched_leapfrog_step_to!(
     copyto!(q, position)
     copyto!(p, momentum)
     fill!(valid, false)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         active[chain_index] || continue
         valid[chain_index] = true
         signed_step = direction[chain_index] * step_sizes[chain_index]
@@ -348,7 +356,7 @@ function batched_leapfrog_step_to!(
         target,
         q,
     )
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         valid[chain_index] || continue
         if !isfinite(proposed_logjoint[chain_index]) ||
            !all(isfinite, view(destination_gradient, :, chain_index))

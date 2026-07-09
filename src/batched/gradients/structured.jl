@@ -49,7 +49,7 @@ function _accumulate_dirichlet_gradient!(
     for batch_index in eachindex(totals)
         total_alpha = zero(T)
         accumulator = zero(T)
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             alpha = alpha_values[component_index][batch_index]
             alpha > 0 || throw(ArgumentError("dirichlet requires alpha > 0 in every dimension"))
             total_alpha += alpha
@@ -60,7 +60,7 @@ function _accumulate_dirichlet_gradient!(
         total = zero(T)
         valid = true
         weighted_choice_gradient = zero(T)
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             value = value_values[component_index][batch_index]
             value > 0 || begin
                 valid = false
@@ -81,7 +81,7 @@ function _accumulate_dirichlet_gradient!(
         end
 
         totals[batch_index] += accumulator
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             alpha_derivative = alpha_derivatives[component_index]
             component_alpha_gradients = alpha_gradients[component_index]
             for parameter_row in axes(gradients, 1)
@@ -90,7 +90,7 @@ function _accumulate_dirichlet_gradient!(
             end
         end
         isnothing(parameter_index) && continue
-        for component_index in 1:(value_length - 1)
+        for component_index = 1:(value_length-1)
             unconstrained_row = parameter_index + component_index - 1
             constrained_value = value_values[component_index][batch_index]
             gradients[unconstrained_row, batch_index] +=
@@ -109,7 +109,7 @@ function _assign_backend_choice_vector_value!(
 ) where {T<:AbstractFloat}
     env.generic_slots[slot] || throw(BatchedBackendFallback("mvnormal backend binding slot $slot must be generic"))
     storage = env.generic_values[slot]
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         storage[batch_index] = [component_values[batch_index] for component_values in values]
     end
     env.assigned[slot] = true
@@ -125,16 +125,16 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
-    choice_gradients = [_batched_backend_gradient_scratch!(cache, index) for index in 1:step.value_length]
-    mu_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
-    mu_gradients = [_batched_backend_gradient_scratch!(cache, step.value_length + index) for index in 1:step.value_length]
-    sigma_values = [_batched_numeric_scratch!(env, 2 * step.value_length + index) for index in 1:step.value_length]
-    sigma_gradients = [_batched_backend_gradient_scratch!(cache, 2 * step.value_length + index) for index in 1:step.value_length]
+    choice_values = [_batched_numeric_scratch!(env, index) for index = 1:step.value_length]
+    choice_gradients = [_batched_backend_gradient_scratch!(cache, index) for index = 1:step.value_length]
+    mu_values = [_batched_numeric_scratch!(env, step.value_length + index) for index = 1:step.value_length]
+    mu_gradients = [_batched_backend_gradient_scratch!(cache, step.value_length + index) for index = 1:step.value_length]
+    sigma_values = [_batched_numeric_scratch!(env, 2 * step.value_length + index) for index = 1:step.value_length]
+    sigma_gradients = [_batched_backend_gradient_scratch!(cache, 2 * step.value_length + index) for index = 1:step.value_length]
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
-    for component_index in 1:step.value_length
+    for component_index = 1:step.value_length
         _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index)
         _eval_backend_numeric_expr_and_gradient!(
             mu_values[component_index],
@@ -242,8 +242,24 @@ function _eval_backend_broadcast_numeric_and_gradient!(
         middle_gradients = _batched_backend_gradient_scratch!(cache, depth)
         rhs_values = _batched_numeric_scratch!(env, depth + 1)
         rhs_gradients = _batched_backend_gradient_scratch!(cache, depth + 1)
-        _eval_backend_broadcast_numeric_and_gradient!(middle_values, middle_gradients, cache, env, expr.arguments[2], element_index, depth + 2)
-        _eval_backend_broadcast_numeric_and_gradient!(rhs_values, rhs_gradients, cache, env, expr.arguments[3], element_index, depth + 2)
+        _eval_backend_broadcast_numeric_and_gradient!(
+            middle_values,
+            middle_gradients,
+            cache,
+            env,
+            expr.arguments[2],
+            element_index,
+            depth + 2,
+        )
+        _eval_backend_broadcast_numeric_and_gradient!(
+            rhs_values,
+            rhs_gradients,
+            cache,
+            env,
+            expr.arguments[3],
+            element_index,
+            depth + 2,
+        )
         return _apply_backend_numeric_gradient_ternary!(
             values, gradients, env, expr.op, middle_values, middle_gradients, rhs_values, rhs_gradients,
         )
@@ -291,7 +307,7 @@ function _score_backend_step_and_gradient!(
     mu_gradients = _batched_backend_gradient_scratch!(cache, 1)
     sigma_values = _batched_numeric_scratch!(env, 2)
     sigma_gradients = _batched_backend_gradient_scratch!(cache, 2)
-    for element_index in 1:n
+    for element_index = 1:n
         _eval_backend_broadcast_numeric_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, element_index, 3)
         _eval_backend_broadcast_numeric_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, element_index, 5)
         for batch_index in eachindex(totals)
@@ -322,15 +338,15 @@ function _score_backend_step_and_gradient!(
     params::AbstractMatrix{T},
     constraints,
 ) where {T<:AbstractFloat}
-    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:step.value_length]
-    alpha_values = [_batched_numeric_scratch!(env, step.value_length + index) for index in 1:step.value_length]
+    choice_values = [_batched_numeric_scratch!(env, index) for index = 1:step.value_length]
+    alpha_values = [_batched_numeric_scratch!(env, step.value_length + index) for index = 1:step.value_length]
     alpha_gradients = [
-        _batched_backend_gradient_scratch!(cache, step.value_length + index) for index in 1:step.value_length
+        _batched_backend_gradient_scratch!(cache, step.value_length + index) for index = 1:step.value_length
     ]
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
-    for component_index in 1:step.value_length
+    for component_index = 1:step.value_length
         _eval_backend_numeric_expr_and_gradient!(
             alpha_values[component_index],
             alpha_gradients[component_index],
@@ -380,11 +396,11 @@ function _accumulate_mixture_normal_gradient!(
         totals[batch_index] += logpdf
         isfinite(logpdf) || continue
         dvalue = zero(T)
-        for index in 1:k
+        for index = 1:k
             lp = _backend_normal_logpdf(mus[index], sigmas[index], value)
             terms[index] = lp
         end
-        for index in 1:k
+        for index = 1:k
             mu = mus[index]
             sigma = sigmas[index]
             lp = terms[index]
@@ -424,20 +440,34 @@ function _score_backend_step_and_gradient!(
     k = length(step.weights)
     value_values = env.observed_values
     value_gradients = _batched_backend_gradient_scratch!(cache, 1)
-    weight_values = [_batched_numeric_scratch!(env, index) for index in 1:k]
-    weight_gradients = [_batched_backend_gradient_scratch!(cache, 1 + index) for index in 1:k]
-    mu_values = [_batched_numeric_scratch!(env, k + index) for index in 1:k]
-    mu_gradients = [_batched_backend_gradient_scratch!(cache, k + 1 + index) for index in 1:k]
-    sigma_values = [_batched_numeric_scratch!(env, 2 * k + index) for index in 1:k]
-    sigma_gradients = [_batched_backend_gradient_scratch!(cache, 2 * k + 1 + index) for index in 1:k]
+    weight_values = [_batched_numeric_scratch!(env, index) for index = 1:k]
+    weight_gradients = [_batched_backend_gradient_scratch!(cache, 1 + index) for index = 1:k]
+    mu_values = [_batched_numeric_scratch!(env, k + index) for index = 1:k]
+    mu_gradients = [_batched_backend_gradient_scratch!(cache, k + 1 + index) for index = 1:k]
+    sigma_values = [_batched_numeric_scratch!(env, 2 * k + index) for index = 1:k]
+    sigma_gradients = [_batched_backend_gradient_scratch!(cache, 2 * k + 1 + index) for index = 1:k]
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
     _fill_choice_gradient!(value_gradients, step.parameter_slot)
-    for index in 1:k
-        _eval_backend_numeric_expr_and_gradient!(weight_values[index], weight_gradients[index], cache, env, step.weights[index], 3 * k + 2)
+    for index = 1:k
+        _eval_backend_numeric_expr_and_gradient!(
+            weight_values[index],
+            weight_gradients[index],
+            cache,
+            env,
+            step.weights[index],
+            3 * k + 2,
+        )
         _eval_backend_numeric_expr_and_gradient!(mu_values[index], mu_gradients[index], cache, env, step.mus[index], 3 * k + 2)
-        _eval_backend_numeric_expr_and_gradient!(sigma_values[index], sigma_gradients[index], cache, env, step.sigmas[index], 3 * k + 2)
+        _eval_backend_numeric_expr_and_gradient!(
+            sigma_values[index],
+            sigma_gradients[index],
+            cache,
+            env,
+            step.sigmas[index],
+            3 * k + 2,
+        )
     end
     _accumulate_mixture_normal_gradient!(
         totals,
@@ -479,22 +509,22 @@ function _accumulate_mvnormaldense_gradient!(
         x = ntuple(index -> choice_values[index][batch_index], d)
         totals[batch_index] += _backend_mvnormaldense_logpdf(mu, Lmat, x)
         # forward substitution: L z = x - mu
-        for row in 1:d
+        for row = 1:d
             residual = x[row] - mu[row]
-            for col in 1:(row - 1)
+            for col = 1:(row-1)
                 residual -= Lmat[row, col] * z[col]
             end
             z[row] = residual / Lmat[row, row]
         end
         # back substitution: Lᵀ w = z
-        for row in d:-1:1
+        for row = d:-1:1
             accumulator = z[row]
-            for col in (row + 1):d
+            for col = (row+1):d
                 accumulator -= Lmat[col, row] * w[col]
             end
             w[row] = accumulator / Lmat[row, row]
         end
-        for component_index in 1:d
+        for component_index = 1:d
             dmu = w[component_index]
             dvalue = -w[component_index]
             component_mu_gradients = mu_gradients[component_index]
@@ -519,14 +549,14 @@ function _score_backend_step_and_gradient!(
     constraints,
 ) where {T<:AbstractFloat}
     d = step.value_length
-    choice_values = [_batched_numeric_scratch!(env, index) for index in 1:d]
-    choice_gradients = [_batched_backend_gradient_scratch!(cache, index) for index in 1:d]
-    mu_values = [_batched_numeric_scratch!(env, d + index) for index in 1:d]
-    mu_gradients = [_batched_backend_gradient_scratch!(cache, d + index) for index in 1:d]
+    choice_values = [_batched_numeric_scratch!(env, index) for index = 1:d]
+    choice_gradients = [_batched_backend_gradient_scratch!(cache, index) for index = 1:d]
+    mu_values = [_batched_numeric_scratch!(env, d + index) for index = 1:d]
+    mu_gradients = [_batched_backend_gradient_scratch!(cache, d + index) for index = 1:d]
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_vector_values!(choice_values, step.value_index, d, params, constraints, address_parts)
-    for component_index in 1:d
+    for component_index = 1:d
         _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index)
         _eval_backend_numeric_expr_and_gradient!(
             mu_values[component_index],

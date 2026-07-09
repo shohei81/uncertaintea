@@ -11,8 +11,8 @@ function _ebfmi(energies::AbstractVector)
     denominator = sum((energy - mean_energy)^2 for energy in energies)
     denominator == 0 && return NaN
     numerator = 0.0
-    for index in 2:num_samples
-        numerator += (energies[index] - energies[index - 1])^2
+    for index = 2:num_samples
+        numerator += (energies[index] - energies[index-1])^2
     end
     return numerator / denominator
 end

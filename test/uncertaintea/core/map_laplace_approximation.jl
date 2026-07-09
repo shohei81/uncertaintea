@@ -1,15 +1,15 @@
-    # PR 38: MAP estimation and Laplace approximation.
-    # Contract: map_estimate maximizes logjoint_unconstrained via a self-contained
-    # L-BFGS with backtracking Armijo line search; laplace_approximation forms the
-    # Gaussian covariance inv(-H) at the mode and can draw unconstrained samples.
+# PR 38: MAP estimation and Laplace approximation.
+# Contract: map_estimate maximizes logjoint_unconstrained via a self-contained
+# L-BFGS with backtracking Armijo line search; laplace_approximation forms the
+# Gaussian covariance inv(-H) at the mode and can draw unconstrained samples.
 
-    # Exact Gaussian: mu ~ N(0,1); y | mu ~ N(mu,1) with y=0.3 has posterior mode
-    # mu = y/2 = 0.15 and posterior variance 0.5 in the (already unconstrained)
-    # latent space.
+# Exact Gaussian: mu ~ N(0,1); y | mu ~ N(mu,1) with y=0.3 has posterior mode
+# mu = y/2 = 0.15 and posterior variance 0.5 in the (already unconstrained)
+# latent space.
 @testset "map_laplace_approximation" begin
     @tea static function map_gaussian_model()
-        mu ~ normal(0f0, 1f0)
-        {:y} ~ normal(mu, 1f0)
+        mu ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(mu, 1.0f0)
     end
 
     map_gaussian_constraints = choicemap((:y, 0.3f0))
@@ -32,8 +32,8 @@
     # sampled in unconstrained (log) space; MAP should converge there and yield a
     # strictly positive constrained mode.
     @tea static function map_lognormal_model()
-        s ~ lognormal(0f0, 0.5f0)
-        {:y} ~ normal(0f0, s)
+        s ~ lognormal(0.0f0, 0.5f0)
+        {:y} ~ normal(0.0f0, s)
     end
 
     map_lognormal_constraints = choicemap((:y, 1.2f0))
@@ -44,10 +44,10 @@
 
     # Multi-parameter convergence from a poor initialization.
     @tea static function map_two_latent_model()
-        a ~ normal(0f0, 1f0)
-        b ~ normal(0f0, 1f0)
-        {:y1} ~ normal(a, 1f0)
-        {:y2} ~ normal(b, 1f0)
+        a ~ normal(0.0f0, 1.0f0)
+        b ~ normal(0.0f0, 1.0f0)
+        {:y1} ~ normal(a, 1.0f0)
+        {:y2} ~ normal(b, 1.0f0)
     end
 
     map_two_latent_constraints = choicemap((:y1, 2.0f0), (:y2, -1.0f0))
@@ -90,10 +90,10 @@
     # PR: ecosystem-interop chain export (zero-dep core + MCMCChains ext).
     # ------------------------------------------------------------------
     @tea static function export_two_latent_model()
-        a ~ normal(0f0, 1f0)
-        b ~ normal(0f0, 1f0)
-        {:y1} ~ normal(a, 1f0)
-        {:y2} ~ normal(b, 1f0)
+        a ~ normal(0.0f0, 1.0f0)
+        b ~ normal(0.0f0, 1.0f0)
+        {:y1} ~ normal(a, 1.0f0)
+        {:y2} ~ normal(b, 1.0f0)
     end
 
     export_constraints = choicemap((:y1, 2.0f0), (:y2, -1.0f0))
@@ -113,7 +113,7 @@
     # Draw-major layout: arr[s, c, p] == chains[c].constrained_samples[p, s].
     @test export_arr[1, 1, 1] == export_chains.chains[1].constrained_samples[1, 1]
     @test export_arr[30, 2, export_num_params] ==
-        export_chains.chains[2].constrained_samples[export_num_params, 30]
+          export_chains.chains[2].constrained_samples[export_num_params, 30]
     @test export_arr[15, 2, 1] == export_chains.chains[2].constrained_samples[1, 15]
 
     export_names = parameter_names(export_chains)
@@ -123,7 +123,7 @@
     export_unconstrained = posterior_array(export_chains; space=:unconstrained)
     @test size(export_unconstrained) == (30, 2, export_num_params)
     @test export_unconstrained[7, 1, 1] ==
-        export_chains.chains[1].unconstrained_samples[1, 7]
+          export_chains.chains[1].unconstrained_samples[1, 7]
 
     export_dict = to_arviz_dict(export_chains)
     @test Set(keys(export_dict)) == Set(["posterior", "sample_stats"])
@@ -132,7 +132,7 @@
     @test size(export_posterior[export_names[1]]) == (30, 2)
     export_stats = export_dict["sample_stats"]
     @test Set(keys(export_stats)) ==
-        Set(["diverging", "energy", "tree_depth", "acceptance_rate", "lp"])
+          Set(["diverging", "energy", "tree_depth", "acceptance_rate", "lp"])
     @test size(export_stats["diverging"]) == (30, 2)
     @test export_stats["diverging"] isa Array{Bool,2}
     @test export_stats["lp"][3, 1] == export_chains.chains[1].logjoint_values[3]

@@ -24,7 +24,7 @@ function _build_nuts_subtree(
     _copyto_nuts_state!(proposal, start_state)
     _reset_nuts_subtree_summary!(summary)
 
-    for _ in 1:(1 << depth)
+    for _ = 1:(1<<depth)
         if !leapfrog_step!(next, target, current, inverse_mass_matrix, direction * step_size)
             summary.divergent = true
             break
@@ -57,7 +57,7 @@ function _build_nuts_subtree(
             summary.candidate_log_weight,
         )
         if !isfinite(summary.log_weight) || log(rand(rng)) <
-            summary.candidate_log_weight - summary.combined_log_weight
+                                            summary.candidate_log_weight - summary.combined_log_weight
             _copyto_nuts_state!(proposal, current)
             summary.proposal_energy = summary.proposed_energy
             summary.proposal_energy_error = summary.delta_energy
@@ -229,7 +229,8 @@ function _continue_batched_nuts_proposal!(
                 workspace.continuation_candidate_log_weight[chain_index],
             )
             workspace.continuation_select_proposal[chain_index] =
-                log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
+                log(rand(rng)) <
+                workspace.continuation_candidate_log_weight[chain_index] -
                 workspace.continuation_combined_log_weight[chain_index]
             workspace.tree_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
             if workspace.continuation_select_proposal[chain_index]
@@ -333,7 +334,14 @@ function _nuts_proposal(
         continuation,
         position,
     )
-    return continuation.proposal, accept_stat, continuation.tree_depth, continuation.integration_steps, proposed_energy, energy_error, continuation.divergent, moved
+    return continuation.proposal,
+    accept_stat,
+    continuation.tree_depth,
+    continuation.integration_steps,
+    proposed_energy,
+    energy_error,
+    continuation.divergent,
+    moved
 end
 
 function _batched_nuts_proposals!(
@@ -377,7 +385,7 @@ function _batched_nuts_proposals!(
         rng,
     )
     end
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         target = ModelDensityTarget(
             model,
             _batched_args(args, chain_index),
@@ -466,7 +474,7 @@ function _initialize_batched_nuts_continuations!(
     fill!(workspace.continuation_delta_energy, 0.0)
     _load_batched_nuts_first_states!(workspace, position, current_logjoint, current_gradient, trues(num_chains))
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         tree_workspace = workspace.column_tree_workspaces[chain_index]
         moved, divergent = _initialize_batched_nuts_first_step!(
             workspace,
@@ -484,8 +492,9 @@ function _initialize_batched_nuts_continuations!(
         workspace.control.accepted_step[chain_index] = moved
     end
     fill!(workspace.subtree_active, false)
-    for chain_index in 1:num_chains
-        workspace.subtree_active[chain_index] = workspace.control.divergent_step[chain_index] || !workspace.control.accepted_step[chain_index]
+    for chain_index = 1:num_chains
+        workspace.subtree_active[chain_index] =
+            workspace.control.divergent_step[chain_index] || !workspace.control.accepted_step[chain_index]
     end
     _copy_masked_nuts_buffers!(
         workspace.proposal_position,
@@ -567,4 +576,3 @@ function _batched_nuts_leapfrog_step_to!(
         active,
     )
 end
-

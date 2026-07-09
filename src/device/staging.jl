@@ -44,9 +44,9 @@ function _device_staging_environment(
         length(args) == batch_size ||
             throw(DimensionMismatch("expected $batch_size batched argument tuples, got $(length(args))"))
         values = Vector{Any}(undef, batch_size)
-        for argument_index in 1:argument_count
+        for argument_index = 1:argument_count
             slot = argument_slots[argument_index]
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 batch_args = args[batch_index]
                 length(batch_args) == argument_count ||
                     throw(DimensionMismatch("expected $argument_count model arguments, got $(length(batch_args))"))
@@ -86,18 +86,48 @@ function _stage_deterministic!(step, env)
     return nothing
 end
 
-function _stage_step!(rows, step::BackendChoicePlanStep, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, ::Type{T}) where {T}
+function _stage_step!(
+    rows,
+    step::BackendChoicePlanStep,
+    env,
+    constraints,
+    dummy_params,
+    trip_counts,
+    loop_starts,
+    loop_counter,
+    ::Type{T},
+) where {T}
     isnothing(step.parameter_slot) || return nothing # latent: no observed row
     _stage_observed_row!(rows, step, env, constraints, dummy_params, T)
     return nothing
 end
 
-function _stage_step!(rows, step::BackendDeterministicPlanStep, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, ::Type{T}) where {T}
+function _stage_step!(
+    rows,
+    step::BackendDeterministicPlanStep,
+    env,
+    constraints,
+    dummy_params,
+    trip_counts,
+    loop_starts,
+    loop_counter,
+    ::Type{T},
+) where {T}
     _stage_deterministic!(step, env)
     return nothing
 end
 
-function _stage_step!(rows, step::BackendLoopPlanStep, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, ::Type{T}) where {T}
+function _stage_step!(
+    rows,
+    step::BackendLoopPlanStep,
+    env,
+    constraints,
+    dummy_params,
+    trip_counts,
+    loop_starts,
+    loop_counter,
+    ::Type{T},
+) where {T}
     loop_counter[] += 1
     lid = loop_counter[]
     reference = _batched_index_iterable_reference(env, step.iterable)

@@ -43,14 +43,14 @@ end
 function _warmup_window_length(schedule::WarmupSchedule, window_index::Int)
     1 <= window_index <= length(schedule.slow_window_ends) ||
         throw(BoundsError(schedule.slow_window_ends, window_index))
-    window_start = window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index - 1] + 1
+    window_start = window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index-1] + 1
     return schedule.slow_window_ends[window_index] - window_start + 1
 end
 
 function _warmup_window_start(schedule::WarmupSchedule, window_index::Int)
     1 <= window_index <= length(schedule.slow_window_ends) ||
         throw(BoundsError(schedule.slow_window_ends, window_index))
-    return window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index - 1] + 1
+    return window_index == 1 ? schedule.initial_buffer + 1 : schedule.slow_window_ends[window_index-1] + 1
 end
 
 function _running_variance_window_progress(count::Int, window_length::Int)
@@ -74,7 +74,7 @@ function _running_variance_clip_scale(count::Int, window_length::Int)
     count <= _RUNNING_VARIANCE_CLIP_START && return _RUNNING_VARIANCE_CLIP_SCALE_EARLY
     progress = _running_variance_window_progress(count, window_length)
     return _RUNNING_VARIANCE_CLIP_SCALE_EARLY +
-        (_RUNNING_VARIANCE_CLIP_SCALE_LATE - _RUNNING_VARIANCE_CLIP_SCALE_EARLY) * progress
+           (_RUNNING_VARIANCE_CLIP_SCALE_LATE - _RUNNING_VARIANCE_CLIP_SCALE_EARLY) * progress
 end
 
 _running_variance_clip_scale(state::RunningVarianceState) =
@@ -236,7 +236,7 @@ function _mass_adaptation_weight(
     progress = _running_variance_window_progress(state)
     rejection_weight = clamp(Float64(accept_prob), 0.0, 1.0)
     return _RUNNING_VARIANCE_REJECTION_WEIGHT_EARLY +
-        (rejection_weight - _RUNNING_VARIANCE_REJECTION_WEIGHT_EARLY) * progress
+           (rejection_weight - _RUNNING_VARIANCE_REJECTION_WEIGHT_EARLY) * progress
 end
 
 function _mass_adaptation_weights!(
@@ -327,7 +327,7 @@ function _find_reasonable_batched_step_size(
         inverse_mass_matrix,
     )
 
-    for _ in 0:20
+    for _ = 0:20
         _, proposal_momentum, proposed_logjoint, _, valid = _batched_leapfrog!(
             workspace,
             model,
@@ -454,15 +454,15 @@ function _find_reasonable_batched_step_size_per_chain(
         workspace, model, position, current_gradient, inverse_mass_matrices,
         args, constraints, step_sizes, current_hamiltonian,
     )
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         directions[chain_index] = log_accept_ratio[chain_index] > log_target ? 1.0 : -1.0
     end
 
     trial = copy(step_sizes)
-    for _ in 1:20
+    for _ = 1:20
         copyto!(trial, step_sizes)
         any_active = false
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             done[chain_index] && continue
             next_step_size = step_sizes[chain_index] * (2.0 ^ directions[chain_index])
             if next_step_size < min_step_size || next_step_size > max_step_size
@@ -478,7 +478,7 @@ function _find_reasonable_batched_step_size_per_chain(
             workspace, model, position, current_gradient, inverse_mass_matrices,
             args, constraints, trial, current_hamiltonian,
         )
-        for chain_index in 1:num_chains
+        for chain_index = 1:num_chains
             done[chain_index] && continue
             step_sizes[chain_index] = trial[chain_index]
             if (directions[chain_index] > 0 && log_accept_ratio[chain_index] <= log_target) ||
@@ -488,7 +488,7 @@ function _find_reasonable_batched_step_size_per_chain(
         end
     end
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         step_sizes[chain_index] = clamp(step_sizes[chain_index], min_step_size, max_step_size)
     end
     return step_sizes
@@ -524,7 +524,7 @@ function _find_reasonable_step_size(
     log_accept_ratio = _proposal_log_accept_ratio(current_logjoint, momentum, proposal, inverse_mass_matrix)
     direction = log_accept_ratio > log_target ? 1.0 : -1.0
 
-    for _ in 1:20
+    for _ = 1:20
         next_step_size = reasonable_step_size * (2.0 ^ direction)
         if next_step_size < min_step_size || next_step_size > max_step_size
             break
@@ -558,18 +558,30 @@ function _chain_initial_params(initial_params, chain_index::Int, num_params::Int
     elseif initial_params isa AbstractMatrix
         (size(initial_params) == (num_params, num_chains) ||
          size(initial_params) == (constrained_num_params, num_chains)) ||
-            throw(DimensionMismatch("expected initial_params matrix of size ($num_params, $num_chains) or ($constrained_num_params, $num_chains), got $(size(initial_params))"))
+            throw(
+                DimensionMismatch(
+                    "expected initial_params matrix of size ($num_params, $num_chains) or ($constrained_num_params, $num_chains), got $(size(initial_params))",
+                ),
+            )
         return collect(Float64, view(initial_params, :, chain_index))
     elseif initial_params isa AbstractVector && !isempty(initial_params) && first(initial_params) isa AbstractVector
         length(initial_params) == num_chains ||
             throw(DimensionMismatch("expected $num_chains initial parameter vectors, got $(length(initial_params))"))
         chain_params = initial_params[chain_index]
         (length(chain_params) == num_params || length(chain_params) == constrained_num_params) ||
-            throw(DimensionMismatch("expected $num_params unconstrained or $constrained_num_params constrained initial parameters for chain $chain_index, got $(length(chain_params))"))
+            throw(
+                DimensionMismatch(
+                    "expected $num_params unconstrained or $constrained_num_params constrained initial parameters for chain $chain_index, got $(length(chain_params))",
+                ),
+            )
         return Float64[value for value in chain_params]
     elseif initial_params isa AbstractVector
         (length(initial_params) == num_params || length(initial_params) == constrained_num_params) ||
-            throw(DimensionMismatch("expected $num_params unconstrained or $constrained_num_params constrained initial parameters, got $(length(initial_params))"))
+            throw(
+                DimensionMismatch(
+                    "expected $num_params unconstrained or $constrained_num_params constrained initial parameters, got $(length(initial_params))",
+                ),
+            )
         return Float64[value for value in initial_params]
     end
 

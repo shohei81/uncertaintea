@@ -204,10 +204,12 @@ function _rhs_spec_expr(rhs)
         if callee === :lkjcholesky
             spec_arguments = rhs.args[2:end]
             (length(spec_arguments) == 2 && spec_arguments[1] isa Integer && spec_arguments[1] >= 2) ||
-                throw(ArgumentError(
-                    "lkjcholesky requires a literal integer dimension `d >= 2` as its first argument " *
-                    "(for latents and observations alike), got `$rhs`",
-                ))
+                throw(
+                    ArgumentError(
+                        "lkjcholesky requires a literal integer dimension `d >= 2` as its first argument " *
+                        "(for latents and observations alike), got `$rhs`",
+                    ),
+                )
         end
 
         if callee isa Symbol &&
@@ -270,16 +272,19 @@ function _parameter_layout_expr(choice_nodes)
             address = _address_spec_expr(lhs)
             transform = _parameter_transform_expr(rhs)
             parameter_dimension, value_length = _parameter_layout_sizes(rhs)
-            push!(slot_exprs, :($(_qualify(:ParameterSlotSpec))(
-                $choice_index,
-                $(QuoteNode(binding_symbol)),
-                $address,
-                $parameter_index,
-                $parameter_dimension,
-                $value_index,
-                $value_length,
-                $transform,
-            )))
+            push!(
+                slot_exprs,
+                :($(_qualify(:ParameterSlotSpec))(
+                    $choice_index,
+                    $(QuoteNode(binding_symbol)),
+                    $address,
+                    $parameter_index,
+                    $parameter_dimension,
+                    $value_index,
+                    $value_length,
+                    $transform,
+                )),
+            )
             slot_lookup[choice_index] = slot_index
             slot_index += 1
             parameter_index += parameter_dimension
@@ -311,17 +316,21 @@ function _supported_distribution_family(rhs)
         return family
     end
     if family === :truncatednormal || family === :truncatedstudentt
-        isnothing(_truncated_static_bounds(family, rhs.args[2:end])) && throw(ArgumentError(
-            "$family latents require literal (static) bounds; use static Number/Inf lower and upper bounds, " *
-            "or provide the value as an observation for dynamic bounds",
-        ))
+        isnothing(_truncated_static_bounds(family, rhs.args[2:end])) && throw(
+            ArgumentError(
+                "$family latents require literal (static) bounds; use static Number/Inf lower and upper bounds, " *
+                "or provide the value as an observation for dynamic bounds",
+            ),
+        )
         return family
     end
     if family === :mixture
-        _mixture_latent_eligible(rhs.args[2:end]) || throw(ArgumentError(
-            "mixture latents require every component to be a real-line location-scale family " *
-            "(normal, laplace, studentt); use the mixture as an observation for other component families",
-        ))
+        _mixture_latent_eligible(rhs.args[2:end]) || throw(
+            ArgumentError(
+                "mixture latents require every component to be a real-line location-scale family " *
+                "(normal, laplace, studentt); use the mixture as an observation for other component families",
+            ),
+        )
         return family
     end
     return nothing
@@ -463,7 +472,7 @@ function _expr_has_dynamic_content(expr)
             else
                 start = 1
             end
-            for idx in start:length(expr.args)
+            for idx = start:length(expr.args)
                 _expr_has_dynamic_content(expr.args[idx]) && return true
             end
             return false
@@ -544,22 +553,28 @@ function _execution_plan_steps_expr(plan_nodes, slot_lookup)
             rhs_spec = _rhs_spec_expr(choice_expr.args[3])
             scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, loop_scopes)...)
             slot_expr = haskey(slot_lookup, choice_index) ? slot_lookup[choice_index] : :(nothing)
-            push!(step_exprs, :($(_qualify(:ChoicePlanStep))(
-                $choice_index,
-                $binding,
-                $address,
-                $rhs_spec,
-                $scopes_expr,
-                $slot_expr,
-            )))
+            push!(
+                step_exprs,
+                :($(_qualify(:ChoicePlanStep))(
+                    $choice_index,
+                    $binding,
+                    $address,
+                    $rhs_spec,
+                    $scopes_expr,
+                    $slot_expr,
+                )),
+            )
         elseif node[1] === :deterministic
             scopes_expr = Expr(:vect, map(_loop_scope_spec_expr, node[4])...)
-            push!(step_exprs, :($(_qualify(:DeterministicPlanStep))(
-                $(QuoteNode(node[2])),
-                nothing,
-                $(QuoteNode(node[3])),
-                $scopes_expr,
-            )))
+            push!(
+                step_exprs,
+                :($(_qualify(:DeterministicPlanStep))(
+                    $(QuoteNode(node[2])),
+                    nothing,
+                    $(QuoteNode(node[3])),
+                    $scopes_expr,
+                )),
+            )
         end
     end
 
@@ -572,10 +587,13 @@ function _model_spec_expr(mode_expr, signature, body)
     argument_expr = Expr(:vect, map(QuoteNode, arguments)...)
     plan_nodes = Tuple[]
     _collect_plan_nodes!(body, plan_nodes)
-    choice_nodes = Tuple{Expr,Tuple,Any}[ (node[2], node[3], node[4]) for node in plan_nodes if node[1] === :choice ]
+    choice_nodes = Tuple{Expr,Tuple,Any}[(node[2], node[3], node[4]) for node in plan_nodes if node[1] === :choice]
     choice_exprs = map(node -> _choice_spec_expr(node[1], node[2], node[3]), choice_nodes)
     choices_expr = Expr(:vect, choice_exprs...)
-    shape_specialized = any(node -> _address_has_dynamic_parts(node[1].args[2]) || any(scope -> _expr_has_dynamic_content(scope[2]), node[2]), choice_nodes)
+    shape_specialized = any(
+        node -> _address_has_dynamic_parts(node[1].args[2]) || any(scope -> _expr_has_dynamic_content(scope[2]), node[2]),
+        choice_nodes,
+    )
     parameter_layout_expr, slot_lookup = _parameter_layout_expr(choice_nodes)
     plan_steps_expr = _execution_plan_steps_expr(plan_nodes, slot_lookup)
     return_expr = _return_expr_expr(body)

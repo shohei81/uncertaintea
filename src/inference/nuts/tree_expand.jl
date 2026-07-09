@@ -86,7 +86,7 @@ function _dyadic_turning(
     momentum::AbstractVector,
     direction::Int,
 )
-    for k in 1:trailing_ones(leaf_index)
+    for k = 1:trailing_ones(leaf_index)
         block_start = leaf_index - (1 << k) + 1
         slot = count_ones(block_start) + 1
         ckpt_position = view(checkpoint_positions, :, slot)

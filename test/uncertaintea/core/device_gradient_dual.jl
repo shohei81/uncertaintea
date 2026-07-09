@@ -18,7 +18,7 @@ const DeviceDual = UncertainTea.DeviceDual
 @tea static function devg_gauss_model(n)
     mu ~ normal(0.0, 1.0)
     s ~ gamma(2.0, 1.0)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ normal(mu, s)
     end
     return mu
@@ -28,7 +28,7 @@ end
     a ~ lognormal(0.0, 1.0)
     b ~ gamma(3.0, 2.0)
     scale = exp(a)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ normal(b, scale)
     end
     return a
@@ -36,7 +36,7 @@ end
 
 @tea static function devg_bernoulli_model(n)
     p ~ beta(2.0, 3.0)
-    for i in 1:n
+    for i = 1:n
         {:z => i} ~ bernoulli(p)
     end
     return p
@@ -109,7 +109,7 @@ end
 @testset "devg_gradient_parity_f64" begin
     # --- model 1: gaussian with loop observations, gamma(log) latent ---
     ys = [0.4, -0.7, 1.1, 0.2, 0.9]
-    cm = choicemap((:y => i, ys[i]) for i in 1:5)
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
     params = [0.5 -0.3 1.2 0.05; 0.1 0.7 -0.2 0.4]
     v, g = device_batched_logjoint_gradient(devg_gauss_model, params, (5,), cm)
     gref = batched_logjoint_gradient_unconstrained(devg_gauss_model, params, (5,), cm)
@@ -119,7 +119,7 @@ end
 
     # --- model 2: lognormal + gamma latents, exp-derived arg ---
     ys2 = [0.4, 1.1, -0.7]
-    cm2 = choicemap((:y => i, ys2[i]) for i in 1:3)
+    cm2 = choicemap((:y => i, ys2[i]) for i = 1:3)
     params2 = [0.5 -0.3 0.9; 0.1 0.7 -0.2]
     v2, g2 = device_batched_logjoint_gradient(devg_lognormal_gamma_model, params2, (3,), cm2)
     g2ref = batched_logjoint_gradient_unconstrained(devg_lognormal_gamma_model, params2, (3,), cm2)
@@ -129,7 +129,7 @@ end
 
     # --- model 3: bernoulli observations, beta(logit) latent ---
     zs = [1.0, 0.0, 1.0, 1.0]
-    cm3 = choicemap((:z => i, zs[i]) for i in 1:4)
+    cm3 = choicemap((:z => i, zs[i]) for i = 1:4)
     params3 = reshape([0.3, -0.8, 1.5], 1, 3)
     v3, g3 = device_batched_logjoint_gradient(devg_bernoulli_model, params3, (4,), cm3)
     g3ref = batched_logjoint_gradient_unconstrained(devg_bernoulli_model, params3, (4,), cm3)
@@ -140,21 +140,21 @@ end
 
 @testset "devg_gradient_parity_f32" begin
     ys = [0.4, -0.7, 1.1, 0.2, 0.9]
-    cm = choicemap((:y => i, ys[i]) for i in 1:5)
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
     params = [0.5 -0.3 1.2 0.05; 0.1 0.7 -0.2 0.4]
     gref = batched_logjoint_gradient_unconstrained(devg_gauss_model, params, (5,), cm)
     _, g32 = device_batched_logjoint_gradient(devg_gauss_model, Float32.(params), (5,), cm; precision=Float32)
     @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
 
     ys2 = [0.4, 1.1, -0.7]
-    cm2 = choicemap((:y => i, ys2[i]) for i in 1:3)
+    cm2 = choicemap((:y => i, ys2[i]) for i = 1:3)
     params2 = [0.5 -0.3 0.9; 0.1 0.7 -0.2]
     g2ref = batched_logjoint_gradient_unconstrained(devg_lognormal_gamma_model, params2, (3,), cm2)
     _, g2_32 = device_batched_logjoint_gradient(devg_lognormal_gamma_model, Float32.(params2), (3,), cm2; precision=Float32)
     @test Float64.(g2_32) ≈ g2ref rtol = 1e-3 atol = 1e-3
 
     zs = [1.0, 0.0, 1.0, 1.0]
-    cm3 = choicemap((:z => i, zs[i]) for i in 1:4)
+    cm3 = choicemap((:z => i, zs[i]) for i = 1:4)
     params3 = reshape([0.3, -0.8, 1.5], 1, 3)
     g3ref = batched_logjoint_gradient_unconstrained(devg_bernoulli_model, params3, (4,), cm3)
     _, g3_32 = device_batched_logjoint_gradient(devg_bernoulli_model, Float32.(params3), (4,), cm3; precision=Float32)
@@ -174,7 +174,7 @@ end
 
 @testset "devg_workspace_reuse" begin
     ys = [0.4, -0.7, 1.1, 0.2]
-    cm = choicemap((:y => i, ys[i]) for i in 1:4)
+    cm = choicemap((:y => i, ys[i]) for i = 1:4)
     ws = DeviceBatchedWorkspace(devg_gauss_model, 3; args=(4,), constraints=cm)
 
     params_a = [0.5 -0.3 1.2; 0.1 0.7 -0.2]

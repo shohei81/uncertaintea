@@ -24,10 +24,11 @@
             xp[i] += h
             xm = copy(x)
             xm[i] -= h
-            g[i] = (
-                logjoint_unconstrained(model, xp, args, constraints) -
-                logjoint_unconstrained(model, xm, args, constraints)
-            ) / (2h)
+            g[i] =
+                (
+                    logjoint_unconstrained(model, xp, args, constraints) -
+                    logjoint_unconstrained(model, xm, args, constraints)
+                ) / (2h)
         end
         return g
     end
@@ -48,21 +49,21 @@
         # 2. backend-native scoring vs CPU reference logjoint
         batched_values = batched_logjoint_unconstrained(model, points, args, constraints)
         reference_values = [
-            logjoint_unconstrained(model, points[:, i], args, constraints) for i in 1:size(points, 2)
+            logjoint_unconstrained(model, points[:, i], args, constraints) for i = 1:size(points, 2)
         ]
         @test batched_values ≈ reference_values atol = 1e-8
 
         # 3./4. analytic gradient vs finite differences and vs ForwardDiff
         analytic = batched_logjoint_gradient_unconstrained(model, points, args, constraints)
-        for i in 1:size(points, 2)
+        for i = 1:size(points, 2)
             @test analytic[:, i] ≈ gxc_fd_gradient(model, points[:, i], args, constraints) atol = 5e-6
             @test analytic[:, i] ≈
-                logjoint_gradient_unconstrained(model, points[:, i], args, constraints) atol = 1e-8
+                  logjoint_gradient_unconstrained(model, points[:, i], args, constraints) atol = 1e-8
         end
 
         # 5. Float32 gradient tracks Float64 (the Metal device path runs f32)
         analytic32 = batched_logjoint_gradient_unconstrained(
-            model, Float32.(points), args, constraints
+            model, Float32.(points), args, constraints,
         )
         @test eltype(analytic32) == Float32
         @test Float64.(analytic32) ≈ analytic atol = 2e-3

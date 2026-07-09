@@ -28,7 +28,7 @@ function _batched_random_walk_move!(
     accepted = 0
     total = size(particles, 2) * num_steps
 
-    for _ in 1:num_steps
+    for _ = 1:num_steps
         for parameter_index in axes(particles, 1)
             scale = move_scale[parameter_index]
             for particle_index in axes(particles, 2)
@@ -136,7 +136,7 @@ function _batched_hmc_move!(
     _batched_hamiltonian!(current_hamiltonian, current_tempered_values, momentum, inverse_mass_matrix)
     _batched_hamiltonian!(proposal_hamiltonian, proposal_tempered_values, proposal_momentum, inverse_mass_matrix)
 
-    for particle_index in 1:num_particles
+    for particle_index = 1:num_particles
         valid[particle_index] || continue
         log_accept_ratio = current_hamiltonian[particle_index] - proposal_hamiltonian[particle_index]
         if log(rand(rng)) < min(0.0, log_accept_ratio)

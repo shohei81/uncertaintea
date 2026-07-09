@@ -143,7 +143,7 @@ struct WarmupSchedule
     terminal_buffer::Int
 end
 
-mutable struct NUTSState{P<:AbstractVector{Float64}, M<:AbstractVector{Float64}, G<:AbstractVector{Float64}}
+mutable struct NUTSState{P<:AbstractVector{Float64},M<:AbstractVector{Float64},G<:AbstractVector{Float64}}
     position::P
     momentum::M
     logjoint::Float64
@@ -655,15 +655,40 @@ function BatchedNUTSWorkspace(
     )
     column_tree_workspaces = [
         NUTSSubtreeWorkspace(
-            NUTSState(view(tree_current_position, :, chain_index), view(tree_current_momentum, :, chain_index), 0.0, view(tree_current_gradient, :, chain_index)),
-            NUTSState(view(tree_next_position, :, chain_index), view(tree_next_momentum, :, chain_index), 0.0, view(tree_next_gradient, :, chain_index)),
-            NUTSState(view(tree_left_position, :, chain_index), view(tree_left_momentum, :, chain_index), 0.0, view(tree_left_gradient, :, chain_index)),
-            NUTSState(view(tree_right_position, :, chain_index), view(tree_right_momentum, :, chain_index), 0.0, view(tree_right_gradient, :, chain_index)),
-            NUTSState(view(tree_proposal_position, :, chain_index), view(tree_proposal_momentum, :, chain_index), 0.0, view(tree_proposal_gradient, :, chain_index)),
+            NUTSState(
+                view(tree_current_position, :, chain_index),
+                view(tree_current_momentum, :, chain_index),
+                0.0,
+                view(tree_current_gradient, :, chain_index),
+            ),
+            NUTSState(
+                view(tree_next_position, :, chain_index),
+                view(tree_next_momentum, :, chain_index),
+                0.0,
+                view(tree_next_gradient, :, chain_index),
+            ),
+            NUTSState(
+                view(tree_left_position, :, chain_index),
+                view(tree_left_momentum, :, chain_index),
+                0.0,
+                view(tree_left_gradient, :, chain_index),
+            ),
+            NUTSState(
+                view(tree_right_position, :, chain_index),
+                view(tree_right_momentum, :, chain_index),
+                0.0,
+                view(tree_right_gradient, :, chain_index),
+            ),
+            NUTSState(
+                view(tree_proposal_position, :, chain_index),
+                view(tree_proposal_momentum, :, chain_index),
+                0.0,
+                view(tree_proposal_gradient, :, chain_index),
+            ),
             NUTSSubtreeMetadataState(-Inf, 0.0, 0, 0, Inf, Inf, Inf, Inf, 0.0, -Inf, -Inf, false, false),
             zeros(num_params, checkpoint_columns),
             zeros(num_params, checkpoint_columns),
-        ) for chain_index in 1:num_chains
+        ) for chain_index = 1:num_chains
     ]
     left_position = Matrix{Float64}(undef, num_params, num_chains)
     right_position = Matrix{Float64}(undef, num_params, num_chains)
@@ -678,8 +703,18 @@ function BatchedNUTSWorkspace(
     control = BatchedNUTSControlState(num_chains)
     column_continuation_states = [
         NUTSContinuationState(
-            NUTSState(view(left_position, :, chain_index), view(left_momentum, :, chain_index), 0.0, view(left_gradient, :, chain_index)),
-            NUTSState(view(right_position, :, chain_index), view(right_momentum, :, chain_index), 0.0, view(right_gradient, :, chain_index)),
+            NUTSState(
+                view(left_position, :, chain_index),
+                view(left_momentum, :, chain_index),
+                0.0,
+                view(left_gradient, :, chain_index),
+            ),
+            NUTSState(
+                view(right_position, :, chain_index),
+                view(right_momentum, :, chain_index),
+                0.0,
+                view(right_gradient, :, chain_index),
+            ),
             _batched_nuts_state(proposal_position, proposal_momentum, proposed_logjoint, proposal_gradient, chain_index),
             Inf,
             Inf,
@@ -690,7 +725,7 @@ function BatchedNUTSWorkspace(
             0,
             false,
             false,
-        ) for chain_index in 1:num_chains
+        ) for chain_index = 1:num_chains
     ]
     return BatchedNUTSWorkspace(
         gradient_cache,
@@ -786,7 +821,7 @@ function _batched_nuts_column_gradient_caches(
     )
     caches = Vector{typeof(first_cache)}(undef, num_chains)
     caches[1] = first_cache
-    for chain_index in 2:num_chains
+    for chain_index = 2:num_chains
         caches[chain_index] = LogjointGradientCache(
             first_cache.objective,
             first_cache.config,
@@ -805,7 +840,7 @@ function _batched_nuts_column_gradient_caches(
 )
     num_chains = size(position, 2)
     caches = Vector{LogjointGradientCache}(undef, num_chains)
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         caches[chain_index] = _logjoint_gradient_cache(
             model,
             collect(view(position, :, chain_index)),

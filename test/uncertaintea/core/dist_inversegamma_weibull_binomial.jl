@@ -1,12 +1,12 @@
 @testset "dist_inversegamma_weibull_binomial" begin
     @test UncertainTea.logpdf(inversegamma(3.0, 2.0), 1.5) ≈
-        3.0 * log(2.0) - UncertainTea.loggamma(3.0) - 4.0 * log(1.5) - 2.0 / 1.5 atol=1e-8
+          3.0 * log(2.0) - UncertainTea.loggamma(3.0) - 4.0 * log(1.5) - 2.0 / 1.5 atol=1e-8
     @test UncertainTea.logpdf(inversegamma(3.0, 2.0), 0.0) == -Inf
     @test UncertainTea.logpdf(weibull(2.0, 3.0), 1.5) ≈
-        log(2.0) + log(1.5) - 2.0 * log(3.0) - (1.5 / 3.0)^2 atol=1e-8
+          log(2.0) + log(1.5) - 2.0 * log(3.0) - (1.5 / 3.0)^2 atol=1e-8
     @test UncertainTea.logpdf(weibull(2.0, 3.0), -0.5) == -Inf
     @test UncertainTea.logpdf(UncertainTea.binomial(5, 0.4), 2) ≈
-        log(10.0) + 2 * log(0.4) + 3 * log(0.6) atol=1e-8
+          log(10.0) + 2 * log(0.4) + 3 * log(0.6) atol=1e-8
     @test UncertainTea.logpdf(UncertainTea.binomial(5, 0.4), 6) == -Inf
 
     @tea static function weibull_latent_model()
@@ -30,14 +30,14 @@
     @test weibull_params[1] > 0
     @test weibull_unconstrained[1] ≈ log(weibull_params[1]) atol=1e-6
     @test logjoint(weibull_latent_model, weibull_params, (), weibull_constraints) ≈
-        assess(
-            weibull_latent_model,
-            (),
-            choicemap((:wait, weibull_trace[:wait]), (:y, 1.1f0)),
-        ) atol=1e-6
+          assess(
+        weibull_latent_model,
+        (),
+        choicemap((:wait, weibull_trace[:wait]), (:y, 1.1f0)),
+    ) atol=1e-6
     @test logjoint_unconstrained(weibull_latent_model, weibull_unconstrained, (), weibull_constraints) ≈
-        logjoint(weibull_latent_model, weibull_params, (), weibull_constraints) +
-        weibull_unconstrained[1] atol=1e-6
+          logjoint(weibull_latent_model, weibull_params, (), weibull_constraints) +
+          weibull_unconstrained[1] atol=1e-6
 
     @tea static function inversegamma_shape_model()
         log_shape ~ normal(0.0f0, 0.4f0)
@@ -75,14 +75,16 @@
     )
 
     @test inversegamma_backend_plan.steps[3] isa UncertainTea.BackendInverseGammaChoicePlanStep
-    @test inversegamma_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            inversegamma_shape_model,
-            inversegamma_batch_params[:, index],
-            (),
-            inversegamma_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+    @test inversegamma_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                inversegamma_shape_model,
+                inversegamma_batch_params[:, index],
+                (),
+                inversegamma_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(inversegamma_batch_cache.backend_cache)
     @test isnothing(inversegamma_batch_cache.flat_cache)
     @test isempty(inversegamma_batch_cache.column_caches)
@@ -125,14 +127,16 @@
 
     @test binomial_backend_report.supported
     @test binomial_backend_plan.steps[3] isa UncertainTea.BackendBinomialChoicePlanStep
-    @test binomial_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            binomial_probability_model,
-            binomial_batch_params[:, index],
-            (),
-            binomial_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+    @test binomial_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                binomial_probability_model,
+                binomial_batch_params[:, index],
+                (),
+                binomial_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(binomial_batch_cache.backend_cache)
     @test isnothing(binomial_batch_cache.flat_cache)
     @test isempty(binomial_batch_cache.column_caches)

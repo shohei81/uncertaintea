@@ -17,7 +17,7 @@ function _export_parameter_names(model::TeaModel, space::Symbol)
         component_count = length(indices)
         for (offset, parameter_index) in enumerate(indices)
             names[parameter_index] = component_count == 1 ?
-                String(slot.binding) : string(slot.binding, "[", offset, "]")
+                                     String(slot.binding) : string(slot.binding, "[", offset, "]")
         end
     end
     return names
@@ -52,7 +52,7 @@ function posterior_array(chains::HMCChains; space::Symbol=:constrained)
             throw(DimensionMismatch("all chains must share the same parameter dimension"))
         size(samples, 2) == num_samples ||
             throw(DimensionMismatch("all chains must share the same number of samples"))
-        for p in 1:num_params, s in 1:num_samples
+        for p = 1:num_params, s = 1:num_samples
             result[s, chain_index, p] = samples[p, s]
         end
     end
@@ -74,7 +74,7 @@ function to_arviz_dict(chains::HMCChains)
     num_samples, num_chains, num_params = size(draws)
 
     posterior = Dict{String,Any}()
-    for p in 1:num_params
+    for p = 1:num_params
         posterior[names[p]] = Array{Float64,2}(draws[:, :, p])
     end
 
@@ -84,7 +84,7 @@ function to_arviz_dict(chains::HMCChains)
     acceptance_rate = Array{Float64,2}(undef, num_samples, num_chains)
     lp = Array{Float64,2}(undef, num_samples, num_chains)
     for (chain_index, chain) in enumerate(chains.chains)
-        for s in 1:num_samples
+        for s = 1:num_samples
             diverging[s, chain_index] = chain.divergent[s]
             energy[s, chain_index] = chain.energies[s]
             tree_depth[s, chain_index] = chain.tree_depths[s]

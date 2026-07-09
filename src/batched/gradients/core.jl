@@ -36,7 +36,7 @@ function _assign_backend_choice_value!(
         copyto!(view(env.numeric_values, slot, :), values)
         _store_slot_gradient!(slot_gradients, slot, gradients)
     elseif env.index_slots[slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             value = values[batch_index]
             index = _integer_like_choice_value(value)
             isnothing(index) && throw(
@@ -46,7 +46,7 @@ function _assign_backend_choice_value!(
         end
     else
         storage = env.generic_values[slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             storage[batch_index] = values[batch_index]
         end
     end
@@ -132,7 +132,7 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
     for slot in layout.slots
         slot_index = slot.index
         if slot.transform isa IdentityTransform
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 constrained[slot_index, batch_index] = T(params[slot_index, batch_index])
             end
         elseif slot.transform isa VectorIdentityTransform
@@ -140,14 +140,14 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
             destination_indices = parametervalueindices(slot)
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa LogTransform
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 unconstrained_value = T(params[slot_index, batch_index])
                 constrained_value = exp(unconstrained_value)
                 constrained[slot_index, batch_index] = constrained_value
                 logabsdet[batch_index] += unconstrained_value
             end
         elseif slot.transform isa LogitTransform
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 unconstrained_value = T(params[slot_index, batch_index])
                 constrained_value = to_constrained(slot.transform, unconstrained_value)
                 constrained[slot_index, batch_index] = constrained_value
@@ -156,7 +156,7 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
         elseif slot.transform isa SimplexTransform
             source_indices = parameterindices(slot)
             destination_indices = parametervalueindices(slot)
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 constrained_view = view(constrained, destination_indices, batch_index)
                 unconstrained_view = view(params, source_indices, batch_index)
                 _to_constrained_simplex!(constrained_view, slot.transform, unconstrained_view)
@@ -176,13 +176,13 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
             continue
         elseif slot.transform isa LogTransform
             slot_index = slot.index
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 gradients[slot_index, batch_index] =
                     gradients[slot_index, batch_index] * constrained[slot_index, batch_index] + one(T)
             end
         elseif slot.transform isa LogitTransform
             slot_index = slot.index
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 constrained_value = constrained[slot_index, batch_index]
                 gradients[slot_index, batch_index] =
                     gradients[slot_index, batch_index] * constrained_value * (1 - constrained_value) +
@@ -191,7 +191,7 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
         elseif slot.transform isa SimplexTransform
             source_indices = parameterindices(slot)
             destination_indices = parametervalueindices(slot)
-            for batch_index in 1:size(params, 2)
+            for batch_index = 1:size(params, 2)
                 constrained_view = view(constrained, destination_indices, batch_index)
                 for (local_index, parameter_index) in enumerate(source_indices)
                     gradients[parameter_index, batch_index] +=

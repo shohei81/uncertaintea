@@ -137,7 +137,8 @@ function _validate_batched_constraints(constraints::ChoiceMap, batch_size::Int)
 end
 
 function _validate_batched_constraints(constraints::AbstractVector, batch_size::Int)
-    length(constraints) == batch_size || throw(DimensionMismatch("expected $batch_size batched choicemaps, got $(length(constraints))"))
+    length(constraints) == batch_size ||
+        throw(DimensionMismatch("expected $batch_size batched choicemaps, got $(length(constraints))"))
     for batch_constraints in constraints
         batch_constraints isa ChoiceMap || throw(ArgumentError("batched constraints must be a ChoiceMap or a vector of ChoiceMaps"))
     end
@@ -211,9 +212,9 @@ function _prepare_batched_environment!(
         length(args) == batch_size ||
             throw(DimensionMismatch("expected $batch_size batched argument tuples, got $(length(args))"))
         values = _batched_argument_buffer!(workspace, batch_size)
-        for argument_index in 1:workspace.argument_count
+        for argument_index = 1:workspace.argument_count
             slot = workspace.argument_slots[argument_index]
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 batch_args = args[batch_index]
                 length(batch_args) == workspace.argument_count ||
                     throw(DimensionMismatch("expected $(workspace.argument_count) model arguments, got $(length(batch_args))"))
@@ -319,7 +320,7 @@ function _fallback_batched_logjoint!(
 )
     batch_size = size(params, 2)
     values = Vector{float(eltype(params))}(undef, batch_size)
-    for batch_index in 1:batch_size
+    for batch_index = 1:batch_size
         values[batch_index] = _logjoint_with_workspace!(
             workspace,
             view(params, :, batch_index),
@@ -372,7 +373,7 @@ function _logjoint_unconstrained_batched_backend!(
         elseif slot.transform isa VectorIdentityTransform
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa VectorLogTransform
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 for (source_index, destination_index) in zip(source_indices, destination_indices)
                     unconstrained_value = params[source_index, batch_index]
                     constrained[destination_index, batch_index] = exp(unconstrained_value)
@@ -380,7 +381,7 @@ function _logjoint_unconstrained_batched_backend!(
                 end
             end
         elseif slot.transform isa VectorLogitTransform
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 for (source_index, destination_index) in zip(source_indices, destination_indices)
                     unconstrained_value = params[source_index, batch_index]
                     constrained_value = to_constrained(LogitTransform(), unconstrained_value)
@@ -389,27 +390,27 @@ function _logjoint_unconstrained_batched_backend!(
                 end
             end
         elseif slot.transform isa LogTransform
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 unconstrained_value = params[first(source_indices), batch_index]
                 constrained[first(destination_indices), batch_index] = exp(unconstrained_value)
                 logabsdet[batch_index] += unconstrained_value
             end
         elseif slot.transform isa LogitTransform
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 unconstrained_value = params[first(source_indices), batch_index]
                 constrained_value = to_constrained(slot.transform, unconstrained_value)
                 constrained[first(destination_indices), batch_index] = constrained_value
                 logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
             end
         elseif slot.transform isa SimplexTransform
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 constrained_view = view(constrained, destination_indices, batch_index)
                 unconstrained_view = view(params, source_indices, batch_index)
                 _to_constrained_simplex!(constrained_view, slot.transform, unconstrained_view)
                 logabsdet[batch_index] += _simplex_logabsdet(constrained_view)
             end
         elseif slot.transform isa CholeskyCorrTransform
-            for batch_index in 1:batch_size
+            for batch_index = 1:batch_size
                 constrained_view = view(constrained, destination_indices, batch_index)
                 unconstrained_view = view(params, source_indices, batch_index)
                 logabsdet[batch_index] +=
@@ -420,7 +421,7 @@ function _logjoint_unconstrained_batched_backend!(
         end
     end
     totals = _logjoint_with_batched_backend!(workspace, constrained, args, constraints)
-    for batch_index in 1:batch_size
+    for batch_index = 1:batch_size
         destination[batch_index] = totals[batch_index] + logabsdet[batch_index]
     end
     return destination
@@ -448,7 +449,7 @@ function _fallback_batched_logjoint_unconstrained!(
     batch_size = size(params, 2)
     length(destination) == batch_size ||
         throw(DimensionMismatch("expected unconstrained batched destination of length $batch_size, got $(length(destination))"))
-    for batch_index in 1:batch_size
+    for batch_index = 1:batch_size
         destination[batch_index] = _logjoint_unconstrained_with_workspace!(
             model,
             workspace,
