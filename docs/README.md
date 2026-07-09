@@ -10,6 +10,7 @@ This folder tracks the current design direction of UncertainTea.
 - [batched-inference.md](batched-inference.md): the phased design for batched evaluators and GPU-oriented execution
 - [gpu-native-nuts.md](gpu-native-nuts.md): the design constraints and staged plan for iterative, GPU-oriented NUTS
 - [vector-backend-lowering.md](vector-backend-lowering.md): staged design notes for bringing vector-valued latent families into the backend-native GPU subset
+- [noncentered-reparam.md](noncentered-reparam.md): staged design for automatic non-centered reparameterization with address preservation
 
 ## Documentation Rules
 
