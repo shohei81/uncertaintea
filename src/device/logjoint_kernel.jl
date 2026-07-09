@@ -63,6 +63,14 @@ end
     return (_device_normal_logpdf(mu, sigma, value) + lad, cur)
 end
 
+@inline function _device_score_step(step::DeviceNoncenteredNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    mu = _device_eval(step.mu, slots, col)
+    sigma = _device_eval(step.sigma, slots, col)
+    z = @inbounds params[step.value_source, col]
+    _device_store_binding!(slots, step.binding_slot, mu + sigma * z, col)
+    return (_device_normal_logpdf(zero(z), one(z), z), cursor)
+end
+
 @inline function _device_score_step(step::DeviceLognormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)

@@ -1,3 +1,5 @@
+using KernelAbstractions: CPU as ReparamDeviceCPU
+
 # CPU semantics of reparam=:noncentered (PR-3 of docs/noncentered-reparam.md):
 # the slot holds the standardized z, the trace/constrained space keeps theta,
 # and the plan-walk transform materializes theta = loc + scale * z with the
@@ -251,6 +253,53 @@ end
         report = backend_report(ncc_slotless_dependent_model)
         @test report.supported == false
         @test any(occursin("without a parameter slot", issue) for issue in report.issues)
+    end
+
+    @testset "ncc_device_parity" begin
+        supported, _ = device_lowering_report(ncc_funnel_flagged)
+        @test supported
+        points = [0.3 -0.5; 0.9 0.2]
+        device_values, device_gradients = device_batched_logjoint_gradient(
+            ncc_funnel_flagged,
+            points,
+            (),
+            ncc_constraints;
+            backend=ReparamDeviceCPU(),
+            precision=Float64,
+        )
+        reference_values =
+            [logjoint_unconstrained(ncc_funnel_flagged, points[:, i], (), ncc_constraints) for i = 1:2]
+        reference_gradients = hcat(
+            [logjoint_gradient_unconstrained(ncc_funnel_flagged, points[:, i], (), ncc_constraints) for i = 1:2]...,
+        )
+        @test collect(device_values) ≈ reference_values atol = 1e-10
+        @test collect(device_gradients) ≈ reference_gradients atol = 1e-10
+
+        device_chains = batched_hmc(
+            ncc_funnel_flagged,
+            (),
+            ncc_constraints;
+            num_chains=2,
+            num_samples=25,
+            num_warmup=25,
+            backend=ReparamDeviceCPU(),
+            precision=Float64,
+            rng=MersenneTwister(6),
+        )
+        @test all(all(isfinite, chain.constrained_samples) for chain in device_chains.chains)
+        device_nuts = batched_nuts(
+            ncc_funnel_flagged,
+            (),
+            ncc_constraints;
+            num_chains=2,
+            num_samples=20,
+            num_warmup=20,
+            tree_strategy=:masked,
+            backend=ReparamDeviceCPU(),
+            precision=Float64,
+            rng=MersenneTwister(7),
+        )
+        @test all(all(isfinite, chain.constrained_samples) for chain in device_nuts.chains)
     end
 
     @testset "ncc_sbc" begin

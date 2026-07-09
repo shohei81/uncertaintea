@@ -45,6 +45,15 @@ struct DeviceNormalChoiceStep{M,S} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# reparam=:noncentered normal: z read raw from the unconstrained params,
+# scored against N(0, 1); the binding materializes theta = mu + sigma * z.
+struct DeviceNoncenteredNormalChoiceStep{M,S} <: AbstractDeviceChoiceStep
+    mu::M
+    sigma::S
+    value_source::Int32
+    binding_slot::Int32
+end
+
 struct DeviceLognormalChoiceStep{M,S} <: AbstractDeviceChoiceStep
     mu::M
     sigma::S
@@ -219,7 +228,14 @@ function _device_choice_value_source(
         _device_issue!(issues, "device lowering does not support latent $family choices inside a loop")
         return nothing
     end
-    slot = layout.slots[step.parameter_slot]
+    # backend steps carry the slot's VALUE row (issue #36), so recover the
+    # slot spec by that row rather than indexing by ordinal
+    slot_position = findfirst(s -> s.value_index == step.parameter_slot, layout.slots)
+    if isnothing(slot_position)
+        _device_issue!(issues, "device lowering could not resolve the parameter slot for a $family latent")
+        return nothing
+    end
+    slot = layout.slots[slot_position]
     if slot.value_length != 1 || slot.dimension != 1
         _device_issue!(issues, "device lowering only supports scalar latent parameters, got a vector $family latent")
         return nothing
@@ -382,6 +398,44 @@ end
 
 # Any other supported-by-CPU-backend choice family that we deliberately do not
 # yet lower to the device.
+function _lower_device_step!(
+    out,
+    step::BackendNoncenteredNormalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    if in_loop
+        _device_issue!(issues, "device lowering does not support latent noncentered normal choices inside a loop")
+        return nothing
+    end
+    isnothing(step.parameter_slot) && begin
+        _device_issue!(issues, "noncentered normal requires a parameter slot")
+        return nothing
+    end
+    slot_position = findfirst(s -> s.value_index == step.parameter_slot, layout.slots)
+    if isnothing(slot_position) || layout.slots[slot_position].dimension != 1
+        _device_issue!(issues, "device lowering could not resolve the noncentered normal parameter slot")
+        return nothing
+    end
+    mu = _lower_device_expr(step.mu, backend.generic_slots, T, issues, "noncentered normal argument")
+    sigma = _lower_device_expr(step.sigma, backend.generic_slots, T, issues, "noncentered normal argument")
+    (isnothing(mu) || isnothing(sigma)) && return nothing
+    push!(
+        out,
+        DeviceNoncenteredNormalChoiceStep(
+            mu,
+            sigma,
+            Int32(layout.slots[slot_position].index),
+            _device_slot32(step.binding_slot),
+        ),
+    )
+    return nothing
+end
+
 function _lower_device_step!(out, step::BackendChoicePlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
     _device_issue!(issues, "device lowering does not support the $(nameof(typeof(step))) distribution family yet")
     return nothing
