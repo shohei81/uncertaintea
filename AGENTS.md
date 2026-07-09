@@ -73,3 +73,7 @@ Defer by default:
   (e.g. `dist_truncated.jl`, `device_masked_nuts.jl`), never after the PR that
   introduced them; a new feature's tests go into the topically matching file or
   a new descriptively named one
+- CI (.github/workflows/ci.yml) shards the suite via `UNCERTAINTEA_TEST_GROUP`
+  (groups defined in `test/uncertaintea/core.jl`); a plain local `Pkg.test()`
+  still runs everything. Register a new test file in the `core_test_files`
+  list with its topical group (the suite errors on unregistered files)

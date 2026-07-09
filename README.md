@@ -1,5 +1,7 @@
 # UncertainTea
 
+[![CI](https://github.com/shohei81/uncertaintea/actions/workflows/ci.yml/badge.svg)](https://github.com/shohei81/uncertaintea/actions/workflows/ci.yml)
+
 UncertainTea is an experimental Julia probabilistic programming package with a
 Gen-like frontend and a static execution model designed for GPU-friendly
 backends.
