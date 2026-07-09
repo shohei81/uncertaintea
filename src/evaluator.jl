@@ -99,6 +99,10 @@ struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCom
     constructor::C
     arguments::A
     parameter_value_indices::Union{Nothing,UnitRange{Int}}
+    parameter_slot::Union{Nothing,Int}
+    # (location, scale) positions in `arguments` for reparam=:noncentered
+    # latents; `nothing` for centered choices
+    noncentered_location_scale::Union{Nothing,Tuple{Int,Int}}
 end
 
 struct CompiledDeterministicPlanStep{E<:AbstractCompiledExpr} <: AbstractCompiledPlanStep
@@ -227,12 +231,17 @@ function _compile_plan_step(
     end
     parameter_value_indices =
         isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
+    noncentered_location_scale =
+        step.rhs isa DistributionSpec && step.rhs.reparam === :noncentered ?
+        _noncentered_location_scale_indices(step.rhs.family) : nothing
     return CompiledChoicePlanStep(
         step.binding_slot,
         _compile_address(layout, model, step.address),
         constructor,
         arguments,
         parameter_value_indices,
+        step.parameter_slot,
+        noncentered_location_scale,
     )
 end
 
@@ -414,8 +423,143 @@ function logjoint_unconstrained(
     args::Tuple=(),
     constraints::ChoiceMap=choicemap(),
 )
-    constrained, logabsdet = transform_to_constrained_with_logabsdet(model, params)
+    constrained, logabsdet = transform_to_constrained_with_logabsdet(model, params, args)
     return logjoint(model, constrained, args, constraints) + logabsdet
+end
+
+# --- dependent-transform plan walk (reparam=:noncentered) ---------------------
+#
+# Noncentered slots hold the standardized z while the constrained space keeps
+# theta = location + scale * z, where location/scale are expressions over
+# model arguments and earlier latents. The transform therefore runs as a walk
+# over the compiled plan with an environment, visiting slots in execution
+# order; centered slots use the ordinary per-slot transforms. Observations
+# are bound as NaN poison: a location/scale that depends on one fails loudly.
+
+# positions of (location, scale) among the family's arguments
+_noncentered_location_scale_indices(family::Symbol) = family === :studentt ? (2, 3) : (1, 2)
+
+# Poison bound to slotless choices during the walk. Unlike NaN it cannot be
+# swallowed by comparisons or branching (`NaN > 0` is silently false): it is
+# not a Number, so arithmetic and ordered comparisons raise MethodError, and
+# equality is overloaded to throw outright.
+struct _TransformUnknownValue end
+
+const _TRANSFORM_UNKNOWN_MESSAGE =
+    "reparam=:noncentered location/scale expressions may only depend on model arguments " *
+    "and earlier latents with parameter slots; this model routes a choice without a slot " *
+    "(an observation or a discrete latent) into one"
+
+Base.:(==)(::_TransformUnknownValue, ::Any) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.:(==)(::Any, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.:(==)(::_TransformUnknownValue, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.isequal(::_TransformUnknownValue, ::Any) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.isequal(::Any, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+Base.isequal(::_TransformUnknownValue, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+
+# Evaluate an expression during the walk, converting the poison's MethodError
+# into the informative rejection.
+function _walk_transform_eval(env::PlanEnvironment, expr)
+    try
+        return _eval_compiled_expr(env, expr)
+    catch err
+        if err isa MethodError && any(arg isa _TransformUnknownValue for arg in err.args)
+            throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+        end
+        rethrow()
+    end
+end
+
+function _dependent_transform_walk!(
+    destination::AbstractVector,
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple,
+    inverse::Bool,
+)
+    plan = executionplan(model)
+    compiled_plan = _compiled_execution_plan(model)
+    length(args) == length(modelspec(model).arguments) || throw(
+        DimensionMismatch(
+            "transforming a model with reparam=:noncentered latents requires its " *
+            "$(length(modelspec(model).arguments)) model arguments, got $(length(args))",
+        ),
+    )
+    env = PlanEnvironment(plan.environment_layout)
+    for (slot, value) in zip(plan.environment_layout.argument_slots, args)
+        _environment_set!(env, slot, value)
+    end
+    return _walk_transform_steps!(destination, compiled_plan.steps, env, plan.parameter_layout, params, inverse)
+end
+
+_walk_transform_steps!(destination, ::Tuple{}, env, layout, params, inverse) = zero(eltype(destination))
+
+function _walk_transform_steps!(destination, steps::Tuple, env, layout, params, inverse)
+    return _walk_transform_step!(destination, first(steps), env, layout, params, inverse) +
+           _walk_transform_steps!(destination, Base.tail(steps), env, layout, params, inverse)
+end
+
+function _walk_transform_step!(destination, step::CompiledDeterministicPlanStep, env, layout, params, inverse)
+    _environment_set!(env, step.binding_slot, _walk_transform_eval(env, step.expr))
+    return zero(eltype(destination))
+end
+
+function _walk_transform_step!(destination, step::CompiledLoopPlanStep, env, layout, params, inverse)
+    iterable = _walk_transform_eval(env, step.iterable)
+    had_previous = _environment_hasvalue(env, step.iterator_slot)
+    previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
+    total = zero(eltype(destination))
+    for item in iterable
+        _environment_set!(env, step.iterator_slot, item)
+        total += _walk_transform_steps!(destination, step.body, env, layout, params, inverse)
+    end
+    _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
+    return total
+end
+
+function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, layout, params, inverse)
+    if isnothing(step.parameter_slot)
+        # observation or slotless latent: its value is unknown during a
+        # transform; poison the binding so any dependence fails loudly
+        isnothing(step.binding_slot) ||
+            _environment_set!(env, step.binding_slot, _TransformUnknownValue())
+        return zero(eltype(destination))
+    end
+    slot = layout.slots[step.parameter_slot]
+    if isnothing(step.noncentered_location_scale)
+        if inverse
+            _transform_slot_to_unconstrained!(destination, slot, params)
+            value = _parameter_slot_value(parametervalueindices(slot), params)
+            isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+            return zero(eltype(destination))
+        end
+        logabsdet = _transform_slot_to_constrained!(destination, slot, params)
+        value = _parameter_slot_value(parametervalueindices(slot), destination)
+        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+        return logabsdet
+    end
+
+    location_index, scale_index = step.noncentered_location_scale
+    location = _walk_transform_eval(env, step.arguments[location_index])
+    scale = _walk_transform_eval(env, step.arguments[scale_index])
+    (location isa _TransformUnknownValue || scale isa _TransformUnknownValue) &&
+        throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
+    (location isa Real && scale isa Real && isfinite(location) && isfinite(scale)) || throw(
+        ArgumentError(
+            "reparam=:noncentered location/scale must evaluate to finite reals; got " *
+            "location=$location, scale=$scale for the choice bound to :$(slot.binding)",
+        ),
+    )
+    if inverse
+        constrained_value = params[slot.value_index]
+        destination[slot.index] = (constrained_value - location) / scale
+        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
+        return zero(eltype(destination))
+    end
+    constrained_value = location + scale * params[slot.index]
+    destination[slot.value_index] = constrained_value
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
+    return log(scale)
 end
 
 struct LogjointGradientCache{F,C,V}

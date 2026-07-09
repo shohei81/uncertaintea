@@ -80,7 +80,7 @@ function _resolve_unconstrained_point(
     if length(point) == parameter_total
         return Float64[value for value in point]
     elseif length(point) == constrained_total
-        return transform_to_unconstrained(model, Float64[value for value in point])
+        return transform_to_unconstrained(model, Float64[value for value in point], args)
     end
 
     throw(
@@ -460,7 +460,7 @@ function variational_mean(
     if space === :unconstrained
         return copy(parameters)
     elseif space === :constrained
-        return transform_to_constrained(result.model, parameters)
+        return transform_to_constrained(result.model, parameters, result.args)
     end
 
     throw(ArgumentError("variational space must be :constrained or :unconstrained"))

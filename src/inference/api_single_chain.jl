@@ -168,7 +168,7 @@ function hmc(
         else
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
-            constrained_samples[:, sample_index] = transform_to_constrained(model, position)
+            constrained_samples[:, sample_index] = transform_to_constrained(model, position, args)
             logjoint_values[sample_index] = current_logjoint
             acceptance_stats[sample_index] = accept_prob
             energies[sample_index] = sample_energy
@@ -331,7 +331,7 @@ function nuts(
         else
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
-            constrained_samples[:, sample_index] = transform_to_constrained(model, position)
+            constrained_samples[:, sample_index] = transform_to_constrained(model, position, args)
             logjoint_values[sample_index] = current_logjoint
             acceptance_stats[sample_index] = accept_stat
             energies[sample_index] = proposal_energy
