@@ -48,7 +48,12 @@ struct BackendTruncatedStudentTChoicePlanStep{
     parameter_slot::Union{Nothing,Int}
 end
 
-function _backend_lower_truncatednormal_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_truncatednormal_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     length(step.rhs.arguments) == 4 || begin
         _backend_issue!(issues, "truncatednormal expects exactly 4 backend arguments")
         return nothing
@@ -77,7 +82,12 @@ function _backend_lower_truncatednormal_choice_step(model::TeaModel, layout::Env
     )
 end
 
-function _backend_lower_truncatedstudentt_choice_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_truncatedstudentt_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     length(step.rhs.arguments) == 5 || begin
         _backend_issue!(issues, "truncatedstudentt expects exactly 5 backend arguments")
         return nothing
@@ -95,15 +105,20 @@ function _backend_lower_truncatedstudentt_choice_step(model::TeaModel, layout::E
     # intractable), so backend support is restricted to a constant nu. A literal
     # nu carries no latent dependence, keeping the omitted term genuinely zero;
     # any other nu expression falls back to the compiled logjoint.
-    isnothing(nu) || nu isa BackendLiteralExpr || begin
-        _backend_issue!(issues, "truncatedstudentt backend lowering requires a constant (literal) nu; latent or argument-flowing nu falls back")
-        return nothing
-    end
+    isnothing(nu) || nu isa BackendLiteralExpr ||
+        begin
+            _backend_issue!(
+                issues,
+                "truncatedstudentt backend lowering requires a constant (literal) nu; latent or argument-flowing nu falls back",
+            )
+            return nothing
+        end
     mu = _backend_lower_expr(model, layout, step.rhs.arguments[2], issues, "truncatedstudentt mean")
     sigma = _backend_lower_expr(model, layout, step.rhs.arguments[3], issues, "truncatedstudentt scale")
     lower = _backend_lower_bound_expr(model, layout, step.rhs.arguments[4], issues, "truncatedstudentt lower bound")
     upper = _backend_lower_bound_expr(model, layout, step.rhs.arguments[5], issues, "truncatedstudentt upper bound")
-    (isnothing(address) || isnothing(nu) || isnothing(mu) || isnothing(sigma) || isnothing(lower) || isnothing(upper)) && return nothing
+    (isnothing(address) || isnothing(nu) || isnothing(mu) || isnothing(sigma) || isnothing(lower) || isnothing(upper)) &&
+        return nothing
     return BackendTruncatedStudentTChoicePlanStep(
         step.binding_slot,
         address,

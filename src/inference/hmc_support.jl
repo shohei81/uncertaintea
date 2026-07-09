@@ -131,7 +131,11 @@ function _initial_hmc_position(
     elseif length(initial_params) == constrained_expected
         return transform_to_unconstrained(model, Float64[value for value in initial_params])
     end
-    throw(DimensionMismatch("expected $expected unconstrained or $constrained_expected constrained initial parameters, got $(length(initial_params))"))
+    throw(
+        DimensionMismatch(
+            "expected $expected unconstrained or $constrained_expected constrained initial parameters, got $(length(initial_params))",
+        ),
+    )
 end
 
 function _sample_momentum(rng::AbstractRNG, inverse_mass_matrix::AbstractVector)
@@ -153,7 +157,7 @@ function _initial_batched_hmc_positions(
     positions = Matrix{Float64}(undef, num_params, num_chains)
     seeds = rand(rng, UInt, num_chains)
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
         chain_rng = MersenneTwister(seeds[chain_index])
         positions[:, chain_index] = _initial_hmc_position(
@@ -184,7 +188,11 @@ function _sample_batched_momentum!(
     sqrt_inverse_mass_matrix::AbstractVector,
 )
     size(destination, 1) == length(sqrt_inverse_mass_matrix) ||
-        throw(DimensionMismatch("expected momentum matrix with $(length(sqrt_inverse_mass_matrix)) rows, got $(size(destination, 1))"))
+        throw(
+            DimensionMismatch(
+                "expected momentum matrix with $(length(sqrt_inverse_mass_matrix)) rows, got $(size(destination, 1))",
+            ),
+        )
 
     for chain_index in axes(destination, 2)
         for parameter_index in eachindex(sqrt_inverse_mass_matrix)
@@ -235,7 +243,9 @@ function _update_sqrt_inverse_mass_matrix!(
     inverse_mass_matrix::AbstractVector,
 )
     length(destination) == length(inverse_mass_matrix) ||
-        throw(DimensionMismatch("expected inverse mass matrix of length $(length(destination)), got $(length(inverse_mass_matrix))"))
+        throw(
+            DimensionMismatch("expected inverse mass matrix of length $(length(destination)), got $(length(inverse_mass_matrix))"),
+        )
     for index in eachindex(destination, inverse_mass_matrix)
         destination[index] = sqrt(Float64(inverse_mass_matrix[index]))
     end
@@ -345,7 +355,11 @@ function _batched_acceptance_probability!(
     log_accept_ratio::AbstractVector,
 )
     length(destination) == length(log_accept_ratio) ||
-        throw(DimensionMismatch("expected acceptance-probability destination of length $(length(log_accept_ratio)), got $(length(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected acceptance-probability destination of length $(length(log_accept_ratio)), got $(length(destination))",
+            ),
+        )
 
     for index in eachindex(log_accept_ratio)
         destination[index] = _acceptance_probability(log_accept_ratio[index])
@@ -359,7 +373,11 @@ function _mean_acceptance_stats!(
     accept_count::AbstractVector{Int},
 )
     length(destination) == length(accept_sum) == length(accept_count) ||
-        throw(DimensionMismatch("expected acceptance-stat inputs of matching length, got $(length(destination)), $(length(accept_sum)), and $(length(accept_count))"))
+        throw(
+            DimensionMismatch(
+                "expected acceptance-stat inputs of matching length, got $(length(destination)), $(length(accept_sum)), and $(length(accept_count))",
+            ),
+        )
     for index in eachindex(destination)
         destination[index] = accept_count[index] == 0 ? 0.0 : accept_sum[index] / accept_count[index]
     end
@@ -379,7 +397,11 @@ function _energy_errors!(
     current_energy::AbstractVector,
 )
     length(destination) == length(proposed_energy) == length(current_energy) ||
-        throw(DimensionMismatch("expected energy-error inputs of matching length, got $(length(destination)), $(length(proposed_energy)), and $(length(current_energy))"))
+        throw(
+            DimensionMismatch(
+                "expected energy-error inputs of matching length, got $(length(destination)), $(length(proposed_energy)), and $(length(current_energy))",
+            ),
+        )
     for index in eachindex(destination)
         destination[index] = proposed_energy[index] - current_energy[index]
     end
@@ -391,7 +413,11 @@ function _position_moved(
     current_position::AbstractVector,
 )
     length(proposal_position) == length(current_position) ||
-        throw(DimensionMismatch("expected moved-position inputs of matching length, got $(length(proposal_position)) and $(length(current_position))"))
+        throw(
+            DimensionMismatch(
+                "expected moved-position inputs of matching length, got $(length(proposal_position)) and $(length(current_position))",
+            ),
+        )
     for index in eachindex(proposal_position, current_position)
         proposal_position[index] == current_position[index] || return true
     end
@@ -418,9 +444,17 @@ function _batched_positions_moved!(
     current_position::AbstractMatrix,
 )
     size(proposal_position) == size(current_position) ||
-        throw(DimensionMismatch("expected moved-position inputs of matching size, got $(size(proposal_position)) and $(size(current_position))"))
+        throw(
+            DimensionMismatch(
+                "expected moved-position inputs of matching size, got $(size(proposal_position)) and $(size(current_position))",
+            ),
+        )
     length(destination) == size(proposal_position, 2) ||
-        throw(DimensionMismatch("expected moved-position destination of length $(size(proposal_position, 2)), got $(length(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected moved-position destination of length $(size(proposal_position, 2)), got $(length(destination))",
+            ),
+        )
     for chain_index in eachindex(destination)
         moved = false
         for parameter_index in axes(proposal_position, 1)
@@ -460,7 +494,11 @@ function _mean_batched_adaptation_probability(
     divergent::AbstractVector,
 )
     length(accept_prob) == length(divergent) ||
-        throw(DimensionMismatch("expected acceptance and divergence vectors of matching length, got $(length(accept_prob)) and $(length(divergent))"))
+        throw(
+            DimensionMismatch(
+                "expected acceptance and divergence vectors of matching length, got $(length(accept_prob)) and $(length(divergent))",
+            ),
+        )
     isempty(accept_prob) && return 0.0
 
     total = 0.0

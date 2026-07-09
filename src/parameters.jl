@@ -110,7 +110,11 @@ function _to_unconstrained_simplex!(
     length(values) == transform.size ||
         throw(DimensionMismatch("expected simplex values of length $(transform.size), got $(length(values))"))
     length(destination) == transform.size - 1 ||
-        throw(DimensionMismatch("expected simplex unconstrained destination of length $(transform.size - 1), got $(length(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected simplex unconstrained destination of length $(transform.size - 1), got $(length(destination))",
+            ),
+        )
 
     last_value = values[end]
     last_value > zero(last_value) || throw(ArgumentError("simplex values must be strictly positive"))
@@ -175,15 +179,19 @@ function _to_constrained_cholesky_corr!(
     length(values) == (d * (d - 1)) ÷ 2 ||
         throw(DimensionMismatch("expected $((d * (d - 1)) ÷ 2) unconstrained cholesky correlation values, got $(length(values))"))
     length(destination) == (d * (d + 1)) ÷ 2 ||
-        throw(DimensionMismatch("expected packed cholesky correlation destination of length $((d * (d + 1)) ÷ 2), got $(length(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected packed cholesky correlation destination of length $((d * (d + 1)) ÷ 2), got $(length(destination))",
+            ),
+        )
 
     first_value = float(values[firstindex(values)])
     logabsdet = zero(first_value)
     destination[_packed_lower_index(d, 1, 1)] = one(first_value)
     z_position = firstindex(values)
-    for row in 2:d
+    for row = 2:d
         sum_sqs = zero(first_value)
-        for col in 1:(row - 1)
+        for col = 1:(row-1)
             z = values[z_position]
             z_position += 1
             w = tanh(z)
@@ -206,20 +214,26 @@ function _to_unconstrained_cholesky_corr!(
 )
     d = transform.size
     length(values) == (d * (d + 1)) ÷ 2 ||
-        throw(DimensionMismatch("expected packed cholesky correlation values of length $((d * (d + 1)) ÷ 2), got $(length(values))"))
+        throw(
+            DimensionMismatch("expected packed cholesky correlation values of length $((d * (d + 1)) ÷ 2), got $(length(values))"),
+        )
     length(destination) == (d * (d - 1)) ÷ 2 ||
-        throw(DimensionMismatch("expected cholesky correlation unconstrained destination of length $((d * (d - 1)) ÷ 2), got $(length(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected cholesky correlation unconstrained destination of length $((d * (d - 1)) ÷ 2), got $(length(destination))",
+            ),
+        )
 
-    for row in 1:d
+    for row = 1:d
         diagonal = values[_packed_lower_index(d, row, row)]
         diagonal > zero(diagonal) ||
             throw(ArgumentError("cholesky correlation values require strictly positive diagonal entries"))
     end
 
     z_position = firstindex(destination)
-    for row in 2:d
+    for row = 2:d
         sum_sqs = zero(float(values[firstindex(values)]))
-        for col in 1:(row - 1)
+        for col = 1:(row-1)
             entry = values[_packed_lower_index(d, row, col)]
             remaining = 1 - sum_sqs
             remaining > zero(remaining) ||

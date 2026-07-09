@@ -31,7 +31,7 @@ end
 function DenseMetric(sigma::AbstractMatrix)
     n = LinearAlgebra.checksquare(sigma)
     symmetric = Matrix{Float64}(undef, n, n)
-    @inbounds for j in 1:n, i in 1:n
+    @inbounds for j = 1:n, i = 1:n
         symmetric[i, j] = 0.5 * (Float64(sigma[i, j]) + Float64(sigma[j, i]))
     end
     factor = cholesky(Symmetric(symmetric))
@@ -170,9 +170,9 @@ function _update_dense_covariance!(
     n = length(state.mean)
     delta = update_sample .- state.mean
     state.mean .+= (weight_value / new_weight_sum) .* delta
-    @inbounds for j in 1:n
+    @inbounds for j = 1:n
         delta2j = update_sample[j] - state.mean[j]
-        for i in 1:n
+        for i = 1:n
             state.m2[i, j] += weight_value * delta[i] * delta2j
         end
     end

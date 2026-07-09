@@ -1,7 +1,7 @@
 @testset "dist_beta_categorical" begin
     @test UncertainTea.logpdf(beta(2.0, 3.0), 0.4) ≈
-        UncertainTea.loggamma(5.0) - UncertainTea.loggamma(2.0) - UncertainTea.loggamma(3.0) +
-        log(0.4) + 2 * log(0.6) atol=1e-8
+          UncertainTea.loggamma(5.0) - UncertainTea.loggamma(2.0) - UncertainTea.loggamma(3.0) +
+          log(0.4) + 2 * log(0.6) atol=1e-8
     @test UncertainTea.logpdf(beta(2.0, 3.0), 0.0) == -Inf
     @test UncertainTea.logpdf(categorical(0.2, 0.3, 0.5), 2) ≈ log(0.3) atol=1e-8
     @test UncertainTea.logpdf(categorical(0.2, 0.3, 0.5), 4) == -Inf
@@ -28,14 +28,14 @@
     @test beta_unconstrained[1] ≈ log(beta_params[1]) - log1p(-beta_params[1]) atol=1e-6
     @test transform_to_constrained(beta_latent_model, beta_unconstrained) ≈ beta_params atol=1e-8
     @test logjoint(beta_latent_model, beta_params, (), beta_constraints) ≈
-        assess(
-            beta_latent_model,
-            (),
-            choicemap((:p, beta_trace[:p]), (:y, 1)),
-        ) atol=1e-6
+          assess(
+        beta_latent_model,
+        (),
+        choicemap((:p, beta_trace[:p]), (:y, 1)),
+    ) atol=1e-6
     @test logjoint_unconstrained(beta_latent_model, beta_unconstrained, (), beta_constraints) ≈
-        logjoint(beta_latent_model, beta_params, (), beta_constraints) +
-        log(beta_params[1]) + log1p(-beta_params[1]) atol=1e-6
+          logjoint(beta_latent_model, beta_params, (), beta_constraints) +
+          log(beta_params[1]) + log1p(-beta_params[1]) atol=1e-6
 
     @tea static function beta_shape_model()
         log_alpha ~ normal(0.0f0, 0.3f0)
@@ -68,14 +68,16 @@
     )
 
     @test beta_shape_backend_plan.steps[3] isa UncertainTea.BackendBetaChoicePlanStep
-    @test beta_shape_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            beta_shape_model,
-            beta_shape_batch_params[:, index],
-            (),
-            beta_shape_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+    @test beta_shape_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                beta_shape_model,
+                beta_shape_batch_params[:, index],
+                (),
+                beta_shape_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(beta_shape_batch_cache.backend_cache)
     @test isnothing(beta_shape_batch_cache.flat_cache)
     @test isempty(beta_shape_batch_cache.column_caches)
@@ -125,14 +127,16 @@
 
     @test categorical_backend_report.supported
     @test categorical_backend_plan.steps[6] isa UncertainTea.BackendCategoricalChoicePlanStep
-    @test categorical_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            categorical_weight_model,
-            categorical_batch_params[:, index],
-            (),
-            categorical_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+    @test categorical_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                categorical_weight_model,
+                categorical_batch_params[:, index],
+                (),
+                categorical_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(categorical_batch_cache.backend_cache)
     @test isnothing(categorical_batch_cache.flat_cache)
     @test isempty(categorical_batch_cache.column_caches)

@@ -314,11 +314,11 @@ function batched_advi(
     adam_epsilon_f64 = Float64(adam_epsilon)
     gradient_clip_f64 = Float64(gradient_clip)
 
-    for iteration in 1:num_steps
+    for iteration = 1:num_steps
         _draw_gaussian_particles!(particles, noise, location, log_scale, rng)
         _batched_logjoint_and_gradient_unconstrained!(values, cache, particles)
         num_valid_particles = 0
-        for particle_index in 1:num_particles
+        for particle_index = 1:num_particles
             particle_valid[particle_index] =
                 isfinite(values[particle_index]) &&
                 all(isfinite, view(cache.gradient_buffer, :, particle_index))
@@ -331,11 +331,11 @@ function batched_advi(
 
         fill!(location_gradient, 0.0)
         fill!(log_scale_gradient, 1.0)
-        for parameter_index in 1:parameter_total
+        for parameter_index = 1:parameter_total
             scale = exp(log_scale[parameter_index])
             mean_gradient = 0.0
             mean_scale_gradient = 0.0
-            for particle_index in 1:num_particles
+            for particle_index = 1:num_particles
                 particle_valid[particle_index] || continue
                 target_gradient = cache.gradient_buffer[parameter_index, particle_index]
                 mean_gradient += target_gradient
@@ -351,7 +351,7 @@ function batched_advi(
             gradient_clip_f64,
         )
         elbo_total = 0.0
-        for particle_index in 1:num_particles
+        for particle_index = 1:num_particles
             particle_valid[particle_index] || continue
             elbo_total += values[particle_index]
         end

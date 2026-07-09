@@ -33,7 +33,7 @@
     initial = initialparameters(gaussian_mean; rng=MersenneTwister(11))
     overrides = parameterchoicemap(gaussian_mean, params)
     expected_joint = UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace[:mu]) +
-        UncertainTea.logpdf(normal(trace[:mu], 1.0f0), 0.3f0)
+                     UncertainTea.logpdf(normal(trace[:mu], 1.0f0), 0.3f0)
 
     @test params == [Float64(trace[:mu])]
     @test length(initial) == 1
@@ -41,12 +41,12 @@
     @test logjoint(gaussian_mean, params, (), constraints) ≈ expected_joint atol=1e-6
     @test logjoint_unconstrained(gaussian_mean, params, (), constraints) ≈ expected_joint atol=1e-6
     @test logjoint_gradient_unconstrained(gaussian_mean, params, (), constraints)[1] ≈
-        (0.3f0 - 2 * trace[:mu]) atol=1e-5
+          (0.3f0 - 2 * trace[:mu]) atol=1e-5
     @test logjoint(gaussian_mean, params, (), constraints) ≈
-        assess(gaussian_mean, (), choicemap((:mu, trace[:mu]), (:y, 0.3f0))) atol=1e-6
+          assess(gaussian_mean, (), choicemap((:mu, trace[:mu]), (:y, 0.3f0))) atol=1e-6
 
     nested_choices = choicemap((:state => 1 => :z, 2.5f0))
-    @test nested_choices[:state => 1 => :z] == 2.5f0
+    @test nested_choices[:state=>1=>:z] == 2.5f0
     @test nested_choices[(:state, 1, :z)] == 2.5f0
     @test haskey(nested_choices, (:state, 1, :z))
     duplicate_choices = choicemap((:y, 0.1f0), (:y, 0.2f0))
@@ -55,7 +55,7 @@
 
     @tea static function shifted_iid_model(n)
         mu ~ normal(0.0f0, 1.0f0)
-        for i in 1:n
+        for i = 1:n
             {:y => i + 1} ~ normal(mu, 1.0f0)
         end
         return mu
@@ -63,7 +63,7 @@
 
     @tea static function offset_iid_model(n, offset)
         mu ~ normal(0.0f0, 1.0f0)
-        for i in 1:n
+        for i = 1:n
             {:y => i + offset} ~ normal(mu, 1.0f0)
         end
         return mu
@@ -71,7 +71,7 @@
 
     @tea static function indexed_scale_model(n)
         mu ~ normal(0.0f0, 1.0f0)
-        for i in 1:n
+        for i = 1:n
             {:y => i} ~ normal(mu, exp(mu + i / 10))
         end
         return mu
@@ -80,8 +80,8 @@
     spec2 = modelspec(iid_model)
     plan2 = executionplan(iid_model)
 
-    @test trace2[:y => 1] == ys[1]
-    @test trace2[:y => 3] == ys[3]
+    @test trace2[:y=>1] == ys[1]
+    @test trace2[:y=>3] == ys[3]
     @test isfinite(logw2)
     @test spec2.arguments == [:n]
     @test length(spec2.choices) == 2
@@ -106,13 +106,14 @@
     @test plan2.steps[2].body[1] isa ChoicePlanStep
     @test isempty(plan2.steps[2].body[1].scopes)
 
-    expected_joint2 = UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace2[:mu]) +
+    expected_joint2 =
+        UncertainTea.logpdf(normal(0.0f0, 1.0f0), trace2[:mu]) +
         sum(UncertainTea.logpdf(normal(trace2[:mu], 1.0f0), y) for y in ys)
     full_repeated = choicemap([(:mu, trace2[:mu]); [(:y => i, ys[i]) for i in eachindex(ys)]])
 
     @test logjoint(iid_model, params2, (length(ys),), repeated) ≈ expected_joint2 atol=1e-6
     @test logjoint(iid_model, params2, (length(ys),), repeated) ≈
-        assess(iid_model, (length(ys),), full_repeated) atol=1e-6
+          assess(iid_model, (length(ys),), full_repeated) atol=1e-6
 
     @tea static function step(prev)
         z ~ normal(prev, 1.0f0)
@@ -127,11 +128,11 @@
     @test step_spec.parameter_layout.slots[1].transform isa IdentityTransform
     @test step_plan.steps[1].parameter_slot == 1
     @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap()) ≈
-        UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z]) atol=1e-6
+          UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z]) atol=1e-6
 
     @tea static function chain_model(T)
         z = ({:z => 1} ~ step(0.0f0))
-        for t in 2:T
+        for t = 2:T
             z = ({:z => t} ~ step(z))
         end
         return z
@@ -166,22 +167,22 @@
     @test plan3.steps[3].body[2] isa DeterministicPlanStep
     params3 = parameter_vector(trace3)
     chain_overrides = parameterchoicemap(chain_model, params3)
-    @test params3 == [Float64(trace3[:z => 1 => :z])]
-    @test chain_overrides[:z => 1 => :z] == trace3[:z => 1 => :z]
+    @test params3 == [Float64(trace3[:z=>1=>:z])]
+    @test chain_overrides[:z=>1=>:z] == trace3[:z=>1=>:z]
     chain_constraints = choicemap(
-        (:z => 2 => :z, trace3[:z => 2 => :z]),
-        (:z => 3 => :z, trace3[:z => 3 => :z]),
+        (:z => 2 => :z, trace3[:z=>2=>:z]),
+        (:z => 3 => :z, trace3[:z=>3=>:z]),
     )
     @test logjoint(chain_model, params3, (3,), chain_constraints) ≈
-        assess(
-            chain_model,
-            (3,),
-            choicemap(
-                (:z => 1 => :z, trace3[:z => 1 => :z]),
-                (:z => 2 => :z, trace3[:z => 2 => :z]),
-                (:z => 3 => :z, trace3[:z => 3 => :z]),
-            ),
-        ) atol=1e-6
+          assess(
+        chain_model,
+        (3,),
+        choicemap(
+            (:z => 1 => :z, trace3[:z=>1=>:z]),
+            (:z => 2 => :z, trace3[:z=>2=>:z]),
+            (:z => 3 => :z, trace3[:z=>3=>:z]),
+        ),
+    ) atol=1e-6
 
     @tea static function observed_step()
         z = ({:state} ~ step(1.5f0))
@@ -200,15 +201,15 @@
     @test observed_plan.steps[1].parameter_slot == 1
     @test observed_plan.steps[2] isa DeterministicPlanStep
     @test observed_plan.steps[3] isa ChoicePlanStep
-    @test observed_params == [Float64(observed_trace[:state => :z])]
-    @test observed_overrides[:state => :z] == observed_trace[:state => :z]
+    @test observed_params == [Float64(observed_trace[:state=>:z])]
+    @test observed_overrides[:state=>:z] == observed_trace[:state=>:z]
     @test logjoint(observed_step, observed_params, (), choicemap((:y, 0.25f0))) ≈
-        assess(observed_step, (), choicemap((:state => :z, observed_trace[:state => :z]), (:y, 0.25f0))) atol=1e-6
+          assess(observed_step, (), choicemap((:state => :z, observed_trace[:state=>:z]), (:y, 0.25f0))) atol=1e-6
 
     @tea static function nested_loop_model(n, m)
         z ~ normal(0.0f0, 1.0f0)
-        for i in 1:n
-            for j in 1:m
+        for i = 1:n
+            for j = 1:m
                 {:grid => i => j} ~ bernoulli(0.5f0)
             end
         end
@@ -252,11 +253,11 @@
     @test deterministic_plan.steps[3] isa DeterministicPlanStep
     @test deterministic_plan.steps[3].binding == :sigma
     @test logjoint(deterministic_scale, deterministic_params, (), choicemap((:y, 0.4f0))) ≈
-        assess(
-            deterministic_scale,
-            (),
-            choicemap((:mu, deterministic_trace[:mu]), (:log_sigma, deterministic_trace[:log_sigma]), (:y, 0.4f0)),
-        ) atol=1e-6
+          assess(
+        deterministic_scale,
+        (),
+        choicemap((:mu, deterministic_trace[:mu]), (:log_sigma, deterministic_trace[:log_sigma]), (:y, 0.4f0)),
+    ) atol=1e-6
 
     @tea static function inline_scale()
         log_sigma ~ normal(0.0f0, 1.0f0)
@@ -268,7 +269,7 @@
     inline_params = parameter_vector(inline_trace)
 
     @test logjoint(inline_scale, inline_params, (), choicemap((:y, 0.2f0))) ≈
-        assess(inline_scale, (), choicemap((:log_sigma, inline_trace[:log_sigma]), (:y, 0.2f0))) atol=1e-6
+          assess(inline_scale, (), choicemap((:log_sigma, inline_trace[:log_sigma]), (:y, 0.2f0))) atol=1e-6
 
     @tea static function abs_scale_model()
         log_sigma ~ normal(0.0f0, 1.0f0)
@@ -347,15 +348,16 @@
     @test unconstrained[1] ≈ log(positive_params[1])
     @test reconstrained ≈ positive_params
     @test logjoint_unconstrained(positive_latent, unconstrained, (), choicemap((:y, 1.5f0))) ≈
-        logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) + unconstrained[1] atol=1e-6
+          logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) + unconstrained[1] atol=1e-6
     @test logjoint(positive_latent, positive_params, (), choicemap((:y, 1.5f0))) ≈
-        assess(positive_latent, (), choicemap((:sigma, positive_trace[:sigma]), (:y, 1.5f0))) atol=1e-6
+          assess(positive_latent, (), choicemap((:sigma, positive_trace[:sigma]), (:y, 1.5f0))) atol=1e-6
 
     positive_step_spec = modelspec(observed_positive_step)
     positive_step_params = parameter_vector(positive_step_trace)
     positive_step_reconstrained = transform_to_constrained(observed_positive_step, positive_step_unconstrained)
     gaussian_batch_logjoint = batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
-    gaussian_batch_gradient = batched_logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+    gaussian_batch_gradient =
+        batched_logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
     gaussian_shared_batch_logjoint = batched_logjoint_unconstrained(
         gaussian_mean,
         gaussian_batch_params,
@@ -650,34 +652,44 @@
 
     @test parametercount(positive_step_spec.parameter_layout) == 1
     @test positive_step_spec.parameter_layout.slots[1].transform isa LogTransform
-    @test positive_step_params[1] == Float64(positive_step_trace[:state => :sigma])
+    @test positive_step_params[1] == Float64(positive_step_trace[:state=>:sigma])
     @test positive_step_unconstrained[1] ≈ log(positive_step_params[1])
     @test positive_step_reconstrained ≈ positive_step_params
     @test logjoint_unconstrained(observed_positive_step, positive_step_unconstrained, (), choicemap((:y, 1.2f0))) ≈
-        logjoint(observed_positive_step, positive_step_params, (), choicemap((:y, 1.2f0))) +
-        positive_step_unconstrained[1] atol=1e-6
+          logjoint(observed_positive_step, positive_step_params, (), choicemap((:y, 1.2f0))) +
+          positive_step_unconstrained[1] atol=1e-6
     @test logjoint(observed_positive_step, positive_step_params, (), choicemap((:y, 1.2f0))) ≈
-        assess(
-            observed_positive_step,
-            (),
-            choicemap((:state => :sigma, positive_step_trace[:state => :sigma]), (:y, 1.2f0)),
-        ) atol=1e-6
+          assess(
+        observed_positive_step,
+        (),
+        choicemap((:state => :sigma, positive_step_trace[:state=>:sigma]), (:y, 1.2f0)),
+    ) atol=1e-6
     @test gaussian_batch_logjoint ≈ [
-        logjoint(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index]) for index in 1:3
+        logjoint(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index]) for index = 1:3
     ] atol=1e-8
-    @test gaussian_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test gaussian_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params[:, index], (), gaussian_batch_constraints[index])
+            for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test batched_logjoint_gradient_unconstrained!(gaussian_batch_gradient_cache, gaussian_batch_params) ≈
-        gaussian_batch_gradient atol=1e-8
+          gaussian_batch_gradient atol=1e-8
     @test !isnothing(gaussian_batch_gradient_cache.backend_cache)
     @test isnothing(gaussian_batch_gradient_cache.flat_cache)
     @test isempty(gaussian_batch_gradient_cache.column_caches)
-    @test gaussian_batch_gradient_shifted ≈ hcat([
-        logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test gaussian_batch_gradient_shifted ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                gaussian_mean,
+                gaussian_batch_params_shifted[:, index],
+                (),
+                gaussian_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     gaussian_workspace_values = UncertainTea._logjoint_with_batched_backend!(
         gaussian_workspace,
         gaussian_batch_params,
@@ -694,36 +706,38 @@
         (),
         gaussian_batch_constraints,
     ) ≈ [
-        logjoint(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for index in 1:3
+        logjoint(gaussian_mean, gaussian_batch_params_shifted[:, index], (), gaussian_batch_constraints[index]) for index = 1:3
     ] atol=1e-8
     @test gaussian_workspace.batched_environment[] === gaussian_workspace_env
     @test gaussian_workspace.batched_totals_buffer[] === gaussian_workspace_totals
     @test gaussian_workspace_env.observed_values === gaussian_workspace_observed
     @test iid_batch_logjoint ≈ [
-        logjoint(iid_model, iid_batch_params[:, index], iid_batch_args[index], iid_batch_constraints[index]) for index in 1:2
+        logjoint(iid_model, iid_batch_params[:, index], iid_batch_args[index], iid_batch_constraints[index]) for index = 1:2
     ] atol=1e-8
     @test batched_logjoint_gradient_unconstrained!(
         heterogeneous_iid_gradient_cache,
         iid_batch_params,
-    ) ≈ hcat([
-        logjoint_gradient_unconstrained(
-            iid_model,
-            iid_batch_params[:, index],
-            heterogeneous_iid_args[index],
-            iid_batch_constraints[index],
-        ) for index in 1:2
-    ]...) atol=1e-8
+    ) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                iid_model,
+                iid_batch_params[:, index],
+                heterogeneous_iid_args[index],
+                iid_batch_constraints[index],
+            ) for index = 1:2
+        ]...,
+    ) atol=1e-8
     @test isnothing(heterogeneous_iid_gradient_cache.backend_cache)
     @test !isnothing(heterogeneous_iid_gradient_cache.flat_cache)
     @test isempty(heterogeneous_iid_gradient_cache.column_caches)
     @test iid_shared_batch_logjoint ≈ [
-        logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index in 1:2
+        logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[index]) for index = 1:2
     ] atol=1e-8
     @test !isnothing(iid_shared_gradient_cache.backend_cache)
     @test isnothing(iid_shared_gradient_cache.flat_cache)
     @test isempty(iid_shared_gradient_cache.column_caches)
     @test iid_shared_single_constraint_logjoint ≈ [
-        logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[1]) for index in 1:2
+        logjoint(iid_model, iid_shared_batch_params[:, index], (3,), iid_shared_batch_constraints[1]) for index = 1:2
     ] atol=1e-8
     iid_shared_workspace_values = UncertainTea._logjoint_with_batched_backend!(
         iid_shared_workspace,
@@ -749,17 +763,17 @@
         iid_shared_batch_constraints,
     ) ≈ [
         logjoint(iid_model, (iid_shared_batch_params .+ 0.1)[:, index], (3,), iid_shared_batch_constraints[index]) for
-        index in 1:2
+        index = 1:2
     ] atol=1e-8
     @test iid_shared_workspace.batched_environment[] === iid_shared_workspace_env
     @test iid_shared_workspace_env.index_scratch[1] === iid_shared_iterable_scratch
     @test iid_shared_workspace_env.observed_values === iid_shared_observed_values
     @test shifted_batch_logjoint ≈ [
-        logjoint(shifted_iid_model, shifted_batch_params[:, index], (3,), shifted_batch_constraints[index]) for index in 1:2
+        logjoint(shifted_iid_model, shifted_batch_params[:, index], (3,), shifted_batch_constraints[index]) for index = 1:2
     ] atol=1e-8
     @test offset_batch_logjoint ≈ [
         logjoint(offset_iid_model, offset_batch_params[:, index], offset_batch_args[index], offset_batch_constraints[index]) for
-        index in 1:2
+        index = 1:2
     ] atol=1e-8
     offset_workspace_values = UncertainTea._logjoint_with_batched_backend!(
         offset_workspace,
@@ -782,7 +796,7 @@
             (offset_batch_params .+ 0.05)[:, index],
             offset_batch_args[index],
             offset_batch_constraints[index],
-        ) for index in 1:2
+        ) for index = 1:2
     ] atol=1e-8
     @test offset_workspace.batched_environment[] === offset_workspace_env
     @test offset_workspace_env.index_scratch[1] === offset_workspace_scratch
@@ -792,7 +806,7 @@
             indexed_scale_batch_params[:, index],
             (3,),
             indexed_scale_batch_constraints[index],
-        ) for index in 1:2
+        ) for index = 1:2
     ] atol=1e-8
     deterministic_workspace_values = UncertainTea._logjoint_with_batched_backend!(
         deterministic_workspace,
@@ -808,7 +822,7 @@
             deterministic_batch_params[:, index],
             (),
             deterministic_batch_constraints[index],
-        ) for index in 1:3
+        ) for index = 1:3
     ] atol=1e-8
     @test deterministic_workspace_values ≈ deterministic_batch_logjoint atol=1e-8
     @test !isempty(deterministic_workspace_env.numeric_scratch)
@@ -823,22 +837,29 @@
             (deterministic_batch_params .+ [0.05; -0.02])[:, index],
             (),
             deterministic_batch_constraints[index],
-        ) for index in 1:3
+        ) for index = 1:3
     ] atol=1e-8
     @test deterministic_workspace.batched_environment[] === deterministic_workspace_env
     @test deterministic_workspace_env.numeric_scratch[1] === deterministic_workspace_scratch
     @test positive_batch_logjoint ≈ [
-        logjoint_unconstrained(observed_positive_step, positive_batch_unconstrained[:, index], (), positive_batch_constraints[index]) for
-        index in 1:3
-    ] atol=1e-8
-    @test positive_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
+        logjoint_unconstrained(
             observed_positive_step,
             positive_batch_unconstrained[:, index],
             (),
             positive_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+        ) for
+        index = 1:3
+    ] atol=1e-8
+    @test positive_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                observed_positive_step,
+                positive_batch_unconstrained[:, index],
+                (),
+                positive_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(positive_batch_gradient_cache.backend_cache)
     @test isnothing(positive_batch_gradient_cache.flat_cache)
     @test isempty(positive_batch_gradient_cache.column_caches)
@@ -851,10 +872,17 @@
     @test gaussian_combined_values ≈ gaussian_batch_logjoint atol=1e-8
     @test gaussian_combined_gradient === gaussian_batch_gradient_cache.gradient_buffer
     @test gaussian_combined_gradient ≈ gaussian_batch_gradient atol=1e-8
-    @test abs_scale_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(abs_scale_model, abs_scale_batch_params[:, index], (), abs_scale_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test abs_scale_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                abs_scale_model,
+                abs_scale_batch_params[:, index],
+                (),
+                abs_scale_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(abs_scale_gradient_cache.backend_cache)
     @test isnothing(abs_scale_gradient_cache.flat_cache)
     @test isempty(abs_scale_gradient_cache.column_caches)
@@ -866,21 +894,35 @@
     )[2]
     @test abs_scale_combined_values ≈ [
         logjoint_unconstrained(abs_scale_model, abs_scale_batch_params[:, index], (), abs_scale_batch_constraints[index]) for
-        index in 1:3
+        index = 1:3
     ] atol=1e-8
     @test abs_scale_combined_gradient === abs_scale_gradient_cache.gradient_buffer
     @test abs_scale_combined_gradient ≈ abs_scale_gradient atol=1e-8
-    @test power_scale_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(power_scale_model, power_scale_batch_params[:, index], (), power_scale_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test power_scale_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                power_scale_model,
+                power_scale_batch_params[:, index],
+                (),
+                power_scale_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(power_scale_gradient_cache.backend_cache)
     @test isnothing(power_scale_gradient_cache.flat_cache)
     @test isempty(power_scale_gradient_cache.column_caches)
-    @test min_scale_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(min_scale_model, min_scale_batch_params[:, index], (), min_scale_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test min_scale_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                min_scale_model,
+                min_scale_batch_params[:, index],
+                (),
+                min_scale_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(min_scale_gradient_cache.backend_cache)
     @test isnothing(min_scale_gradient_cache.flat_cache)
     @test isempty(min_scale_gradient_cache.column_caches)
@@ -892,14 +934,21 @@
     )[2]
     @test min_scale_combined_values ≈ [
         logjoint_unconstrained(min_scale_model, min_scale_batch_params[:, index], (), min_scale_batch_constraints[index]) for
-        index in 1:3
+        index = 1:3
     ] atol=1e-8
     @test min_scale_combined_gradient === min_scale_gradient_cache.gradient_buffer
     @test min_scale_combined_gradient ≈ min_scale_gradient atol=1e-8
-    @test max_scale_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(max_scale_model, max_scale_batch_params[:, index], (), max_scale_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test max_scale_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                max_scale_model,
+                max_scale_batch_params[:, index],
+                (),
+                max_scale_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(max_scale_gradient_cache.backend_cache)
     @test isnothing(max_scale_gradient_cache.flat_cache)
     @test isempty(max_scale_gradient_cache.column_caches)
@@ -911,14 +960,21 @@
     )[2]
     @test max_scale_combined_values ≈ [
         logjoint_unconstrained(max_scale_model, max_scale_batch_params[:, index], (), max_scale_batch_constraints[index]) for
-        index in 1:3
+        index = 1:3
     ] atol=1e-8
     @test max_scale_combined_gradient === max_scale_gradient_cache.gradient_buffer
     @test max_scale_combined_gradient ≈ max_scale_gradient atol=1e-8
-    @test mod_scale_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(mod_scale_model, mod_scale_batch_params[:, index], (), mod_scale_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test mod_scale_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                mod_scale_model,
+                mod_scale_batch_params[:, index],
+                (),
+                mod_scale_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(mod_scale_gradient_cache.backend_cache)
     @test isnothing(mod_scale_gradient_cache.flat_cache)
     @test isempty(mod_scale_gradient_cache.column_caches)
@@ -930,14 +986,21 @@
     )[2]
     @test mod_scale_combined_values ≈ [
         logjoint_unconstrained(mod_scale_model, mod_scale_batch_params[:, index], (), mod_scale_batch_constraints[index]) for
-        index in 1:3
+        index = 1:3
     ] atol=1e-8
     @test mod_scale_combined_gradient === mod_scale_gradient_cache.gradient_buffer
     @test mod_scale_combined_gradient ≈ mod_scale_gradient atol=1e-8
-    @test clamp_scale_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(clamp_scale_model, clamp_scale_batch_params[:, index], (), clamp_scale_batch_constraints[index]) for
-        index in 1:3
-    ]...) atol=1e-8
+    @test clamp_scale_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                clamp_scale_model,
+                clamp_scale_batch_params[:, index],
+                (),
+                clamp_scale_batch_constraints[index],
+            ) for
+            index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(clamp_scale_gradient_cache.backend_cache)
     @test isnothing(clamp_scale_gradient_cache.flat_cache)
     @test isempty(clamp_scale_gradient_cache.column_caches)
@@ -949,7 +1012,7 @@
     )[2]
     @test clamp_scale_combined_values ≈ [
         logjoint_unconstrained(clamp_scale_model, clamp_scale_batch_params[:, index], (), clamp_scale_batch_constraints[index]) for
-        index in 1:3
+        index = 1:3
     ] atol=1e-8
     @test clamp_scale_combined_gradient === clamp_scale_gradient_cache.gradient_buffer
     @test clamp_scale_combined_gradient ≈ clamp_scale_gradient atol=1e-8
@@ -977,7 +1040,7 @@
             (positive_batch_unconstrained .+ 0.05)[:, index],
             (),
             positive_batch_constraints[index],
-        ) for index in 1:3
+        ) for index = 1:3
     ] atol=1e-8
     @test positive_workspace.batched_constrained_buffer[] === positive_workspace_constrained
     @test positive_workspace.batched_logabsdet_buffer[] === positive_workspace_logabsdet
@@ -1086,19 +1149,24 @@
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) == 1
     @test length(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) == 1
     @test gaussian_nuts_workspace.column_tree_workspaces[1].summary isa UncertainTea.NUTSSubtreeMetadataState
-    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.position) === gaussian_nuts_workspace.tree_current_position
-    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.momentum) === gaussian_nuts_workspace.tree_current_momentum
-    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.gradient) === gaussian_nuts_workspace.tree_current_gradient
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.position) ===
+          gaussian_nuts_workspace.tree_current_position
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.momentum) ===
+          gaussian_nuts_workspace.tree_current_momentum
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].current.gradient) ===
+          gaussian_nuts_workspace.tree_current_gradient
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].next.position) === gaussian_nuts_workspace.tree_next_position
     @test parent(gaussian_nuts_workspace.column_gradient_caches[1].buffer) === gaussian_nuts_workspace.tree_next_gradient
     @test gaussian_shared_nuts_workspace.column_gradient_caches[1].objective ===
-        gaussian_shared_nuts_workspace.column_gradient_caches[2].objective
+          gaussian_shared_nuts_workspace.column_gradient_caches[2].objective
     @test gaussian_shared_nuts_workspace.column_gradient_caches[1].config ===
-        gaussian_shared_nuts_workspace.column_gradient_caches[2].config
-    @test parent(gaussian_shared_nuts_workspace.column_gradient_caches[1].buffer) === gaussian_shared_nuts_workspace.tree_next_gradient
+          gaussian_shared_nuts_workspace.column_gradient_caches[2].config
+    @test parent(gaussian_shared_nuts_workspace.column_gradient_caches[1].buffer) ===
+          gaussian_shared_nuts_workspace.tree_next_gradient
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].left.position) === gaussian_nuts_workspace.tree_left_position
     @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].right.position) === gaussian_nuts_workspace.tree_right_position
-    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) === gaussian_nuts_workspace.tree_proposal_position
+    @test parent(gaussian_nuts_workspace.column_tree_workspaces[1].proposal.position) ===
+          gaussian_nuts_workspace.tree_proposal_position
     @test length(gaussian_nuts_workspace.column_continuation_states) == 3
     @test gaussian_nuts_workspace.column_continuation_states[1] isa UncertainTea.NUTSContinuationState
     @test length(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) == 1
@@ -1108,9 +1176,12 @@
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].right.position) === gaussian_nuts_workspace.right_position
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].right.momentum) === gaussian_nuts_workspace.right_momentum
     @test parent(gaussian_nuts_workspace.column_continuation_states[1].right.gradient) === gaussian_nuts_workspace.right_gradient
-    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) === gaussian_nuts_workspace.proposal_position
-    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.momentum) === gaussian_nuts_workspace.proposal_momentum
-    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.gradient) === gaussian_nuts_workspace.proposal_gradient
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.position) ===
+          gaussian_nuts_workspace.proposal_position
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.momentum) ===
+          gaussian_nuts_workspace.proposal_momentum
+    @test parent(gaussian_nuts_workspace.column_continuation_states[1].proposal.gradient) ===
+          gaussian_nuts_workspace.proposal_gradient
     @test length(gaussian_nuts_workspace.tree_current_logjoint) == 3
     @test length(gaussian_nuts_workspace.tree_left_logjoint) == 3
     @test length(gaussian_nuts_workspace.tree_right_logjoint) == 3
@@ -1320,13 +1391,15 @@
     @test gaussian_nuts_tree_current.logjoint ≈ gaussian_batch_logjoint[1] atol=1e-8
     @test gaussian_nuts_tree_current.momentum ≈ view(gaussian_nuts_workspace.current_momentum, :, 1) atol=1e-8
     @test gaussian_nuts_tree_next.logjoint ≈
-        logjoint_unconstrained(gaussian_mean, gaussian_nuts_tree_next.position, (), gaussian_batch_constraints[1]) atol=1e-8
+          logjoint_unconstrained(gaussian_mean, gaussian_nuts_tree_next.position, (), gaussian_batch_constraints[1]) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].left.position ≈ view(gaussian_nuts_workspace.left_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.column_continuation_states[1].right.position ≈ view(gaussian_nuts_workspace.right_position, :, 1) atol=1e-8
-    @test gaussian_nuts_workspace.column_continuation_states[1].proposal.position ≈ view(gaussian_nuts_workspace.proposal_position, :, 1) atol=1e-8
+    @test gaussian_nuts_workspace.column_continuation_states[1].proposal.position ≈
+          view(gaussian_nuts_workspace.proposal_position, :, 1) atol=1e-8
     @test gaussian_nuts_workspace.left_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].left.logjoint atol=1e-8
     @test gaussian_nuts_workspace.right_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].right.logjoint atol=1e-8
-    @test gaussian_nuts_workspace.continuation_proposal_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].proposal.logjoint atol=1e-8
+    @test gaussian_nuts_workspace.continuation_proposal_logjoint[1] ≈
+          gaussian_nuts_workspace.column_continuation_states[1].proposal.logjoint atol=1e-8
     # continuation_proposed_energy/-delta_energy track the PROPOSED first leaf;
     # the column state's proposal_energy/-error track the SELECTED proposal.
     # They coincide only when the first-step multinomial draw selected the leaf
@@ -1336,12 +1409,12 @@
     # actually happened rather than assuming the leaf was selected.
     if gaussian_nuts_workspace.continuation_select_proposal[1]
         @test gaussian_nuts_workspace.continuation_proposed_energy[1] ≈
-            gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
+              gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
         @test gaussian_nuts_workspace.continuation_delta_energy[1] ≈
-            gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
+              gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
     else
         @test gaussian_nuts_workspace.column_continuation_states[1].proposal_energy ≈
-            gaussian_nuts_workspace.current_energy[1] atol=1e-8
+              gaussian_nuts_workspace.current_energy[1] atol=1e-8
         @test gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error == 0.0
     end
     gaussian_nuts_summary = UncertainTea._nuts_proposal_summary(
@@ -1349,9 +1422,9 @@
         gaussian_batch_params[:, 1],
     )
     @test gaussian_nuts_summary[2] ≈
-        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
+          gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
     @test gaussian_nuts_summary[3] ≈
-        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
+          gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
     gaussian_nuts_workspace.control.step_direction .= [1, -1, 1]
     subtree_active = BitVector([true, true, false])
     UncertainTea._initialize_batched_nuts_subtree_states!(gaussian_nuts_workspace, subtree_active)
@@ -1412,19 +1485,19 @@
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_candidate_log_weight)
     @test all(isfinite, gaussian_shared_nuts_workspace.subtree_combined_log_weight)
     @test gaussian_shared_nuts_workspace.continuation_proposed_energy ≈
-        [state.proposal_energy for state in gaussian_shared_nuts_workspace.column_continuation_states] atol=1e-8
+          [state.proposal_energy for state in gaussian_shared_nuts_workspace.column_continuation_states] atol=1e-8
     @test gaussian_shared_nuts_workspace.continuation_delta_energy ≈
-        [state.proposal_energy_error for state in gaussian_shared_nuts_workspace.column_continuation_states] atol=1e-8
+          [state.proposal_energy_error for state in gaussian_shared_nuts_workspace.column_continuation_states] atol=1e-8
     @test any(gaussian_shared_nuts_workspace.subtree_copy_left .| gaussian_shared_nuts_workspace.subtree_copy_right)
     @test gaussian_shared_nuts_workspace.subtree_merged_turning ==
-        UncertainTea._batched_is_turning!(
-            falses(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
-            gaussian_shared_nuts_workspace.left_position,
-            gaussian_shared_nuts_workspace.right_position,
-            gaussian_shared_nuts_workspace.left_momentum,
-            gaussian_shared_nuts_workspace.right_momentum,
-            trues(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
-        )
+          UncertainTea._batched_is_turning!(
+        falses(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
+        gaussian_shared_nuts_workspace.left_position,
+        gaussian_shared_nuts_workspace.right_position,
+        gaussian_shared_nuts_workspace.left_momentum,
+        gaussian_shared_nuts_workspace.right_momentum,
+        trues(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
+    )
     gaussian_single_shared_params = gaussian_batch_params[:, 1:1]
     gaussian_single_shared_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,
@@ -1522,14 +1595,14 @@
         4,
     ) == (2, 2)
     @test gaussian_mixed_depth_nuts_workspace.control.scheduler.continuation_active ==
-        BitVector([false, true, true])
+          BitVector([false, true, true])
     @test gaussian_mixed_depth_nuts_workspace.control.scheduler.active_depth == 2
     @test gaussian_mixed_depth_nuts_workspace.control.scheduler.active_depth_count == 2
     @test UncertainTea._activate_batched_nuts_subtree_cohort!(
         gaussian_mixed_depth_nuts_workspace,
     )
     @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
-        BitVector([false, true, true])
+          BitVector([false, true, true])
     prepared_depth = UncertainTea._prepare_batched_nuts_subtree_cohort!(
         gaussian_mixed_depth_nuts_workspace,
         4,
@@ -1537,18 +1610,18 @@
     )
     @test prepared_depth == 2
     @test gaussian_mixed_depth_nuts_workspace.control.scheduler.continuation_active ==
-        BitVector([false, true, true])
+          BitVector([false, true, true])
     @test gaussian_mixed_depth_nuts_workspace.control.scheduler.active_depth == 2
     @test gaussian_mixed_depth_nuts_workspace.control.scheduler.active_depth_count == 2
     @test gaussian_mixed_depth_nuts_workspace.subtree_active ==
-        BitVector([false, true, true])
+          BitVector([false, true, true])
     @test all(
         gaussian_mixed_depth_nuts_workspace.control.step_direction[index] in (-1, 1)
-        for index in 2:3
+        for index = 2:3
     )
     @test all(
         isfinite(gaussian_mixed_depth_nuts_workspace.tree_current_logjoint[index])
-        for index in 2:3
+        for index = 2:3
     )
     @test UncertainTea._continue_batched_nuts_batched_subtree!(
         gaussian_mixed_depth_nuts_workspace,
@@ -1606,7 +1679,7 @@
     cohort_rng = MersenneTwister(104)
     @test gaussian_cohort_scheduler_workspace.control isa UncertainTea.BatchedNUTSControlState
     @test gaussian_cohort_scheduler_workspace.control.scheduler isa
-        UncertainTea.BatchedNUTSSchedulerState
+          UncertainTea.BatchedNUTSSchedulerState
     idle_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
     @test idle_ir isa UncertainTea.BatchedNUTSIdleIR
     idle_block = UncertainTea._batched_nuts_control_block(gaussian_cohort_scheduler_workspace)
@@ -1620,9 +1693,9 @@
     idle_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test idle_program isa UncertainTea.BatchedNUTSIdleKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(idle_program) ==
-        (UncertainTea.NUTSKernelReloadControl,)
+          (UncertainTea.NUTSKernelReloadControl,)
     @test typeof.(UncertainTea._batched_nuts_kernel_steps(idle_program)) ==
-        (UncertainTea.BatchedNUTSReloadControlStep,)
+          (UncertainTea.BatchedNUTSReloadControlStep,)
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         gaussian_mean,
@@ -1634,19 +1707,19 @@
         cohort_rng,
     )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerIdle
+          UncertainTea.NUTSSchedulerIdle
     @test UncertainTea._begin_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         4,
         cohort_rng,
     )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerExpand
+          UncertainTea.NUTSSchedulerExpand
     @test gaussian_cohort_scheduler_workspace.control.scheduler.active_depth == 1
     @test gaussian_cohort_scheduler_workspace.control.scheduler.active_depth_count == 3
     @test gaussian_cohort_scheduler_workspace.control.scheduler.remaining_steps == 2
     @test gaussian_cohort_scheduler_workspace.control.scheduler.continuation_active ==
-        BitVector([true, true, true])
+          BitVector([true, true, true])
     expand_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
     @test expand_ir isa UncertainTea.BatchedNUTSExpandIR
     @test expand_ir.active_depth == 1
@@ -1662,24 +1735,24 @@
     @test expand_descriptor.copy_left === gaussian_cohort_scheduler_workspace.subtree_copy_left
     @test expand_descriptor.copy_right === gaussian_cohort_scheduler_workspace.subtree_copy_right
     @test expand_descriptor.select_proposal ===
-        gaussian_cohort_scheduler_workspace.subtree_select_proposal
+          gaussian_cohort_scheduler_workspace.subtree_select_proposal
     @test expand_descriptor.turning === gaussian_cohort_scheduler_workspace.subtree_turning
     expand_state = UncertainTea._batched_nuts_step_state(gaussian_cohort_scheduler_workspace)
     @test expand_state isa UncertainTea.BatchedNUTSExpandStepState
     @test expand_state.descriptor.copy_left === gaussian_cohort_scheduler_workspace.subtree_copy_left
     @test expand_state.log_weight === gaussian_cohort_scheduler_workspace.subtree_log_weight
     @test expand_state.proposed_energy ===
-        gaussian_cohort_scheduler_workspace.subtree_proposed_energy
+          gaussian_cohort_scheduler_workspace.subtree_proposed_energy
     @test expand_state.delta_energy === gaussian_cohort_scheduler_workspace.subtree_delta_energy
     @test expand_state.proposal_energy ===
-        gaussian_cohort_scheduler_workspace.subtree_proposal_energy
+          gaussian_cohort_scheduler_workspace.subtree_proposal_energy
     @test expand_state.proposal_energy_error ===
-        gaussian_cohort_scheduler_workspace.subtree_proposal_energy_error
+          gaussian_cohort_scheduler_workspace.subtree_proposal_energy_error
     @test expand_state.accept_prob === gaussian_cohort_scheduler_workspace.subtree_accept_prob
     @test expand_state.candidate_log_weight ===
-        gaussian_cohort_scheduler_workspace.subtree_candidate_log_weight
+          gaussian_cohort_scheduler_workspace.subtree_candidate_log_weight
     @test expand_state.combined_log_weight ===
-        gaussian_cohort_scheduler_workspace.subtree_combined_log_weight
+          gaussian_cohort_scheduler_workspace.subtree_combined_log_weight
     expand_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
     @test expand_frame isa UncertainTea.BatchedNUTSExpandKernelFrame
     @test expand_frame.state.log_weight === gaussian_cohort_scheduler_workspace.subtree_log_weight
@@ -1697,23 +1770,23 @@
     expand_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test expand_program isa UncertainTea.BatchedNUTSExpandKernelProgram
     @test UncertainTea._batched_nuts_kernel_ops(expand_program) ==
-        (
-            UncertainTea.NUTSKernelReloadControl,
-            UncertainTea.NUTSKernelLeapfrog,
-            UncertainTea.NUTSKernelHamiltonian,
-            UncertainTea.NUTSKernelAdvance,
-            UncertainTea.NUTSKernelTransitionPhase,
-        )
+          (
+        UncertainTea.NUTSKernelReloadControl,
+        UncertainTea.NUTSKernelLeapfrog,
+        UncertainTea.NUTSKernelHamiltonian,
+        UncertainTea.NUTSKernelAdvance,
+        UncertainTea.NUTSKernelTransitionPhase,
+    )
     @test typeof.(UncertainTea._batched_nuts_kernel_steps(expand_program)) ==
-        (
-            UncertainTea.BatchedNUTSReloadControlStep,
-            UncertainTea.BatchedNUTSLeapfrogStep,
-            UncertainTea.BatchedNUTSHamiltonianStep,
-            UncertainTea.BatchedNUTSAdvanceStep,
-            UncertainTea.BatchedNUTSTransitionPhaseStep,
-        )
+          (
+        UncertainTea.BatchedNUTSReloadControlStep,
+        UncertainTea.BatchedNUTSLeapfrogStep,
+        UncertainTea.BatchedNUTSHamiltonianStep,
+        UncertainTea.BatchedNUTSAdvanceStep,
+        UncertainTea.BatchedNUTSTransitionPhaseStep,
+    )
     while gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerExpand
+          UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
             gaussian_cohort_scheduler_workspace,
             gaussian_mean,
@@ -1738,35 +1811,35 @@
     merge_descriptor = UncertainTea._batched_nuts_step_descriptor(gaussian_cohort_scheduler_workspace)
     @test merge_descriptor isa UncertainTea.BatchedNUTSMergeStepDescriptor
     @test merge_descriptor.select_proposal ===
-        gaussian_cohort_scheduler_workspace.continuation_select_proposal
+          gaussian_cohort_scheduler_workspace.continuation_select_proposal
     @test merge_descriptor.merged_turning ===
-        gaussian_cohort_scheduler_workspace.subtree_merged_turning
+          gaussian_cohort_scheduler_workspace.subtree_merged_turning
     merge_state = UncertainTea._batched_nuts_step_state(gaussian_cohort_scheduler_workspace)
     @test merge_state isa UncertainTea.BatchedNUTSMergeStepState
     @test merge_state.descriptor.select_proposal ===
-        gaussian_cohort_scheduler_workspace.continuation_select_proposal
+          gaussian_cohort_scheduler_workspace.continuation_select_proposal
     @test merge_state.proposal_energy ===
-        gaussian_cohort_scheduler_workspace.subtree_proposal_energy
+          gaussian_cohort_scheduler_workspace.subtree_proposal_energy
     @test merge_state.proposal_energy_error ===
-        gaussian_cohort_scheduler_workspace.subtree_proposal_energy_error
+          gaussian_cohort_scheduler_workspace.subtree_proposal_energy_error
     @test merge_state.candidate_log_weight ===
-        gaussian_cohort_scheduler_workspace.continuation_candidate_log_weight
+          gaussian_cohort_scheduler_workspace.continuation_candidate_log_weight
     @test merge_state.combined_log_weight ===
-        gaussian_cohort_scheduler_workspace.continuation_combined_log_weight
+          gaussian_cohort_scheduler_workspace.continuation_combined_log_weight
     merge_frame = UncertainTea._batched_nuts_kernel_frame(gaussian_cohort_scheduler_workspace)
     @test merge_frame isa UncertainTea.BatchedNUTSMergeKernelFrame
     @test merge_frame.state.candidate_log_weight ===
-        gaussian_cohort_scheduler_workspace.continuation_candidate_log_weight
+          gaussian_cohort_scheduler_workspace.continuation_candidate_log_weight
     @test merge_frame.left_position === gaussian_cohort_scheduler_workspace.left_position
     @test merge_frame.right_position === gaussian_cohort_scheduler_workspace.right_position
     @test merge_frame.tree_proposal_position ===
-        gaussian_cohort_scheduler_workspace.tree_proposal_position
+          gaussian_cohort_scheduler_workspace.tree_proposal_position
     @test merge_frame.proposal_position === gaussian_cohort_scheduler_workspace.proposal_position
     @test merge_frame.proposed_logjoint === gaussian_cohort_scheduler_workspace.proposed_logjoint
     @test merge_frame.continuation_proposal_logjoint ===
-        gaussian_cohort_scheduler_workspace.continuation_proposal_logjoint
+          gaussian_cohort_scheduler_workspace.continuation_proposal_logjoint
     @test merge_frame.continuation_log_weight ===
-        gaussian_cohort_scheduler_workspace.continuation_log_weight
+          gaussian_cohort_scheduler_workspace.continuation_log_weight
     @test UncertainTea._batched_nuts_kernel_frame(
         gaussian_cohort_scheduler_workspace,
         merge_state,
@@ -1778,34 +1851,34 @@
     @test merge_access isa UncertainTea.BatchedNUTSMergeKernelAccess
     @test merge_access.block === merge_frame.state.descriptor.block
     @test merge_access.select_proposal ===
-        gaussian_cohort_scheduler_workspace.continuation_select_proposal
+          gaussian_cohort_scheduler_workspace.continuation_select_proposal
     @test merge_access.left_position === gaussian_cohort_scheduler_workspace.left_position
     @test merge_access.right_position === gaussian_cohort_scheduler_workspace.right_position
     @test merge_access.proposal_position === gaussian_cohort_scheduler_workspace.proposal_position
     @test merge_access.continuation_log_weight ===
-        gaussian_cohort_scheduler_workspace.continuation_log_weight
+          gaussian_cohort_scheduler_workspace.continuation_log_weight
     merge_program = UncertainTea._batched_nuts_kernel_program(gaussian_cohort_scheduler_workspace)
     @test merge_program isa UncertainTea.BatchedNUTSMergeKernelProgram
     @test UncertainTea._batched_nuts_kernel_access(merge_program) isa
-        UncertainTea.BatchedNUTSMergeKernelAccess
+          UncertainTea.BatchedNUTSMergeKernelAccess
     @test UncertainTea._batched_nuts_kernel_access(merge_program).left_position ===
-        merge_access.left_position
+          merge_access.left_position
     @test UncertainTea._batched_nuts_kernel_ops(merge_program) ==
-        (
-            UncertainTea.NUTSKernelReloadControl,
-            UncertainTea.NUTSKernelActivateMerge,
-            UncertainTea.NUTSKernelMerge,
-            UncertainTea.NUTSKernelTransitionPhase,
-        )
+          (
+        UncertainTea.NUTSKernelReloadControl,
+        UncertainTea.NUTSKernelActivateMerge,
+        UncertainTea.NUTSKernelMerge,
+        UncertainTea.NUTSKernelTransitionPhase,
+    )
     @test typeof.(UncertainTea._batched_nuts_kernel_steps(merge_program)) ==
-        (
-            UncertainTea.BatchedNUTSReloadControlStep,
-            UncertainTea.BatchedNUTSActivateMergeStep,
-            UncertainTea.BatchedNUTSMergeStep,
-            UncertainTea.BatchedNUTSTransitionPhaseStep,
-        )
+          (
+        UncertainTea.BatchedNUTSReloadControlStep,
+        UncertainTea.BatchedNUTSActivateMergeStep,
+        UncertainTea.BatchedNUTSMergeStep,
+        UncertainTea.BatchedNUTSTransitionPhaseStep,
+    )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerMerge
+          UncertainTea.NUTSSchedulerMerge
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         gaussian_mean,
@@ -1817,10 +1890,10 @@
         cohort_rng,
     )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerDone
+          UncertainTea.NUTSSchedulerDone
     @test gaussian_cohort_scheduler_workspace.control.scheduler.remaining_steps == 0
     @test gaussian_cohort_scheduler_workspace.control.scheduler.subtree_started ==
-        BitVector([true, true, true])
+          BitVector([true, true, true])
     done_ir = UncertainTea._batched_nuts_control_ir(gaussian_cohort_scheduler_workspace)
     @test done_ir isa UncertainTea.BatchedNUTSDoneIR
     done_block = UncertainTea._batched_nuts_control_block(gaussian_cohort_scheduler_workspace)
@@ -1844,9 +1917,9 @@
     @test done_program isa UncertainTea.BatchedNUTSDoneKernelProgram
     @test UncertainTea._batched_nuts_kernel_access(done_program).block === done_access.block
     @test UncertainTea._batched_nuts_kernel_ops(done_program) ==
-        (UncertainTea.NUTSKernelReloadControl,)
+          (UncertainTea.NUTSKernelReloadControl,)
     @test typeof.(UncertainTea._batched_nuts_kernel_steps(done_program)) ==
-        (UncertainTea.BatchedNUTSReloadControlStep,)
+          (UncertainTea.BatchedNUTSReloadControlStep,)
     @test !UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_cohort_scheduler_workspace,
         gaussian_mean,
@@ -1858,10 +1931,10 @@
         cohort_rng,
     )
     @test gaussian_cohort_scheduler_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerDone
+          UncertainTea.NUTSSchedulerDone
     @test gaussian_cohort_scheduler_workspace.control.tree_depths == [2, 2, 2]
     @test gaussian_cohort_scheduler_workspace.subtree_active ==
-        BitVector([true, true, true])
+          BitVector([true, true, true])
     @test all(isfinite, gaussian_cohort_scheduler_workspace.continuation_log_weight)
     @test all(isfinite, gaussian_cohort_scheduler_workspace.proposed_logjoint)
     gaussian_expand_ir_workspace = UncertainTea.BatchedNUTSWorkspace(
@@ -1917,19 +1990,19 @@
     @test expand_direct_access.copy_left === gaussian_expand_ir_workspace.subtree_copy_left
     @test expand_direct_access.copy_right === gaussian_expand_ir_workspace.subtree_copy_right
     @test expand_direct_access.select_proposal ===
-        gaussian_expand_ir_workspace.subtree_select_proposal
+          gaussian_expand_ir_workspace.subtree_select_proposal
     @test expand_direct_access.current_position ===
-        gaussian_expand_ir_workspace.tree_current_position
+          gaussian_expand_ir_workspace.tree_current_position
     @test expand_direct_access.next_position === gaussian_expand_ir_workspace.tree_next_position
     @test expand_direct_access.proposed_energy ===
-        gaussian_expand_ir_workspace.subtree_proposed_energy
+          gaussian_expand_ir_workspace.subtree_proposed_energy
     expand_direct_program = UncertainTea._batched_nuts_kernel_program(
         gaussian_expand_ir_workspace,
         expand_direct_access,
     )
     @test expand_direct_program isa UncertainTea.BatchedNUTSExpandKernelProgram
     @test UncertainTea._batched_nuts_kernel_access(expand_direct_program).next_position ===
-        expand_direct_access.next_position
+          expand_direct_access.next_position
     @test UncertainTea._step_batched_nuts_subtree_scheduler!(
         gaussian_expand_ir_workspace,
         gaussian_mean,
@@ -1942,7 +2015,7 @@
     )
     @test gaussian_expand_ir_workspace.control.step_direction == expand_direct_ir.step_direction
     @test gaussian_expand_ir_workspace.control.scheduler.remaining_steps ==
-        expand_direct_ir.remaining_steps - 1
+          expand_direct_ir.remaining_steps - 1
     @test sum(gaussian_expand_ir_workspace.subtree_integration_steps) > 0
     gaussian_merge_ir_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,
@@ -1970,7 +2043,7 @@
         merge_ir_rng,
     )
     while gaussian_merge_ir_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerExpand
+          UncertainTea.NUTSSchedulerExpand
         @test UncertainTea._step_batched_nuts_subtree_scheduler!(
             gaussian_merge_ir_workspace,
             gaussian_mean,
@@ -2008,17 +2081,17 @@
     @test merge_direct_access isa UncertainTea.BatchedNUTSMergeKernelAccess
     @test merge_direct_access.block === merge_direct_frame.state.descriptor.block
     @test merge_direct_access.select_proposal ===
-        gaussian_merge_ir_workspace.continuation_select_proposal
+          gaussian_merge_ir_workspace.continuation_select_proposal
     @test merge_direct_access.left_position === gaussian_merge_ir_workspace.left_position
     @test merge_direct_access.tree_proposal_position ===
-        gaussian_merge_ir_workspace.tree_proposal_position
+          gaussian_merge_ir_workspace.tree_proposal_position
     merge_direct_program = UncertainTea._batched_nuts_kernel_program(
         gaussian_merge_ir_workspace,
         merge_direct_access,
     )
     @test merge_direct_program isa UncertainTea.BatchedNUTSMergeKernelProgram
     @test UncertainTea._batched_nuts_kernel_access(merge_direct_program).proposal_position ===
-        merge_direct_access.proposal_position
+          merge_direct_access.proposal_position
     merge_tree_depths = copy(gaussian_merge_ir_workspace.control.tree_depths)
     fill!(gaussian_merge_ir_workspace.control.scheduler.subtree_started, false)
     fill!(gaussian_merge_ir_workspace.subtree_active, false)
@@ -2033,12 +2106,12 @@
         merge_ir_rng,
     )
     @test gaussian_merge_ir_workspace.control.scheduler.subtree_started ==
-        merge_direct_ir.started_chains
+          merge_direct_ir.started_chains
     @test gaussian_merge_ir_workspace.subtree_active == merge_direct_ir.merge_active
     @test gaussian_merge_ir_workspace.control.tree_depths ==
-        merge_tree_depths .+ Int.(merge_direct_ir.started_chains)
+          merge_tree_depths .+ Int.(merge_direct_ir.started_chains)
     @test gaussian_merge_ir_workspace.control.scheduler.phase ==
-        UncertainTea.NUTSSchedulerDone
+          UncertainTea.NUTSSchedulerDone
     gaussian_finalized_nuts_workspace = UncertainTea.BatchedNUTSWorkspace(
         gaussian_mean,
         gaussian_batch_params,
@@ -2060,17 +2133,17 @@
         MersenneTwister(103),
     )
     @test gaussian_finalized_nuts_workspace.proposed_logjoint ≈
-        gaussian_finalized_nuts_workspace.continuation_proposal_logjoint atol=1e-8
+          gaussian_finalized_nuts_workspace.continuation_proposal_logjoint atol=1e-8
     @test gaussian_finalized_nuts_workspace.proposed_energy ≈
-        gaussian_finalized_nuts_workspace.continuation_proposed_energy atol=1e-8
+          gaussian_finalized_nuts_workspace.continuation_proposed_energy atol=1e-8
     @test gaussian_finalized_nuts_workspace.accept_prob ≈
-        UncertainTea._mean_acceptance_stats!(
-            similar(gaussian_finalized_nuts_workspace.accept_prob),
-            gaussian_finalized_nuts_workspace.continuation_accept_stat_sum,
-            gaussian_finalized_nuts_workspace.continuation_accept_stat_count,
-        ) atol=1e-8
+          UncertainTea._mean_acceptance_stats!(
+        similar(gaussian_finalized_nuts_workspace.accept_prob),
+        gaussian_finalized_nuts_workspace.continuation_accept_stat_sum,
+        gaussian_finalized_nuts_workspace.continuation_accept_stat_count,
+    ) atol=1e-8
     @test gaussian_finalized_nuts_workspace.energy_error ≈
-        gaussian_finalized_nuts_workspace.continuation_delta_energy atol=1e-8
+          gaussian_finalized_nuts_workspace.continuation_delta_energy atol=1e-8
     @test gaussian_backend_report.supported
     @test gaussian_backend_report.target == :gpu
     @test isempty(gaussian_backend_report.issues)
@@ -2146,7 +2219,7 @@
             unsupported_backend_params[:, index],
             (),
             unsupported_backend_constraints[index],
-        ) for index in 1:2
+        ) for index = 1:2
     ] atol=1e-8
     @test short_warmup_schedule.initial_buffer == 5
     @test short_warmup_schedule.slow_window_ends == [12]
@@ -2160,7 +2233,7 @@
     @test UncertainTea._warmup_window_length(long_warmup_schedule, 3) == 45
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], falses(3)) ≈ 0.6 atol=1e-8
     @test UncertainTea._mean_batched_adaptation_probability([0.8, 0.6, 0.4], BitVector([false, true, false])) ≈
-        0.4 atol=1e-8
+          0.4 atol=1e-8
     early_window_state = UncertainTea._running_variance_state(1, 24)
     late_window_state = UncertainTea._running_variance_state(1, 24)
     late_window_state.count = 24
@@ -2204,7 +2277,7 @@
     @test weighted_variance_state.weight_sum ≈ 1.25 atol=1e-8
     @test weighted_variance_state.weight_square_sum ≈ 1.0625 atol=1e-8
     @test UncertainTea._running_variance_effective_count(weighted_variance_state) ≈
-        (1.25^2 / 1.0625) atol=1e-8
+          (1.25^2 / 1.0625) atol=1e-8
     robust_variance_state = UncertainTea._running_variance_state(1)
     for value in (0.0, 0.05, -0.05, 0.1, 100.0)
         UncertainTea._update_running_variance!(robust_variance_state, [value])
@@ -2216,5 +2289,5 @@
     # convention), not its reciprocal. The robustified variance is small and shrinks
     # toward 1, so the entry stays within the (regularization, 1) band.
     @test UncertainTea._inverse_mass_matrix(robust_variance_state, 1e-3)[1] ≈
-        0.5282291666666666 atol = 1e-12
+          0.5282291666666666 atol = 1e-12
 end

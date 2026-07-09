@@ -50,7 +50,7 @@ end
     # Tuple values are accepted; a wrong-length value scores -Inf (mirroring
     # the diagonal mvnormal contract).
     @test UncertainTea.logpdf(mvd_d, (0.5, -1.0, 2.0)) ≈
-        UncertainTea.logpdf(mvd_d, [0.5, -1.0, 2.0]) atol = 1e-12
+          UncertainTea.logpdf(mvd_d, [0.5, -1.0, 2.0]) atol = 1e-12
     @test UncertainTea.logpdf(mvd_d, [0.0, 0.0]) == -Inf
 
     # Only the lower triangle is read: junk above the diagonal changes nothing.
@@ -59,7 +59,7 @@ end
     mvd_Lfull[1, 3] = -7.0
     mvd_Lfull[2, 3] = 5.0
     @test UncertainTea.logpdf(mvnormaldense(mvd_mu, mvd_Lfull), [1.0, 2.0, 3.0]) ==
-        UncertainTea.logpdf(mvd_d, [1.0, 2.0, 3.0])
+          UncertainTea.logpdf(mvd_d, [1.0, 2.0, 3.0])
 end
 
 # --- constructor validation -------------------------------------------------
@@ -94,7 +94,7 @@ end
     mvd_rng = MersenneTwister(20260706)
     mvd_n = 20000
     mvd_dist = mvnormaldense(mvd_mu, mvd_L)
-    mvd_draws = reduce(hcat, [rand(mvd_rng, mvd_dist) for _ in 1:mvd_n])
+    mvd_draws = reduce(hcat, [rand(mvd_rng, mvd_dist) for _ = 1:mvd_n])
     mvd_m = vec(sum(mvd_draws; dims=2)) ./ mvd_n
     @test maximum(abs.(mvd_m - mvd_mu)) < 0.05
     mvd_centered = mvd_draws .- mvd_m
@@ -118,10 +118,10 @@ end
 
     # generate/logjoint agreement over the full joint.
     mvd_obs_full = choicemap((:mu, 0.4f0), (:y, [0.3, -0.2]))
-    mvd_obs_trace, _ = generate(mvd_obs_model, (mvd_obs_L,), mvd_obs_full; rng = MersenneTwister(11))
+    mvd_obs_trace, _ = generate(mvd_obs_model, (mvd_obs_L,), mvd_obs_full; rng=MersenneTwister(11))
     mvd_obs_pv = parameter_vector(mvd_obs_trace)
     @test mvd_obs_trace.log_weight ≈
-        logjoint(mvd_obs_model, mvd_obs_pv, (mvd_obs_L,), mvd_obs_full) atol = 1e-6
+          logjoint(mvd_obs_model, mvd_obs_pv, (mvd_obs_L,), mvd_obs_full) atol = 1e-6
 
     # Batched logjoint (ForwardDiff fallback) matches the per-column value.
     mvd_obs = choicemap((:y, [0.3, -0.2]))
@@ -132,7 +132,7 @@ end
     )
     mvd_obs_percol = [
         logjoint_unconstrained(mvd_obs_model, mvd_obs_params[:, i], (mvd_obs_L,), mvd_obs)
-        for i in 1:size(mvd_obs_params, 2)
+        for i = 1:size(mvd_obs_params, 2)
     ]
     @test mvd_obs_batched ≈ mvd_obs_percol atol = 1e-6
 
@@ -140,7 +140,7 @@ end
     mvd_obs_grad = batched_logjoint_gradient_unconstrained(
         mvd_obs_model, mvd_obs_params, (mvd_obs_L,), mvd_obs,
     )
-    for i in 1:size(mvd_obs_params, 2)
+    for i = 1:size(mvd_obs_params, 2)
         mvd_obs_col = mvd_FD.gradient(
             theta -> logjoint_unconstrained(mvd_obs_model, theta, (mvd_obs_L,), mvd_obs),
             mvd_obs_params[:, i],
@@ -168,10 +168,10 @@ const mvd_latent_L = [1.0 0.0; 0.8 0.6]
     # generate/logjoint agreement, exercising `z[1]`/`z[2]` indexing of the
     # vector latent binding in both the impl and the compiled plan path.
     mvd_latent_full = choicemap((:z, [0.2, -0.1]), (:y, 0.5))
-    mvd_latent_trace, _ = generate(mvd_latent_model, (), mvd_latent_full; rng = MersenneTwister(12))
+    mvd_latent_trace, _ = generate(mvd_latent_model, (), mvd_latent_full; rng=MersenneTwister(12))
     mvd_latent_pv = parameter_vector(mvd_latent_trace)
     @test mvd_latent_trace.log_weight ≈
-        logjoint(mvd_latent_model, mvd_latent_pv, (), mvd_latent_full) atol = 1e-6
+          logjoint(mvd_latent_model, mvd_latent_pv, (), mvd_latent_full) atol = 1e-6
 
     # NUTS runs finite; observing the sum z1 + z2 bends the positively
     # correlated prior (cor 0.8) into a negatively correlated posterior along
@@ -180,9 +180,9 @@ const mvd_latent_L = [1.0 0.0; 0.8 0.6]
         mvd_latent_model,
         (),
         choicemap((:y, 1.0));
-        num_samples = 200,
-        num_warmup = 200,
-        rng = MersenneTwister(3),
+        num_samples=200,
+        num_warmup=200,
+        rng=MersenneTwister(3),
     )
     mvd_latent_samples = mvd_latent_chain.constrained_samples
     @test size(mvd_latent_samples) == (2, 200)
@@ -219,7 +219,7 @@ end
         UncertainTea.logpdf(mvnormaldense(mvd_dyn_mu, mvd_dyn_L), [0.4, -0.6, 0.2]) +
         UncertainTea.logpdf(normal(1.0, 1.0), 1.0)
     @test logjoint(mvd_dynamic_mu_model, Float64[], (mvd_dyn_mu, mvd_dyn_L), mvd_dyn_full) ≈
-        mvd_dyn_expected atol = 1e-10
+          mvd_dyn_expected atol = 1e-10
 end
 
 # --- backend now natively supports the family (see PR 50) --------------------
@@ -233,5 +233,5 @@ end
     mvd_report = backend_report(mvd_report_model)
     @test mvd_report.supported == true
     @test backend_execution_plan(mvd_report_model).steps[2] isa
-        UncertainTea.BackendMvNormalDenseChoicePlanStep
+          UncertainTea.BackendMvNormalDenseChoicePlanStep
 end

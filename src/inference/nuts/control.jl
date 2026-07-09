@@ -57,7 +57,9 @@ function _copy_masked_columns!(
     mask::AbstractVector{Bool},
 )
     size(destination) == size(source) ||
-        throw(DimensionMismatch("expected masked column copy inputs of matching size, got $(size(destination)) and $(size(source))"))
+        throw(
+            DimensionMismatch("expected masked column copy inputs of matching size, got $(size(destination)) and $(size(source))"),
+        )
     length(mask) == size(destination, 2) ||
         throw(DimensionMismatch("expected masked column copy mask of length $(size(destination, 2)), got $(length(mask))"))
     for chain_index in eachindex(mask)
@@ -88,7 +90,11 @@ function _copy_masked_values!(
     mask::AbstractVector{Bool},
 )
     length(destination) == length(source) ||
-        throw(DimensionMismatch("expected masked value copy inputs of matching length, got $(length(destination)) and $(length(source))"))
+        throw(
+            DimensionMismatch(
+                "expected masked value copy inputs of matching length, got $(length(destination)) and $(length(source))",
+            ),
+        )
     length(mask) == length(destination) ||
         throw(DimensionMismatch("expected masked value copy mask of length $(length(destination)), got $(length(mask))"))
     for index in eachindex(mask)
@@ -268,7 +274,7 @@ function _select_batched_nuts_active_depth!(
 )
     workspace.control.scheduler.active_depth = 0
     workspace.control.scheduler.active_depth_count = 0
-    for depth in 1:(max_tree_depth - 1)
+    for depth = 1:(max_tree_depth-1)
         depth_count = 0
         for chain_index in eachindex(workspace.control.tree_depths)
             workspace.control.tree_depths[chain_index] == depth || continue
@@ -351,7 +357,7 @@ function _batched_nuts_merge_masks(
     merge_active = falses(num_chains)
     for chain_index in eachindex(workspace.control.tree_depths)
         workspace.control.tree_depths[chain_index] ==
-            workspace.control.scheduler.active_depth || continue
+        workspace.control.scheduler.active_depth || continue
         started =
             workspace.subtree_integration_steps[chain_index] > 0 ||
             workspace.subtree_divergent[chain_index]

@@ -23,7 +23,7 @@ constraints = choicemap((:y, 0.3f0))
 
 @tea static function iid_model(n)
     mu ~ normal(0.0f0, 1.0f0)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ normal(mu, 1.0f0)
     end
     return mu

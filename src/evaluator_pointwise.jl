@@ -125,7 +125,7 @@ function pointwise_loglikelihood(model::TeaModel, args::Tuple, constraints::Choi
     s = 0
     for chain in chains.chains
         samples = chain.constrained_samples
-        for j in 1:size(samples, 2)
+        for j = 1:size(samples, 2)
             s += 1
             empty!(records)
             _record_execution!(records, model, view(samples, :, j), args, constraints)

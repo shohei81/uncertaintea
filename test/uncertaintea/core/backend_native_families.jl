@@ -50,11 +50,13 @@
     bg_tn_scale_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_tn_scale_constraints = [choicemap((:y, 0.3)), choicemap((:y, 1.2)), choicemap((:y, 2.0))]
     @test batched_logjoint(bg_tn_scale_model, bg_tn_scale_params, (), bg_tn_scale_constraints) ≈ [
-        logjoint(bg_tn_scale_model, bg_tn_scale_params[:, i], (), bg_tn_scale_constraints[i]) for i in 1:3
+        logjoint(bg_tn_scale_model, bg_tn_scale_params[:, i], (), bg_tn_scale_constraints[i]) for i = 1:3
     ] atol = 1e-8
-    @test batched_logjoint_gradient_unconstrained(bg_tn_scale_model, bg_tn_scale_params, (), bg_tn_scale_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_tn_scale_model, bg_tn_scale_params[:, i], (), bg_tn_scale_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_tn_scale_model, bg_tn_scale_params, (), bg_tn_scale_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_tn_scale_model, bg_tn_scale_params[:, i], (), bg_tn_scale_constraints[i]) for i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_tn_scale_cache = BatchedLogjointGradientCache(bg_tn_scale_model, bg_tn_scale_params, (), bg_tn_scale_constraints)
     @test !isnothing(bg_tn_scale_cache.backend_cache)
@@ -75,11 +77,13 @@
     bg_tn_mean_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_tn_mean_constraints = [choicemap((:y, 0.1)), choicemap((:y, 0.5)), choicemap((:y, -0.3))]
     @test batched_logjoint(bg_tn_mean_model, bg_tn_mean_params, (), bg_tn_mean_constraints) ≈ [
-        logjoint(bg_tn_mean_model, bg_tn_mean_params[:, i], (), bg_tn_mean_constraints[i]) for i in 1:3
+        logjoint(bg_tn_mean_model, bg_tn_mean_params[:, i], (), bg_tn_mean_constraints[i]) for i = 1:3
     ] atol = 1e-8
-    @test batched_logjoint_gradient_unconstrained(bg_tn_mean_model, bg_tn_mean_params, (), bg_tn_mean_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_tn_mean_model, bg_tn_mean_params[:, i], (), bg_tn_mean_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_tn_mean_model, bg_tn_mean_params, (), bg_tn_mean_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_tn_mean_model, bg_tn_mean_params[:, i], (), bg_tn_mean_constraints[i]) for i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_tn_mean_cache = BatchedLogjointGradientCache(bg_tn_mean_model, bg_tn_mean_params, (), bg_tn_mean_constraints)
     @test !isnothing(bg_tn_mean_cache.backend_cache)
@@ -102,11 +106,13 @@ end
     bg_mix_mean_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_mix_mean_constraints = [choicemap((:y, 0.3)), choicemap((:y, 1.2)), choicemap((:y, 2.0))]
     @test batched_logjoint(bg_mix_mean_model, bg_mix_mean_params, (), bg_mix_mean_constraints) ≈ [
-        logjoint(bg_mix_mean_model, bg_mix_mean_params[:, i], (), bg_mix_mean_constraints[i]) for i in 1:3
+        logjoint(bg_mix_mean_model, bg_mix_mean_params[:, i], (), bg_mix_mean_constraints[i]) for i = 1:3
     ] atol = 1e-8
-    @test batched_logjoint_gradient_unconstrained(bg_mix_mean_model, bg_mix_mean_params, (), bg_mix_mean_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_mix_mean_model, bg_mix_mean_params[:, i], (), bg_mix_mean_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_mix_mean_model, bg_mix_mean_params, (), bg_mix_mean_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_mix_mean_model, bg_mix_mean_params[:, i], (), bg_mix_mean_constraints[i]) for i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_mix_mean_cache = BatchedLogjointGradientCache(bg_mix_mean_model, bg_mix_mean_params, (), bg_mix_mean_constraints)
     @test !isnothing(bg_mix_mean_cache.backend_cache)
@@ -126,9 +132,12 @@ end
 
     bg_mix_latent_params = reshape(Float64[-1.0, 0.2, 1.5], 1, 3)
     bg_mix_latent_constraints = [choicemap((:y, -1.5)), choicemap((:y, 0.4)), choicemap((:y, 2.1))]
-    @test batched_logjoint_gradient_unconstrained(bg_mix_latent_model, bg_mix_latent_params, (), bg_mix_latent_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_mix_latent_model, bg_mix_latent_params[:, i], (), bg_mix_latent_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_mix_latent_model, bg_mix_latent_params, (), bg_mix_latent_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_mix_latent_model, bg_mix_latent_params[:, i], (), bg_mix_latent_constraints[i]) for
+            i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_mix_latent_cache = BatchedLogjointGradientCache(bg_mix_latent_model, bg_mix_latent_params, (), bg_mix_latent_constraints)
     @test !isnothing(bg_mix_latent_cache.backend_cache)
@@ -157,11 +166,13 @@ end
         choicemap((:y, [2.0, 1.1])),
     ]
     @test batched_logjoint(bg_mvd_mean_model, bg_mvd_params, (bg_mvd_L,), bg_mvd_constraints) ≈ [
-        logjoint(bg_mvd_mean_model, bg_mvd_params[:, i], (bg_mvd_L,), bg_mvd_constraints[i]) for i in 1:3
+        logjoint(bg_mvd_mean_model, bg_mvd_params[:, i], (bg_mvd_L,), bg_mvd_constraints[i]) for i = 1:3
     ] atol = 1e-8
-    @test batched_logjoint_gradient_unconstrained(bg_mvd_mean_model, bg_mvd_params, (bg_mvd_L,), bg_mvd_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_mvd_mean_model, bg_mvd_params[:, i], (bg_mvd_L,), bg_mvd_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_mvd_mean_model, bg_mvd_params, (bg_mvd_L,), bg_mvd_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_mvd_mean_model, bg_mvd_params[:, i], (bg_mvd_L,), bg_mvd_constraints[i]) for i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_mvd_cache = BatchedLogjointGradientCache(bg_mvd_mean_model, bg_mvd_params, (bg_mvd_L,), bg_mvd_constraints)
     @test !isnothing(bg_mvd_cache.backend_cache)
@@ -185,11 +196,13 @@ end
     bg_ts_scale_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_ts_scale_constraints = [choicemap((:y, 0.3)), choicemap((:y, 1.2)), choicemap((:y, 2.0))]
     @test batched_logjoint(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints) ≈ [
-        logjoint(bg_ts_scale_model, bg_ts_scale_params[:, i], (), bg_ts_scale_constraints[i]) for i in 1:3
+        logjoint(bg_ts_scale_model, bg_ts_scale_params[:, i], (), bg_ts_scale_constraints[i]) for i = 1:3
     ] atol = 1e-8
-    @test batched_logjoint_gradient_unconstrained(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_ts_scale_model, bg_ts_scale_params[:, i], (), bg_ts_scale_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_ts_scale_model, bg_ts_scale_params[:, i], (), bg_ts_scale_constraints[i]) for i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_ts_scale_cache = BatchedLogjointGradientCache(bg_ts_scale_model, bg_ts_scale_params, (), bg_ts_scale_constraints)
     @test !isnothing(bg_ts_scale_cache.backend_cache)
@@ -210,11 +223,13 @@ end
     bg_ts_mean_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_ts_mean_constraints = [choicemap((:y, 0.1)), choicemap((:y, 0.5)), choicemap((:y, -0.3))]
     @test batched_logjoint(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints) ≈ [
-        logjoint(bg_ts_mean_model, bg_ts_mean_params[:, i], (), bg_ts_mean_constraints[i]) for i in 1:3
+        logjoint(bg_ts_mean_model, bg_ts_mean_params[:, i], (), bg_ts_mean_constraints[i]) for i = 1:3
     ] atol = 1e-8
-    @test batched_logjoint_gradient_unconstrained(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints) ≈ hcat([
-        logjoint_gradient_unconstrained(bg_ts_mean_model, bg_ts_mean_params[:, i], (), bg_ts_mean_constraints[i]) for i in 1:3
-    ]...) atol = 1e-8
+    @test batched_logjoint_gradient_unconstrained(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints) ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(bg_ts_mean_model, bg_ts_mean_params[:, i], (), bg_ts_mean_constraints[i]) for i = 1:3
+        ]...,
+    ) atol = 1e-8
 
     bg_ts_mean_cache = BatchedLogjointGradientCache(bg_ts_mean_model, bg_ts_mean_params, (), bg_ts_mean_constraints)
     @test !isnothing(bg_ts_mean_cache.backend_cache)
@@ -249,7 +264,7 @@ end
     bg_ts_params = reshape(Float64[-0.4, 0.1, 0.6], 1, 3)
     bg_ts_constraints = [choicemap((:y, 0.3)), choicemap((:y, 1.2)), choicemap((:y, 2.0))]
     @test batched_logjoint(bg_ts_latent_nu_model, bg_ts_params, (), bg_ts_constraints) ≈ [
-        logjoint(bg_ts_latent_nu_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) for i in 1:3
+        logjoint(bg_ts_latent_nu_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) for i = 1:3
     ] atol = 1e-8
 
     # A latent nu with BOTH bounds infinite still has a valid CPU gradient: the
@@ -266,10 +281,13 @@ end
         {:y} ~ studentt(exp(s) + 3.0, 0.5f0, 1.0)
         return s
     end
-    for i in 1:3
+    for i = 1:3
         @test logjoint_gradient_unconstrained(bg_ts_latent_nu_open_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) ≈
               logjoint_gradient_unconstrained(bg_ts_latent_nu_ref_model, bg_ts_params[:, i], (), bg_ts_constraints[i]) atol = 1e-8
-        @test all(isfinite, logjoint_gradient_unconstrained(bg_ts_latent_nu_open_model, bg_ts_params[:, i], (), bg_ts_constraints[i]))
+        @test all(
+            isfinite,
+            logjoint_gradient_unconstrained(bg_ts_latent_nu_open_model, bg_ts_params[:, i], (), bg_ts_constraints[i]),
+        )
     end
 
     # A latent nu with a finite bound remains genuinely unsupported: the CDF's
@@ -288,12 +306,12 @@ end
     end
 
     @test backend_report(bg_tn_latent_model).supported == false
-    bg_tn_latent_trace, _ = generate(bg_tn_latent_model, (), choicemap((:y, 0.3)); rng = MersenneTwister(150))
+    bg_tn_latent_trace, _ = generate(bg_tn_latent_model, (), choicemap((:y, 0.3)); rng=MersenneTwister(150))
     bg_tn_latent_pv = transform_to_unconstrained(bg_tn_latent_trace)
     bg_tn_latent_params = hcat(bg_tn_latent_pv, bg_tn_latent_pv .+ 0.3, bg_tn_latent_pv .- 0.4)
     bg_tn_latent_constraints = [choicemap((:y, 0.1)), choicemap((:y, 0.5)), choicemap((:y, -0.3))]
     @test batched_logjoint_unconstrained(bg_tn_latent_model, bg_tn_latent_params, (), bg_tn_latent_constraints) ≈ [
-        logjoint_unconstrained(bg_tn_latent_model, bg_tn_latent_params[:, i], (), bg_tn_latent_constraints[i]) for i in 1:3
+        logjoint_unconstrained(bg_tn_latent_model, bg_tn_latent_params[:, i], (), bg_tn_latent_constraints[i]) for i = 1:3
     ] atol = 1e-8
 
     bg_tn_latent_cache = BatchedLogjointGradientCache(bg_tn_latent_model, bg_tn_latent_params, (), bg_tn_latent_constraints)

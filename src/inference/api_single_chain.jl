@@ -112,7 +112,7 @@ function hmc(
 
     sample_index = 0
     cumulative_divergences = 0
-    for iteration in 1:total_iterations
+    for iteration = 1:total_iterations
         hmc_step_size = driver.step_size
         inverse_mass_matrix = _driver_metric(driver)
         momentum = _sample_momentum(rng, inverse_mass_matrix)
@@ -294,7 +294,7 @@ function nuts(
     sample_index = 0
     cumulative_divergences = 0
     nuts_target = ModelDensityTarget(model, args, constraints, gradient_cache)
-    for iteration in 1:total_iterations
+    for iteration = 1:total_iterations
         nuts_step_size = driver.step_size
         inverse_mass_matrix = _driver_metric(driver)
         proposal, accept_stat, tree_depth, integration_steps_used, proposal_energy, energy_error, divergent_step, moved_step =

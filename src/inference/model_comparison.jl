@@ -68,7 +68,7 @@ function _gpd_fit(exceedances::AbstractVector)
 
     b = Vector{Float64}(undef, m)
     len_scale = Vector{Float64}(undef, m)
-    for i in 1:m
+    for i = 1:m
         bi = (1 - sqrt(m / (i - 0.5))) / (prior_bs * x_quartile) + 1 / x_max
         b[i] = bi
         acc = 0.0
@@ -83,12 +83,12 @@ function _gpd_fit(exceedances::AbstractVector)
     max_ls = maximum(len_scale)
     weight_sum = 0.0
     weights = Vector{Float64}(undef, m)
-    for i in 1:m
+    for i = 1:m
         weights[i] = exp(len_scale[i] - max_ls)
         weight_sum += weights[i]
     end
     b_post = 0.0
-    for i in 1:m
+    for i = 1:m
         b_post += b[i] * (weights[i] / weight_sum)
     end
 
@@ -137,15 +137,15 @@ function _psis_smooth(log_ratios::AbstractVector)
     end
 
     perm = sortperm(lw)                       # ascending
-    tail_positions = perm[(n - tail_len + 1):n]  # indices of the largest tail_len ratios
-    cutoff = lw[perm[n - tail_len]]              # largest value below the tail
+    tail_positions = perm[(n-tail_len+1):n]  # indices of the largest tail_len ratios
+    cutoff = lw[perm[n-tail_len]]              # largest value below the tail
     tail_values = lw[tail_positions]             # ascending (perm was sorted)
     exp_cutoff = exp(cutoff)
     exceedances = exp.(tail_values) .- exp_cutoff
 
     k, sigma = _gpd_fit(exceedances)
     if isfinite(k) && sigma > 0
-        probs = [(i - 0.5) / tail_len for i in 1:tail_len]
+        probs = [(i - 0.5) / tail_len for i = 1:tail_len]
         smoothed = log.(_gpd_inv(probs, k, sigma) .+ exp_cutoff)
         for (idx, pos) in enumerate(tail_positions)
             lw[pos] = smoothed[idx]
@@ -175,7 +175,7 @@ function waic(ll::AbstractMatrix)
     log_s = log(n_draws)
     elpd_i = Vector{Float64}(undef, n_obs)
     p_i = Vector{Float64}(undef, n_obs)
-    for i in 1:n_obs
+    for i = 1:n_obs
         col = view(ll, :, i)
         lppd_i = _mc_logsumexp(col) - log_s
         p_i[i] = _mc_var(col)
@@ -199,7 +199,7 @@ function psis_loo(ll::AbstractMatrix)
     elpd_i = Vector{Float64}(undef, n_obs)
     pareto_k = Vector{Float64}(undef, n_obs)
     lppd = 0.0
-    for i in 1:n_obs
+    for i = 1:n_obs
         col = view(ll, :, i)
         log_ratios = -col
         logw, k = _psis_smooth(log_ratios)

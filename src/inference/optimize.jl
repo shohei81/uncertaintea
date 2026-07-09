@@ -70,7 +70,7 @@ function _lbfgs_maximize(
         copyto!(q, g)
         m = length(s_history)
         resize!(alpha_cache, m)
-        @inbounds for i in m:-1:1
+        @inbounds for i = m:-1:1
             ai = rho_history[i] * dot(s_history[i], q)
             alpha_cache[i] = ai
             axpy!(-ai, y_history[i], q)
@@ -86,7 +86,7 @@ function _lbfgs_maximize(
         end
         q .*= gamma
 
-        @inbounds for i in 1:m
+        @inbounds for i = 1:m
             bi = rho_history[i] * dot(y_history[i], q)
             axpy!(alpha_cache[i] - bi, s_history[i], q)
         end
@@ -109,7 +109,7 @@ function _lbfgs_maximize(
         x_new = similar(x)
         f_new = fx
         line_ok = false
-        for _ in 0:max_backtracks
+        for _ = 0:max_backtracks
             @. x_new = x + step * direction
             f_new = f(x_new)
             if isfinite(f_new) && f_new >= fx + c1 * step * gd
@@ -232,7 +232,7 @@ function Base.rand(rng::AbstractRNG, result::LaplaceResult, n::Int)
     d = length(mode)
     samples = Matrix{Float64}(undef, d, n)
     z = Vector{Float64}(undef, d)
-    for j in 1:n
+    for j = 1:n
         randn!(rng, z)
         @views samples[:, j] .= mode .+ L * z
     end

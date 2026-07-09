@@ -178,7 +178,7 @@ function _initialize_tempered_nuts_depth_cohort!(
     _sample_batched_nuts_directions!(directions, rng)
     _reset_tempered_nuts_cohort_statistics!(workspace)
 
-    for particle_index in 1:num_particles
+    for particle_index = 1:num_particles
         active[particle_index] || continue
         start_state = _nuts_subtree_start_state(continuations[particle_index], directions[particle_index])
         copyto!(view(current_position, :, particle_index), start_state.position)
@@ -259,7 +259,7 @@ function _expand_tempered_nuts_depth_cohort!(
     checkpoint_positions = cohort_workspace.checkpoint_positions
     checkpoint_momenta = cohort_workspace.checkpoint_momenta
 
-    for _ in 1:workspace.scheduler.remaining_steps
+    for _ = 1:workspace.scheduler.remaining_steps
         any(subtree_active) || break
         _batched_tempered_nuts_leapfrog_step_to!(
             next_position,
@@ -288,7 +288,7 @@ function _expand_tempered_nuts_depth_cohort!(
             subtree_active,
         )
 
-        for particle_index in 1:num_particles
+        for particle_index = 1:num_particles
             subtree_active[particle_index] || continue
             if !valid[particle_index]
                 subtree_divergent[particle_index] = true
@@ -400,7 +400,7 @@ function _merge_tempered_nuts_depth_cohort!(
     subtree_turning = cohort_workspace.subtree_turning
     subtree_divergent = cohort_workspace.subtree_divergent
 
-    for particle_index in 1:num_particles
+    for particle_index = 1:num_particles
         active[particle_index] || continue
         continuation = continuations[particle_index]
         continuation.tree_depth += 1
@@ -550,7 +550,7 @@ function _batched_nuts_move!(
         beta,
     )
 
-    for particle_index in 1:num_particles
+    for particle_index = 1:num_particles
         if !isfinite(proposal_tempered_values[particle_index]) ||
            !isfinite(proposal_logjoint_values[particle_index]) ||
            !all(isfinite, view(proposal_tempered_gradient, :, particle_index))
@@ -558,7 +558,7 @@ function _batched_nuts_move!(
             continue
         end
         signed_step_size = directions[particle_index] * step_size
-        for parameter_index in 1:parameter_total
+        for parameter_index = 1:parameter_total
             proposal_momentum[parameter_index, particle_index] +=
                 (signed_step_size / 2) * proposal_tempered_gradient[parameter_index, particle_index]
         end
@@ -566,7 +566,7 @@ function _batched_nuts_move!(
 
     _batched_hamiltonian!(current_hamiltonian, current_tempered_values, momentum, inverse_mass)
 
-    for particle_index in 1:num_particles
+    for particle_index = 1:num_particles
         tree_workspace = tree_workspaces[particle_index]
         continuation = continuations[particle_index]
         _load_nuts_state!(
@@ -615,7 +615,7 @@ function _batched_nuts_move!(
         )
     end
 
-    for particle_index in 1:num_particles
+    for particle_index = 1:num_particles
         current_position = view(particles, :, particle_index)
         continuation = continuations[particle_index]
         proposal = continuation.proposal

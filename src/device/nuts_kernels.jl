@@ -120,7 +120,7 @@ end
         left_dot = zero(eltype(current_position))
         right_dot = zero(eltype(current_position))
         forward = @inbounds(sign[b]) > 0
-        for pidx in 1:num_params
+        for pidx = 1:num_params
             cp = @inbounds checkpoint_position[pidx, slot, b]
             cm = @inbounds checkpoint_momentum[pidx, slot, b]
             qp = @inbounds current_position[pidx, b]
@@ -153,7 +153,7 @@ end
     if @inbounds(active[b]) != 0x00
         left_dot = zero(eltype(left_position))
         right_dot = zero(eltype(left_position))
-        for pidx in 1:num_params
+        for pidx = 1:num_params
             delta = @inbounds(right_position[pidx, b]) - @inbounds(left_position[pidx, b])
             left_dot += delta * @inbounds(left_momentum[pidx, b])
             right_dot += delta * @inbounds(right_momentum[pidx, b])
@@ -168,7 +168,7 @@ end
 @kernel function _device_nuts_kinetic!(kinetic, @Const(momentum), @Const(inverse_mass), num_params::Int)
     b = @index(Global)
     acc = zero(eltype(kinetic))
-    for pidx in 1:num_params
+    for pidx = 1:num_params
         m = @inbounds momentum[pidx, b]
         acc += m * m * @inbounds(inverse_mass[pidx])
     end
@@ -183,7 +183,7 @@ end
 @kernel function _device_nuts_moved!(moved, @Const(proposal_position), @Const(current_position), num_params::Int)
     b = @index(Global)
     is_moved = 0x00
-    for pidx in 1:num_params
+    for pidx = 1:num_params
         if @inbounds(proposal_position[pidx, b]) != @inbounds(current_position[pidx, b])
             is_moved = 0x01
         end
@@ -377,7 +377,15 @@ function _device_nuts_leaf!(dws::DeviceNUTSWorkspace{T}, ws, step_size::Real) wh
 
     _upload_mask!(dws.active, ws.subtree_active, dws.host_u8)
     copyto!(dws.valid, dws.active)
-    _device_nuts_copy_columns_all!(be)(q, p, grad, dws.tree_current_position, dws.tree_current_momentum, dws.tree_current_gradient; ndrange=(P, C))
+    _device_nuts_copy_columns_all!(be)(
+        q,
+        p,
+        grad,
+        dws.tree_current_position,
+        dws.tree_current_momentum,
+        dws.tree_current_gradient;
+        ndrange=(P, C),
+    )
     _device_nuts_kick!(be)(p, dws.tree_current_gradient, dws.active, dws.sign, half; ndrange=(P, C))
     _device_nuts_drift!(be)(q, p, dws.inverse_mass, dws.active, dws.sign, h; ndrange=(P, C))
     _device_launch_gradient!(inner)
@@ -426,8 +434,26 @@ function _device_initialize_subtree_states!(dws::DeviceNUTSWorkspace{T}, ws, act
         (dws.tree_right_position, dws.tree_right_momentum, dws.tree_right_gradient),
         (dws.tree_proposal_position, dws.tree_proposal_momentum, dws.tree_proposal_gradient),
     )
-        _device_nuts_copy_columns!(be)(dp, dm, dg, dws.left_position, dws.left_momentum, dws.left_gradient, dws.mask_a; ndrange=(P, C))
-        _device_nuts_copy_columns!(be)(dp, dm, dg, dws.right_position, dws.right_momentum, dws.right_gradient, dws.mask_b; ndrange=(P, C))
+        _device_nuts_copy_columns!(be)(
+            dp,
+            dm,
+            dg,
+            dws.left_position,
+            dws.left_momentum,
+            dws.left_gradient,
+            dws.mask_a;
+            ndrange=(P, C),
+        )
+        _device_nuts_copy_columns!(be)(
+            dp,
+            dm,
+            dg,
+            dws.right_position,
+            dws.right_momentum,
+            dws.right_gradient,
+            dws.mask_b;
+            ndrange=(P, C),
+        )
     end
     KernelAbstractions.synchronize(be)
     return dws
@@ -449,7 +475,7 @@ function _device_advance_cohort_impl!(dws::DeviceNUTSWorkspace{T}, ws, max_delta
     fill!(advanced, false)
     fill!(checkpoint, false)
     leaf_index = -1
-    @inbounds for c in 1:C
+    @inbounds for c = 1:C
         ws.subtree_active[c] || continue
         if !ws.control.step_valid[c]
             ws.subtree_divergent[c] = true
@@ -513,7 +539,7 @@ function _device_advance_cohort_impl!(dws::DeviceNUTSWorkspace{T}, ws, max_delta
             )
         else
             fill!(dws.turning, 0x00)
-            for k in 1:trailing_ones(leaf_index)
+            for k = 1:trailing_ones(leaf_index)
                 block_start = leaf_index - (1 << k) + 1
                 slot = count_ones(block_start) + 1
                 _device_nuts_dyadic_turning!(be)(
@@ -530,14 +556,41 @@ function _device_advance_cohort_impl!(dws::DeviceNUTSWorkspace{T}, ws, max_delta
     _upload_mask!(dws.mask_a, ws.subtree_copy_left, dws.host_u8)
     _upload_mask!(dws.mask_b, ws.subtree_copy_right, dws.host_u8)
     _upload_mask!(dws.mask_c, ws.subtree_select_proposal, dws.host_u8)
-    _device_nuts_copy_columns!(be)(dws.tree_left_position, dws.tree_left_momentum, dws.tree_left_gradient, dws.tree_current_position, dws.tree_current_momentum, dws.tree_current_gradient, dws.mask_a; ndrange=(P, C))
-    _device_nuts_copy_columns!(be)(dws.tree_right_position, dws.tree_right_momentum, dws.tree_right_gradient, dws.tree_current_position, dws.tree_current_momentum, dws.tree_current_gradient, dws.mask_b; ndrange=(P, C))
-    _device_nuts_copy_columns!(be)(dws.tree_proposal_position, dws.tree_proposal_momentum, dws.tree_proposal_gradient, dws.tree_current_position, dws.tree_current_momentum, dws.tree_current_gradient, dws.mask_c; ndrange=(P, C))
+    _device_nuts_copy_columns!(be)(
+        dws.tree_left_position,
+        dws.tree_left_momentum,
+        dws.tree_left_gradient,
+        dws.tree_current_position,
+        dws.tree_current_momentum,
+        dws.tree_current_gradient,
+        dws.mask_a;
+        ndrange=(P, C),
+    )
+    _device_nuts_copy_columns!(be)(
+        dws.tree_right_position,
+        dws.tree_right_momentum,
+        dws.tree_right_gradient,
+        dws.tree_current_position,
+        dws.tree_current_momentum,
+        dws.tree_current_gradient,
+        dws.mask_b;
+        ndrange=(P, C),
+    )
+    _device_nuts_copy_columns!(be)(
+        dws.tree_proposal_position,
+        dws.tree_proposal_momentum,
+        dws.tree_proposal_gradient,
+        dws.tree_current_position,
+        dws.tree_current_momentum,
+        dws.tree_current_gradient,
+        dws.mask_c;
+        ndrange=(P, C),
+    )
     KernelAbstractions.synchronize(be)
 
     # fold turning into subtree_active.
     any_active = false
-    @inbounds for c in 1:C
+    @inbounds for c = 1:C
         ws.subtree_active[c] = ws.subtree_active[c] && !ws.subtree_turning[c]
         any_active |= ws.subtree_active[c]
     end
@@ -550,7 +603,7 @@ function _device_merge_cohort!(dws::DeviceNUTSWorkspace{T}, ws, rng::AbstractRNG
     P = dws.num_params
     C = dws.num_chains
 
-    @inbounds for c in 1:C
+    @inbounds for c = 1:C
         ws.subtree_active[c] && continue
         ws.continuation_select_proposal[c] = false
     end
@@ -558,7 +611,7 @@ function _device_merge_cohort!(dws::DeviceNUTSWorkspace{T}, ws, rng::AbstractRNG
     # merge continuation frontiers: left <- tree_left (copy_left), right <- tree_right (copy_right)
     fill!(ws.subtree_copy_left, false)
     fill!(ws.subtree_copy_right, false)
-    @inbounds for c in 1:C
+    @inbounds for c = 1:C
         ws.subtree_active[c] || continue
         if ws.control.step_direction[c] < 0
             ws.subtree_copy_left[c] = true
@@ -570,19 +623,46 @@ function _device_merge_cohort!(dws::DeviceNUTSWorkspace{T}, ws, rng::AbstractRNG
     end
     _upload_mask!(dws.mask_a, ws.subtree_copy_left, dws.host_u8)
     _upload_mask!(dws.mask_b, ws.subtree_copy_right, dws.host_u8)
-    _device_nuts_copy_columns!(be)(dws.left_position, dws.left_momentum, dws.left_gradient, dws.tree_left_position, dws.tree_left_momentum, dws.tree_left_gradient, dws.mask_a; ndrange=(P, C))
-    _device_nuts_copy_columns!(be)(dws.right_position, dws.right_momentum, dws.right_gradient, dws.tree_right_position, dws.tree_right_momentum, dws.tree_right_gradient, dws.mask_b; ndrange=(P, C))
+    _device_nuts_copy_columns!(be)(
+        dws.left_position,
+        dws.left_momentum,
+        dws.left_gradient,
+        dws.tree_left_position,
+        dws.tree_left_momentum,
+        dws.tree_left_gradient,
+        dws.mask_a;
+        ndrange=(P, C),
+    )
+    _device_nuts_copy_columns!(be)(
+        dws.right_position,
+        dws.right_momentum,
+        dws.right_gradient,
+        dws.tree_right_position,
+        dws.tree_right_momentum,
+        dws.tree_right_gradient,
+        dws.mask_b;
+        ndrange=(P, C),
+    )
 
     # merge-level whole-trajectory turning.
     _upload_mask!(dws.mask_c, ws.subtree_active, dws.host_u8)
-    _device_nuts_frontier_turning!(be)(dws.turning, dws.left_position, dws.right_position, dws.left_momentum, dws.right_momentum, dws.mask_c, P; ndrange=C)
+    _device_nuts_frontier_turning!(be)(
+        dws.turning,
+        dws.left_position,
+        dws.right_position,
+        dws.left_momentum,
+        dws.right_momentum,
+        dws.mask_c,
+        P;
+        ndrange=C,
+    )
     # kinetic of the tree proposal momentum (for selected chains' proposal energy).
     _device_nuts_kinetic!(be)(dws.kinetic, dws.tree_proposal_momentum, dws.inverse_mass, P; ndrange=C)
     KernelAbstractions.synchronize(be)
     _download_bits!(ws.subtree_merged_turning, dws.turning, dws.host_u8)
     _download_reals!(dws.kinetic_host, dws.kinetic, dws.host_energy)
 
-    @inbounds for c in 1:C
+    @inbounds for c = 1:C
         ws.subtree_active[c] || continue
         merge = _merge_subtree_stats(ws.continuation_log_weight[c], ws.subtree_log_weight[c], rng)
         ws.continuation_select_proposal[c] = merge.select_proposal
@@ -598,9 +678,18 @@ function _device_merge_cohort!(dws::DeviceNUTSWorkspace{T}, ws, rng::AbstractRNG
 
     # device: final continuation proposal <- tree proposal for selected chains.
     _upload_mask!(dws.mask_a, ws.continuation_select_proposal, dws.host_u8)
-    _device_nuts_copy_columns!(be)(dws.proposal_position, dws.proposal_momentum, dws.proposal_gradient, dws.tree_proposal_position, dws.tree_proposal_momentum, dws.tree_proposal_gradient, dws.mask_a; ndrange=(P, C))
+    _device_nuts_copy_columns!(be)(
+        dws.proposal_position,
+        dws.proposal_momentum,
+        dws.proposal_gradient,
+        dws.tree_proposal_position,
+        dws.tree_proposal_momentum,
+        dws.tree_proposal_gradient,
+        dws.mask_a;
+        ndrange=(P, C),
+    )
     KernelAbstractions.synchronize(be)
-    @inbounds for c in 1:C
+    @inbounds for c = 1:C
         ws.continuation_select_proposal[c] || continue
         ws.proposed_logjoint[c] = ws.continuation_proposal_logjoint[c]
     end
@@ -608,7 +697,14 @@ function _device_merge_cohort!(dws::DeviceNUTSWorkspace{T}, ws, rng::AbstractRNG
 end
 
 # Mirror `_masked_nuts_doubling_round!`.
-function _device_masked_nuts_doubling_round!(dws::DeviceNUTSWorkspace{T}, ws, max_tree_depth::Int, max_delta_energy::Float64, step_size::Real, rng::AbstractRNG) where {T}
+function _device_masked_nuts_doubling_round!(
+    dws::DeviceNUTSWorkspace{T},
+    ws,
+    max_tree_depth::Int,
+    max_delta_energy::Float64,
+    step_size::Real,
+    rng::AbstractRNG,
+) where {T}
     _reset_batched_nuts_subtree_scratch!(ws)
     _update_batched_nuts_continuation_active!(ws, max_tree_depth) || return false
     round_active = ws.control.scheduler.continuation_active
@@ -627,7 +723,7 @@ function _device_masked_nuts_doubling_round!(dws::DeviceNUTSWorkspace{T}, ws, ma
     _device_initialize_subtree_states!(dws, ws, ws.subtree_active)
 
     any_expanding = true
-    for _ in 1:(1 << round_depth)
+    for _ = 1:(1<<round_depth)
         any_expanding || break
         _device_nuts_leaf!(dws, ws, step_size)
         any_expanding = _device_advance_cohort_impl!(dws, ws, max_delta_energy, rng)

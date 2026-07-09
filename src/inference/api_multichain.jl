@@ -26,7 +26,7 @@ function hmc_chains(
     seeds = rand(rng, UInt, num_chains)
     chains = Vector{HMCChain}(undef, num_chains)
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chain_rng = MersenneTwister(seeds[chain_index])
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
         chain_callback = isnothing(callback) ? nothing : info -> callback(merge(info, (chain=chain_index,)))
@@ -84,7 +84,7 @@ function nuts_chains(
     seeds = rand(rng, UInt, num_chains)
     chains = Vector{HMCChain}(undef, num_chains)
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         chain_rng = MersenneTwister(seeds[chain_index])
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
         chain_callback = isnothing(callback) ? nothing : info -> callback(merge(info, (chain=chain_index,)))

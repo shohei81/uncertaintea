@@ -72,7 +72,7 @@ function _batched_environment_set_shared!(env::BatchedPlanEnvironment, slot::Int
         env.index_values[slot, :] .= Int(value)
     else
         values = env.generic_values[slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             values[batch_index] = value
         end
     end
@@ -84,7 +84,7 @@ function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, value
     length(values) == env.batch_size ||
         throw(DimensionMismatch("expected $(env.batch_size) batched values, got $(length(values))"))
     if env.numeric_slots[slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             value = values[batch_index]
             value isa Real && !(value isa Bool) || throw(
                 BatchedBackendFallback("numeric backend slot $slot received non-real batched value"),
@@ -92,7 +92,7 @@ function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, value
             env.numeric_values[slot, batch_index] = convert(eltype(env.numeric_values), value)
         end
     elseif env.index_slots[slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             value = values[batch_index]
             value isa Integer || throw(
                 BatchedBackendFallback("index backend slot $slot received non-integer batched value"),
@@ -101,7 +101,7 @@ function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, value
         end
     else
         storage = env.generic_values[slot]
-        for batch_index in 1:env.batch_size
+        for batch_index = 1:env.batch_size
             storage[batch_index] = values[batch_index]
         end
     end
@@ -146,7 +146,7 @@ function _score_backend_step!(
     end
 
     values = env.generic_values[step.binding_slot]
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         values[batch_index] = _eval_backend_expr(env, step.expr, batch_index)
     end
     env.assigned[step.binding_slot] = true
@@ -214,7 +214,7 @@ function _backend_choice_vector_value(
     address,
 )
     if !isnothing(value_index)
-        return collect(view(params, value_index:(value_index + value_length - 1)))
+        return collect(view(params, value_index:(value_index+value_length-1)))
     end
     found, constrained_value = _choice_tryget_normalized(constraints, address)
     found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
@@ -230,17 +230,21 @@ function _batched_choice_vector_values!(
     address_parts::Tuple,
 )
     size(destination) == (value_length, size(params, 2)) ||
-        throw(DimensionMismatch("expected mvnormal destination of size ($(value_length), $(size(params, 2))), got $(size(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected mvnormal destination of size ($(value_length), $(size(params, 2))), got $(size(destination))",
+            ),
+        )
     if !isnothing(value_index)
-        copyto!(destination, view(params, value_index:(value_index + value_length - 1), :))
+        copyto!(destination, view(params, value_index:(value_index+value_length-1), :))
         return destination
     end
-    for batch_index in 1:size(params, 2)
+    for batch_index = 1:size(params, 2)
         address = _concrete_batched_address(address_parts, batch_index)
         found, constrained_value = _choice_tryget_normalized(constraints, address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
         values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(destination))
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             destination[component_index, batch_index] = values[component_index]
         end
     end
@@ -258,17 +262,17 @@ function _batched_choice_vector_values!(
     length(destinations) == value_length ||
         throw(DimensionMismatch("expected $value_length mvnormal component buffers, got $(length(destinations))"))
     if !isnothing(value_index)
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             copyto!(destinations[component_index], view(params, value_index + component_index - 1, :))
         end
         return destinations
     end
-    for batch_index in 1:size(params, 2)
+    for batch_index = 1:size(params, 2)
         address = _concrete_batched_address(address_parts, batch_index)
         found, constrained_value = _choice_tryget_normalized(constraints, address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
         values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(first(destinations)))
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             destinations[component_index][batch_index] = values[component_index]
         end
     end
@@ -288,17 +292,17 @@ function _batched_choice_vector_values!(
     length(constraints) == size(params, 2) ||
         throw(DimensionMismatch("expected $(size(params, 2)) batched constraints, got $(length(constraints))"))
     if !isnothing(value_index)
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             copyto!(destinations[component_index], view(params, value_index + component_index - 1, :))
         end
         return destinations
     end
-    for batch_index in 1:size(params, 2)
+    for batch_index = 1:size(params, 2)
         address = _concrete_batched_address(address_parts, batch_index)
         found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
         values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(first(destinations)))
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             destinations[component_index][batch_index] = values[component_index]
         end
     end
@@ -314,19 +318,23 @@ function _batched_choice_vector_values!(
     address_parts::Tuple,
 )
     size(destination) == (value_length, size(params, 2)) ||
-        throw(DimensionMismatch("expected mvnormal destination of size ($(value_length), $(size(params, 2))), got $(size(destination))"))
+        throw(
+            DimensionMismatch(
+                "expected mvnormal destination of size ($(value_length), $(size(params, 2))), got $(size(destination))",
+            ),
+        )
     length(constraints) == size(params, 2) ||
         throw(DimensionMismatch("expected $(size(params, 2)) batched constraints, got $(length(constraints))"))
     if !isnothing(value_index)
-        copyto!(destination, view(params, value_index:(value_index + value_length - 1), :))
+        copyto!(destination, view(params, value_index:(value_index+value_length-1), :))
         return destination
     end
-    for batch_index in 1:size(params, 2)
+    for batch_index = 1:size(params, 2)
         address = _concrete_batched_address(address_parts, batch_index)
         found, constrained_value = _choice_tryget_normalized(constraints[batch_index], address)
         found || throw(ArgumentError("backend plan requires a provided value for choice $(address)"))
         values = _backend_mvnormal_observed_value(constrained_value, value_length, eltype(destination))
-        for component_index in 1:value_length
+        for component_index = 1:value_length
             destination[component_index, batch_index] = values[component_index]
         end
     end

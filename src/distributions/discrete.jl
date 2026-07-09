@@ -111,7 +111,7 @@ end
 
 function Random.rand(rng::AbstractRNG, dist::BinomialDist)
     successes = 0
-    for _ in 1:dist.trials
+    for _ = 1:dist.trials
         successes += rand(rng) < dist.p
     end
     return successes
@@ -195,7 +195,7 @@ end
 function _logfactorial_like(value, n::Integer)
     total = zero(value)
     unit = one(value)
-    for k in 2:n
+    for k = 2:n
         total += log(unit * k)
     end
     return total

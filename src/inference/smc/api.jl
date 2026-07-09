@@ -164,7 +164,7 @@ function batched_smc(
         TemperedNUTSMoveWorkspace(model, particles, args, constraints, move_max_tree_depth) :
         nothing
 
-    for stage_index in 1:max_stages
+    for stage_index = 1:max_stages
         beta_next = _adaptive_tempering_beta(log_ratio, beta, min_effective_sample_size, logweights)
         _incremental_tempering_weights!(logweights, log_ratio, beta, beta_next)
         normalized_weights, log_weight_total = _normalized_logweights(logweights)
@@ -204,7 +204,7 @@ function batched_smc(
                     )
                 elseif move_kernel === :hmc
                     acceptance_sum = 0.0
-                    for _ in 1:move_steps
+                    for _ = 1:move_steps
                         acceptance_sum += _batched_hmc_move!(
                             particles,
                             logjoint_values,
@@ -226,7 +226,7 @@ function batched_smc(
                 else
                     acceptance_sum = 0.0
                     nuts_workspace = nuts_move_workspace::TemperedNUTSMoveWorkspace
-                    for _ in 1:move_steps
+                    for _ = 1:move_steps
                         acceptance_sum += _batched_nuts_move!(
                             nuts_workspace,
                             particles,
@@ -280,7 +280,8 @@ function batched_smc(
         beta >= 1.0 - 1e-12 && break
     end
 
-    beta >= 1.0 - 1e-12 || throw(ArgumentError("batched_smc reached max_stages=$max_stages before the tempering schedule reached 1.0"))
+    beta >= 1.0 - 1e-12 ||
+        throw(ArgumentError("batched_smc reached max_stages=$max_stages before the tempering schedule reached 1.0"))
 
     if !isempty(stages) && last(stages).resampled
         logweights .= 0.0

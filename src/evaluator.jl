@@ -197,13 +197,15 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
 end
 
 function _compile_address(layout::EnvironmentLayout, model::TeaModel, address::AddressSpec)
-    parts = tuple((begin
-        if part isa AddressLiteralPart
-            CompiledAddressLiteralPart(part.value)
-        else
-            CompiledAddressDynamicPart(_compile_plan_expr(model, layout, part.value))
-        end
-    end for part in address.parts)...)
+    parts = tuple((
+        begin
+            if part isa AddressLiteralPart
+                CompiledAddressLiteralPart(part.value)
+            else
+                CompiledAddressDynamicPart(_compile_plan_expr(model, layout, part.value))
+            end
+        end for part in address.parts
+    )...)
     return CompiledAddressSpec(parts)
 end
 
@@ -216,13 +218,26 @@ function _compile_plan_step(
     step.rhs isa DistributionSpec || step.rhs isa BroadcastDistributionSpec ||
         throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
     arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments)...)
-    constructor = step.rhs isa BroadcastDistributionSpec ?
+    constructor =
+        step.rhs isa BroadcastDistributionSpec ?
         getfield(@__MODULE__, :BroadcastNormalDist) : getfield(@__MODULE__, step.rhs.family)
-    parameter_value_indices = isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
-    return CompiledChoicePlanStep(step.binding_slot, _compile_address(layout, model, step.address), constructor, arguments, parameter_value_indices)
+    parameter_value_indices =
+        isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
+    return CompiledChoicePlanStep(
+        step.binding_slot,
+        _compile_address(layout, model, step.address),
+        constructor,
+        arguments,
+        parameter_value_indices,
+    )
 end
 
-function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, parameter_layout::ParameterLayout, step::DeterministicPlanStep)
+function _compile_plan_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    step::DeterministicPlanStep,
+)
     return CompiledDeterministicPlanStep(step.binding_slot, _compile_plan_expr(model, layout, step.expr))
 end
 
@@ -233,7 +248,9 @@ end
 
 function _compile_execution_plan(model::TeaModel)
     raw_plan = executionplan(model)
-    compiled_steps = tuple((_compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step) for step in raw_plan.steps)...)
+    compiled_steps = tuple(
+        (_compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step) for step in raw_plan.steps)...,
+    )
     return CompiledExecutionPlan(compiled_steps)
 end
 

@@ -129,7 +129,7 @@ end
     @test all(isfinite, result.elbo_history)
     quartile = length(result.elbo_history) ÷ 4
     first_quartile = devh_mean(result.elbo_history[1:quartile])
-    last_quartile = devh_mean(result.elbo_history[(end - quartile + 1):end])
+    last_quartile = devh_mean(result.elbo_history[(end-quartile+1):end])
     @test last_quartile > first_quartile
 end
 

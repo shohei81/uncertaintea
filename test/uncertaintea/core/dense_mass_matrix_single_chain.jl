@@ -1,12 +1,12 @@
-    # PR 40: dense mass-matrix option for the single-chain CPU samplers.
-    # Contract: hmc / nuts / hmc_chains / nuts_chains accept metric=:diag (default,
-    # bitwise identical to the legacy path) or :dense. The dense metric abstraction
-    # (DiagonalMetric / DenseMetric) supplies momentum sampling, M^{-1} application,
-    # and kinetic energy; the dense adaptation estimates the posterior covariance
-    # Sigma = M^{-1}, so correlated targets are whitened and mix far better.
-    using LinearAlgebra
+# PR 40: dense mass-matrix option for the single-chain CPU samplers.
+# Contract: hmc / nuts / hmc_chains / nuts_chains accept metric=:diag (default,
+# bitwise identical to the legacy path) or :dense. The dense metric abstraction
+# (DiagonalMetric / DenseMetric) supplies momentum sampling, M^{-1} application,
+# and kinetic energy; the dense adaptation estimates the posterior covariance
+# Sigma = M^{-1}, so correlated targets are whitened and mix far better.
+using LinearAlgebra
 
-    # --- metric operations ---------------------------------------------------
+# --- metric operations ---------------------------------------------------
 @testset "dense_mass_matrix_single_chain" begin
     @testset "dm_metric_operations" begin
         dm_rng_seed = 424242
@@ -16,7 +16,7 @@
 
         # kinetic energy matches the legacy `_kinetic_energy` expression bitwise.
         @test UncertainTea.kinetic_energy(dm_diag_metric, dm_p) ==
-            UncertainTea._kinetic_energy(dm_p, dm_imm)
+              UncertainTea._kinetic_energy(dm_p, dm_imm)
 
         # apply M^{-1} matches the legacy elementwise product bitwise.
         dm_apply_out = similar(dm_p)
@@ -48,7 +48,7 @@
         dm_draws = Matrix{Float64}(undef, 3, dm_n)
         dm_sample_rng = MersenneTwister(9)
         dm_buffer = Vector{Float64}(undef, 3)
-        for draw_index in 1:dm_n
+        for draw_index = 1:dm_n
             UncertainTea.sample_momentum!(dm_buffer, dm_dense_metric, dm_sample_rng)
             dm_draws[:, draw_index] = dm_buffer
         end
@@ -105,7 +105,7 @@
 
         dm_ess_min(chain) = minimum(
             UncertainTea._split_ess(reshape(chain.unconstrained_samples[i, :], 1, :))
-            for i in 1:size(chain.unconstrained_samples, 1)
+            for i = 1:size(chain.unconstrained_samples, 1)
         )
 
         dm_diag_chain = nuts(
@@ -177,7 +177,7 @@
 
         mmfix_ess_min(chain) = minimum(
             UncertainTea._split_ess(reshape(chain.unconstrained_samples[i, :], 1, :))
-            for i in 1:size(chain.unconstrained_samples, 1)
+            for i = 1:size(chain.unconstrained_samples, 1)
         )
 
         mmfix_adapted = nuts(

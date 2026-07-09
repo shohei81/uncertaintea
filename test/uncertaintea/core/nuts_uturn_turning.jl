@@ -56,7 +56,7 @@
         state = start_state
         steps = 0
         turning = false
-        for _ in 1:(1 << depth)
+        for _ = 1:(1<<depth)
             dest, _ = dyadic_leapfrog(target, state, imm, direction * step_size)
             state = dest
             steps += 1
@@ -113,52 +113,52 @@
     dyadic_step_sizes = [0.3, 0.6, 0.9, 1.2, 1.5]
     dyadic_depths = [2, 3, 4]
     dyadic_turning_count, dyadic_diff_from_old = let
-    turning_count = 0
-    diff_from_old = 0
-    for dyadic_step_size in dyadic_step_sizes
-        for dyadic_depth in dyadic_depths
-            dyadic_reference = dyadic_build_tree(
-                dyadic_target,
-                dyadic_start_state,
-                dyadic_imm,
-                dyadic_step_size,
-                dyadic_direction,
-                dyadic_depth,
-            )
-            dyadic_workspace = UncertainTea.NUTSSubtreeWorkspace(length(dyadic_position), 5)
-            dyadic_summary = UncertainTea._build_nuts_subtree(
-                dyadic_workspace,
-                dyadic_target,
-                dyadic_start_state,
-                dyadic_imm,
-                dyadic_step_size,
-                dyadic_direction,
-                dyadic_depth,
-                dyadic_initial_hamiltonian,
-                dyadic_max_delta_energy,
-                MersenneTwister(hash((dyadic_step_size, dyadic_depth))),
-            )
-            @test dyadic_summary.divergent == false
-            @test dyadic_summary.turning == dyadic_reference.turning
-            @test dyadic_summary.integration_steps == dyadic_reference.steps
-            dyadic_old = dyadic_old_criterion(
-                dyadic_target,
-                dyadic_start_state,
-                dyadic_imm,
-                dyadic_step_size,
-                dyadic_direction,
-                dyadic_depth,
-            )
-            if dyadic_reference.turning
-                turning_count += 1
-            end
-            if dyadic_summary.turning != dyadic_old.turning ||
-                dyadic_summary.integration_steps != dyadic_old.steps
-                diff_from_old += 1
+        turning_count = 0
+        diff_from_old = 0
+        for dyadic_step_size in dyadic_step_sizes
+            for dyadic_depth in dyadic_depths
+                dyadic_reference = dyadic_build_tree(
+                    dyadic_target,
+                    dyadic_start_state,
+                    dyadic_imm,
+                    dyadic_step_size,
+                    dyadic_direction,
+                    dyadic_depth,
+                )
+                dyadic_workspace = UncertainTea.NUTSSubtreeWorkspace(length(dyadic_position), 5)
+                dyadic_summary = UncertainTea._build_nuts_subtree(
+                    dyadic_workspace,
+                    dyadic_target,
+                    dyadic_start_state,
+                    dyadic_imm,
+                    dyadic_step_size,
+                    dyadic_direction,
+                    dyadic_depth,
+                    dyadic_initial_hamiltonian,
+                    dyadic_max_delta_energy,
+                    MersenneTwister(hash((dyadic_step_size, dyadic_depth))),
+                )
+                @test dyadic_summary.divergent == false
+                @test dyadic_summary.turning == dyadic_reference.turning
+                @test dyadic_summary.integration_steps == dyadic_reference.steps
+                dyadic_old = dyadic_old_criterion(
+                    dyadic_target,
+                    dyadic_start_state,
+                    dyadic_imm,
+                    dyadic_step_size,
+                    dyadic_direction,
+                    dyadic_depth,
+                )
+                if dyadic_reference.turning
+                    turning_count += 1
+                end
+                if dyadic_summary.turning != dyadic_old.turning ||
+                   dyadic_summary.integration_steps != dyadic_old.steps
+                    diff_from_old += 1
+                end
             end
         end
-    end
-    (turning_count, diff_from_old)
+        (turning_count, diff_from_old)
     end
     @test dyadic_turning_count >= 4
     @test dyadic_diff_from_old >= 1
@@ -175,7 +175,7 @@
         rng=MersenneTwister(777),
     )
     dyadic_e2e_summary = summarize(dyadic_e2e_chains)
-    for dyadic_row_index in 1:length(dyadic_e2e_summary)
+    for dyadic_row_index = 1:length(dyadic_e2e_summary)
         @test isfinite(dyadic_e2e_summary[dyadic_row_index].mean)
         @test isfinite(dyadic_e2e_summary[dyadic_row_index].sd)
         @test 1.0 <= dyadic_e2e_summary[dyadic_row_index].rhat <= 1.2

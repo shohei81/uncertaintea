@@ -1,8 +1,8 @@
-    # PR 37: pointwise log-likelihood extraction + WAIC + PSIS-LOO model comparison.
-    # Contract: pointwise_loglikelihood recovers the per-observation logpdf so that the
-    # row sum plus the prior term equals logjoint; _gpd_fit recovers the shape/scale of a
-    # known generalized Pareto sample; WAIC and PSIS-LOO agree with each other and with an
-    # exact (unsmoothed) importance-sampling LOO on a well-behaved conjugate model.
+# PR 37: pointwise log-likelihood extraction + WAIC + PSIS-LOO model comparison.
+# Contract: pointwise_loglikelihood recovers the per-observation logpdf so that the
+# row sum plus the prior term equals logjoint; _gpd_fit recovers the shape/scale of a
+# known generalized Pareto sample; WAIC and PSIS-LOO agree with each other and with an
+# exact (unsmoothed) importance-sampling LOO on a well-behaved conjugate model.
 
 @testset "waic_psis_loo" begin
     mc_logsumexp = function (v)
@@ -12,14 +12,14 @@
 
     @tea static function mc_conjugate_model(n)
         mu ~ normal(0.0f0, 1.0f0)
-        for i in 1:n
+        for i = 1:n
             {:y => i} ~ normal(mu, 1.0f0)
         end
         return mu
     end
 
     mc_ys = Float32[0.4f0, -0.7f0, 1.1f0]
-    mc_constraints = choicemap((:y => i, mc_ys[i]) for i in 1:3)
+    mc_constraints = choicemap((:y => i, mc_ys[i]) for i = 1:3)
 
     mc_chains = nuts_chains(
         mc_conjugate_model,
@@ -56,7 +56,7 @@
     mc_true_k = 0.3
     mc_true_sigma = 1.0
     mc_gpd_samples = Float64[
-        mc_true_sigma * ((1 - rand(mc_gpd_rng))^(-mc_true_k) - 1) / mc_true_k for _ in 1:2000
+        mc_true_sigma * ((1 - rand(mc_gpd_rng))^(-mc_true_k) - 1) / mc_true_k for _ = 1:2000
     ]
     mc_khat, mc_sigmahat = UncertainTea._gpd_fit(mc_gpd_samples)
     @test abs(mc_khat - mc_true_k) < 0.1
@@ -67,7 +67,7 @@
     mc_loo = psis_loo(mc_ll)
 
     mc_S = size(mc_ll, 1)
-    mc_lppd = sum(mc_logsumexp(mc_ll[:, i]) - log(mc_S) for i in 1:size(mc_ll, 2))
+    mc_lppd = sum(mc_logsumexp(mc_ll[:, i]) - log(mc_S) for i = 1:size(mc_ll, 2))
 
     @test mc_loo.elpd <= mc_lppd
     @test mc_loo.p_eff > 0
@@ -75,7 +75,7 @@
     @test abs(mc_waic.elpd - mc_loo.elpd) < 0.5
 
     # Exact importance-sampling LOO (no smoothing) as a cross-check.
-    for i in 1:size(mc_ll, 2)
+    for i = 1:size(mc_ll, 2)
         mc_col = mc_ll[:, i]
         mc_lw = -mc_col
         mc_lw_norm = mc_lw .- mc_logsumexp(mc_lw)

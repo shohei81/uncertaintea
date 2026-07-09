@@ -26,7 +26,7 @@ lkj_var(xs) = sum(abs2, xs .- lkj_mean(xs)) / (length(xs) - 1)
 # Un-pack a column-major packed lower triangle into a dense d x d matrix.
 function lkj_unpack(packed, d)
     full = zeros(d, d)
-    for j in 1:d, i in j:d
+    for j = 1:d, i = j:d
         full[i, j] = packed[lkj_pack_index(d, i, j)]
     end
     return full
@@ -37,15 +37,15 @@ end
     lkj_rt_rng = MersenneTwister(4901)
     for lkj_rt_d in (2, 3, 4)
         lkj_rt_t = CholeskyCorrTransform(lkj_rt_d)
-        for _ in 1:8
+        for _ = 1:8
             lkj_rt_z = randn(lkj_rt_rng, (lkj_rt_d * (lkj_rt_d - 1)) ÷ 2) .* 1.5
             lkj_rt_packed = UncertainTea.to_constrained(lkj_rt_t, lkj_rt_z)
             @test length(lkj_rt_packed) == (lkj_rt_d * (lkj_rt_d + 1)) ÷ 2
             # every row of the full factor (diagonal included) is a unit vector
-            for lkj_rt_i in 1:lkj_rt_d
+            for lkj_rt_i = 1:lkj_rt_d
                 lkj_rt_row = sum(
                     lkj_rt_packed[lkj_pack_index(lkj_rt_d, lkj_rt_i, lkj_rt_j)]^2
-                    for lkj_rt_j in 1:lkj_rt_i
+                    for lkj_rt_j = 1:lkj_rt_i
                 )
                 @test abs(lkj_rt_row - 1) < 1e-12
                 @test lkj_rt_packed[lkj_pack_index(lkj_rt_d, lkj_rt_i, lkj_rt_i)] > 0
@@ -70,7 +70,7 @@ end
         for ij in lkj_lad_free
     ]
     lkj_lad_rng = MersenneTwister(4902)
-    for _ in 1:10
+    for _ = 1:10
         lkj_lad_z = randn(lkj_lad_rng, 3) .* 1.5
         lkj_lad_J = lkj_FD.jacobian(lkj_lad_g, lkj_lad_z)
         lkj_lad_ref = lkj_LA.logabsdet(lkj_lad_J)[1]
@@ -93,9 +93,10 @@ end
     # which validates the LKJ normalizing constant against the Beta closed form.
     for lkj_d2_rho in (-0.85, -0.3, 0.0, 0.45, 0.9)
         lkj_d2_packed = [1.0, lkj_d2_rho, sqrt(1 - lkj_d2_rho^2)]
-        lkj_d2_ref = (lkj_d2_eta - 1) * log1p(-lkj_d2_rho^2) -
-                     ((2 * lkj_d2_eta - 1) * log(2.0) +
-                      2 * lkj_loggamma(lkj_d2_eta) - lkj_loggamma(2 * lkj_d2_eta))
+        lkj_d2_ref =
+            (lkj_d2_eta - 1) * log1p(-lkj_d2_rho^2) -
+            ((2 * lkj_d2_eta - 1) * log(2.0) +
+             2 * lkj_loggamma(lkj_d2_eta) - lkj_loggamma(2 * lkj_d2_eta))
         @test UncertainTea.logpdf(lkj_d2_dist, lkj_d2_packed) ≈ lkj_d2_ref atol = 1e-12
     end
 
@@ -109,7 +110,7 @@ end
     # cvine sampling: rho ~ 2 * Beta(eta, eta) - 1, so E[rho] = 0 and
     # Var[rho] = 1 / (2*eta + 1).
     lkj_d2_rng = MersenneTwister(4903)
-    lkj_d2_rhos = [rand(lkj_d2_rng, lkj_d2_dist)[2] for _ in 1:30000]
+    lkj_d2_rhos = [rand(lkj_d2_rng, lkj_d2_dist)[2] for _ = 1:30000]
     lkj_d2_target_var = 1 / (2 * lkj_d2_eta + 1)
     @test abs(lkj_mean(lkj_d2_rhos)) < 0.01
     @test abs(lkj_var(lkj_d2_rhos) - lkj_d2_target_var) / lkj_d2_target_var < 0.05
@@ -126,9 +127,9 @@ end
         lkj_prior2_model,
         (),
         choicemap();
-        num_samples = 400,
-        num_warmup = 400,
-        rng = MersenneTwister(4904),
+        num_samples=400,
+        num_warmup=400,
+        rng=MersenneTwister(4904),
     )
     @test all(isfinite, lkj_d2_chain.constrained_samples)
     lkj_d2_draws = lkj_d2_chain.constrained_samples[2, :]
@@ -143,7 +144,7 @@ const lkj_h_zeros3 = [0.0, 0.0, 0.0]
     Omega ~ lkjcholesky(3, 2.0)
     tau ~ iid(lognormal(0.0f0, 0.3f0), 3)
     Ltril = scale_cholesky(tau, Omega)
-    for i in 1:n
+    for i = 1:n
         {:y => i} ~ mvnormaldense(zeros3_arg, Ltril)
     end
     return Omega
@@ -158,8 +159,8 @@ end
     lkj_h_n = 60
     lkj_h_rng = MersenneTwister(4905)
     lkj_h_dist = mvnormaldense(lkj_h_zeros3, lkj_h_scale)
-    lkj_h_ys = [rand(lkj_h_rng, lkj_h_dist) for _ in 1:lkj_h_n]
-    lkj_h_cm = choicemap((:y => i, lkj_h_ys[i]) for i in 1:lkj_h_n)
+    lkj_h_ys = [rand(lkj_h_rng, lkj_h_dist) for _ = 1:lkj_h_n]
+    lkj_h_cm = choicemap((:y => i, lkj_h_ys[i]) for i = 1:lkj_h_n)
 
     # Layout: one packed correlation slot (3 params -> 6 values) and one iid
     # lognormal scale slot (3 params -> 3 values).
@@ -175,10 +176,11 @@ end
     lkj_h_omega = rand(lkj_h_rng, UncertainTea.lkjcholesky(3, 2.0))
     lkj_h_tau = [0.9, 1.1, 1.0]
     lkj_h_params = vcat(lkj_h_omega, lkj_h_tau)
-    lkj_h_manual = UncertainTea.logpdf(UncertainTea.lkjcholesky(3, 2.0), lkj_h_omega) +
-                   sum(UncertainTea.logpdf(lognormal(0.0f0, 0.3f0), lkj_h_tau[k]) for k in 1:3)
+    lkj_h_manual =
+        UncertainTea.logpdf(UncertainTea.lkjcholesky(3, 2.0), lkj_h_omega) +
+        sum(UncertainTea.logpdf(lognormal(0.0f0, 0.3f0), lkj_h_tau[k]) for k = 1:3)
     lkj_h_Ltril = scale_cholesky(lkj_h_tau, lkj_h_omega)
-    for i in 1:lkj_h_n
+    for i = 1:lkj_h_n
         lkj_h_manual += UncertainTea.logpdf(mvnormaldense(lkj_h_zeros3, lkj_h_Ltril), lkj_h_ys[i])
     end
     @test logjoint(lkj_hier_model, lkj_h_params, (lkj_h_zeros3, lkj_h_n), lkj_h_cm) ≈
@@ -188,10 +190,10 @@ end
         lkj_hier_model,
         (lkj_h_zeros3, lkj_h_n),
         lkj_h_cm;
-        num_chains = 2,
-        num_samples = 300,
-        num_warmup = 300,
-        rng = MersenneTwister(4906),
+        num_chains=2,
+        num_samples=300,
+        num_warmup=300,
+        rng=MersenneTwister(4906),
     )
     for lkj_h_chain in lkj_h_chains.chains
         @test all(isfinite, lkj_h_chain.constrained_samples)

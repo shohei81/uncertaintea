@@ -188,8 +188,8 @@ function TemperedNUTSMoveWorkspace(
         Vector{Float64}(undef, parameter_total),
         Vector{Float64}(undef, parameter_total),
         Int[],
-        [NUTSSubtreeWorkspace(parameter_total, 0) for _ in 1:num_particles],
-        [NUTSContinuationState(parameter_total) for _ in 1:num_particles],
+        [NUTSSubtreeWorkspace(parameter_total, 0) for _ = 1:num_particles],
+        [NUTSContinuationState(parameter_total) for _ = 1:num_particles],
         TemperedNUTSCohortControlState(num_particles),
         TemperedNUTSSchedulerState(num_particles),
         TemperedNUTSCohortWorkspace(parameter_total, num_particles, max_tree_depth),
@@ -206,8 +206,12 @@ function _validate_tempered_nuts_move_workspace!(
     size(particles, 2) == workspace.num_particles ||
         throw(DimensionMismatch("expected particle matrix with $(workspace.num_particles) columns, got $(size(particles, 2))"))
     length(inverse_mass_matrix) == workspace.parameter_total ||
-        throw(DimensionMismatch("expected inverse mass matrix of length $(workspace.parameter_total), got $(length(inverse_mass_matrix))"))
-    for parameter_index in 1:workspace.parameter_total
+        throw(
+            DimensionMismatch(
+                "expected inverse mass matrix of length $(workspace.parameter_total), got $(length(inverse_mass_matrix))",
+            ),
+        )
+    for parameter_index = 1:workspace.parameter_total
         inverse_mass_value = Float64(inverse_mass_matrix[parameter_index])
         workspace.inverse_mass[parameter_index] = inverse_mass_value
         workspace.sqrt_inverse_mass[parameter_index] = sqrt(inverse_mass_value)

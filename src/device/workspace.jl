@@ -11,10 +11,12 @@ _device_supports_float64(::KernelAbstractions.Backend) = true
 
 function _check_device_precision(backend::KernelAbstractions.Backend, precision::Type)
     if precision === Float64 && !_device_supports_float64(backend)
-        throw(ArgumentError(
-            "backend $(typeof(backend)) does not support Float64 arithmetic; " *
-            "request precision=$(default_device_precision(backend)) instead",
-        ))
+        throw(
+            ArgumentError(
+                "backend $(typeof(backend)) does not support Float64 arithmetic; " *
+                "request precision=$(default_device_precision(backend)) instead",
+            ),
+        )
     end
     return nothing
 end

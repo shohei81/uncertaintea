@@ -97,7 +97,7 @@ function Random.rand(rng::AbstractRNG, dist::TruncatedStudentTDist)
         target = lower_cdf + rand(rng, typeof(mu)) * mass
         lo = isfinite(za) ? za : (isfinite(zb) ? zb - oftype(zb, 50) : oftype(nu, -50))
         hi = isfinite(zb) ? zb : (isfinite(za) ? za + oftype(za, 50) : oftype(nu, 50))
-        for _ in 1:80
+        for _ = 1:80
             mid = (lo + hi) / 2
             if _std_t_cdf(mid, nu) < target
                 lo = mid

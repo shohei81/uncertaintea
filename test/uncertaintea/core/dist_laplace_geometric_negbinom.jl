@@ -2,8 +2,8 @@
     @test UncertainTea.logpdf(laplace(0.5, 2.0), 1.5) ≈ -log(4.0) - 0.5 atol=1e-8
     @test UncertainTea.logpdf(geometric(0.25), 3) ≈ log(0.25) + 3 * log(0.75) atol=1e-8
     @test UncertainTea.logpdf(negativebinomial(2.5, 0.4), 3) ≈
-        UncertainTea.loggamma(5.5) - UncertainTea.loggamma(2.5) -
-        log(6.0) + 2.5 * log(0.4) + 3 * log(0.6) atol=1e-8
+          UncertainTea.loggamma(5.5) - UncertainTea.loggamma(2.5) -
+          log(6.0) + 2.5 * log(0.4) + 3 * log(0.6) atol=1e-8
 
     @tea static function laplace_latent_model()
         state ~ laplace(0.0f0, 1.5f0)
@@ -25,11 +25,11 @@
     @test laplace_backend_plan.steps[1] isa UncertainTea.BackendLaplaceChoicePlanStep
     @test laplace_unconstrained ≈ laplace_params atol=1e-8
     @test logjoint(laplace_latent_model, laplace_params, (), laplace_constraints) ≈
-        assess(
-            laplace_latent_model,
-            (),
-            choicemap((:state, laplace_trace[:state]), (:y, 0.35f0)),
-        ) atol=1e-6
+          assess(
+        laplace_latent_model,
+        (),
+        choicemap((:state, laplace_trace[:state]), (:y, 0.35f0)),
+    ) atol=1e-6
 
     @tea static function geometric_probability_model()
         logit ~ normal(0.0f0, 0.6f0)
@@ -69,14 +69,16 @@
 
     @test geometric_backend_report.supported
     @test geometric_backend_plan.steps[3] isa UncertainTea.BackendGeometricChoicePlanStep
-    @test geometric_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            geometric_probability_model,
-            geometric_batch_params[:, index],
-            (),
-            geometric_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+    @test geometric_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                geometric_probability_model,
+                geometric_batch_params[:, index],
+                (),
+                geometric_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(geometric_batch_cache.backend_cache)
     @test isnothing(geometric_batch_cache.flat_cache)
     @test isempty(geometric_batch_cache.column_caches)
@@ -125,14 +127,16 @@
 
     @test negativebinomial_backend_report.supported
     @test negativebinomial_backend_plan.steps[5] isa UncertainTea.BackendNegativeBinomialChoicePlanStep
-    @test negativebinomial_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(
-            negativebinomial_probability_model,
-            negativebinomial_batch_params[:, index],
-            (),
-            negativebinomial_batch_constraints[index],
-        ) for index in 1:3
-    ]...) atol=1e-8
+    @test negativebinomial_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(
+                negativebinomial_probability_model,
+                negativebinomial_batch_params[:, index],
+                (),
+                negativebinomial_batch_constraints[index],
+            ) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(negativebinomial_batch_cache.backend_cache)
     @test isnothing(negativebinomial_batch_cache.flat_cache)
     @test isempty(negativebinomial_batch_cache.column_caches)

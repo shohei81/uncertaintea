@@ -106,7 +106,7 @@
     )
     @test all(integ_valid)
 
-    for index in 1:3
+    for index = 1:3
         column_state = UncertainTea.NUTSState(
             [integ_batch_positions[1, index]],
             [integ_batch_momentum[1, index]],

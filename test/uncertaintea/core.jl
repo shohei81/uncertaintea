@@ -48,8 +48,7 @@ core_test_files = [
     ("masked_batched_nuts.jl", "inference"),
 ]
 
-let registered = Set(first.(core_test_files)),
-    on_disk = Set(f for f in readdir(joinpath(@__DIR__, "core")) if endswith(f, ".jl"))
+let registered = Set(first.(core_test_files)), on_disk = Set(f for f in readdir(joinpath(@__DIR__, "core")) if endswith(f, ".jl"))
 
     unregistered = sort!(collect(setdiff(on_disk, registered)))
     isempty(unregistered) ||

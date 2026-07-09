@@ -34,7 +34,7 @@
     @test mvnormal_reconstrained ≈ mvnormal_params atol=1e-8
     @test mvnormal_choicemap[:state] ≈ mvnormal_params atol=1e-8
     @test logjoint(mvnormal_latent_model, mvnormal_params) ≈
-        assess(mvnormal_latent_model, (), choicemap((:state, mvnormal_trace[:state]))) atol=1e-6
+          assess(mvnormal_latent_model, (), choicemap((:state, mvnormal_trace[:state]))) atol=1e-6
     @test mvnormal_backend_report.supported
     @test isempty(mvnormal_backend_report.issues)
     @test backend_execution_plan(mvnormal_latent_model).steps[1] isa UncertainTea.BackendMvNormalChoicePlanStep
@@ -49,11 +49,13 @@
     mvnormal_batch_cache = BatchedLogjointGradientCache(mvnormal_latent_model, mvnormal_batch_params, (), choicemap())
 
     @test mvnormal_batch_values ≈ [
-        logjoint_unconstrained(mvnormal_latent_model, mvnormal_batch_params[:, index], (), choicemap()) for index in 1:3
+        logjoint_unconstrained(mvnormal_latent_model, mvnormal_batch_params[:, index], (), choicemap()) for index = 1:3
     ] atol=1e-8
-    @test mvnormal_batch_gradient ≈ hcat([
-        logjoint_gradient_unconstrained(mvnormal_latent_model, mvnormal_batch_params[:, index], (), choicemap()) for index in 1:3
-    ]...) atol=1e-8
+    @test mvnormal_batch_gradient ≈ hcat(
+        [
+            logjoint_gradient_unconstrained(mvnormal_latent_model, mvnormal_batch_params[:, index], (), choicemap()) for index = 1:3
+        ]...,
+    ) atol=1e-8
     @test !isnothing(mvnormal_batch_cache.backend_cache)
     @test isnothing(mvnormal_batch_cache.flat_cache)
     @test isempty(mvnormal_batch_cache.column_caches)

@@ -227,7 +227,8 @@ function _initialize_batched_nuts_first_step!(
         workspace.continuation_candidate_log_weight[chain_index],
     )
     workspace.continuation_select_proposal[chain_index] =
-        log(rand(rng)) < workspace.continuation_candidate_log_weight[chain_index] -
+        log(rand(rng)) <
+        workspace.continuation_candidate_log_weight[chain_index] -
         workspace.continuation_combined_log_weight[chain_index]
     moved = workspace.continuation_select_proposal[chain_index]
     if moved
@@ -308,7 +309,7 @@ function _batched_is_turning!(
     length(active) == num_chains ||
         throw(DimensionMismatch("expected active mask of length $num_chains, got $(length(active))"))
 
-    for chain_index in 1:num_chains
+    for chain_index = 1:num_chains
         if !active[chain_index]
             destination[chain_index] = false
             continue
@@ -330,7 +331,11 @@ function _merge_batched_nuts_continuation_frontiers!(
     active::AbstractVector{Bool},
 )
     length(active) == size(workspace.left_position, 2) ||
-        throw(DimensionMismatch("expected continuation-frontier active mask of length $(size(workspace.left_position, 2)), got $(length(active))"))
+        throw(
+            DimensionMismatch(
+                "expected continuation-frontier active mask of length $(size(workspace.left_position, 2)), got $(length(active))",
+            ),
+        )
     fill!(workspace.subtree_copy_left, false)
     fill!(workspace.subtree_copy_right, false)
     for chain_index in eachindex(active)
@@ -370,7 +375,11 @@ function _initialize_batched_nuts_subtree_states!(
     active::AbstractVector{Bool},
 )
     length(active) == size(workspace.left_position, 2) ||
-        throw(DimensionMismatch("expected subtree-state active mask of length $(size(workspace.left_position, 2)), got $(length(active))"))
+        throw(
+            DimensionMismatch(
+                "expected subtree-state active mask of length $(size(workspace.left_position, 2)), got $(length(active))",
+            ),
+        )
     fill!(workspace.subtree_copy_left, false)
     fill!(workspace.subtree_copy_right, false)
     fill!(workspace.subtree_select_proposal, false)
@@ -555,4 +564,3 @@ function _merge_nuts_subtree_summary!(
     continuation.divergent = summary.divergent
     return continuation
 end
-

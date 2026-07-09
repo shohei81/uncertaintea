@@ -63,7 +63,7 @@
     @test size(dirichlet_vi_samples) == (3, 8)
     @test all(>(0.0), dirichlet_vi_mean)
     @test sum(dirichlet_vi_mean) ≈ 1.0 atol=1e-6
-    for sample_index in 1:size(dirichlet_vi_samples, 2)
+    for sample_index = 1:size(dirichlet_vi_samples, 2)
         @test all(>(0.0), dirichlet_vi_samples[:, sample_index])
         @test sum(dirichlet_vi_samples[:, sample_index]) ≈ 1.0 atol=1e-6
     end
@@ -123,11 +123,11 @@
     @test last(dirichlet_smc.stages).beta_end ≈ 1.0 atol=1e-6
     @test 0.0 < ess(dirichlet_sir.importance) <= 24.0
     @test 0.0 < ess(dirichlet_smc) <= 18.0
-    for sample_index in 1:size(dirichlet_sir.constrained_samples, 2)
+    for sample_index = 1:size(dirichlet_sir.constrained_samples, 2)
         @test all(>(0.0), dirichlet_sir.constrained_samples[:, sample_index])
         @test sum(dirichlet_sir.constrained_samples[:, sample_index]) ≈ 1.0 atol=1e-6
     end
-    for sample_index in 1:size(dirichlet_smc.importance.constrained_particles, 2)
+    for sample_index = 1:size(dirichlet_smc.importance.constrained_particles, 2)
         @test all(>(0.0), dirichlet_smc.importance.constrained_particles[:, sample_index])
         @test sum(dirichlet_smc.importance.constrained_particles[:, sample_index]) ≈ 1.0 atol=1e-6
     end

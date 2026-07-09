@@ -65,9 +65,10 @@ function main()
 
     println("batched_nuts tree strategy benchmark (CPU, 200 warmup + 200 samples)")
     println()
-    header = rpad("config", 24) * rpad("chains", 8) *
-             rpad("hybrid [s]", 12) * rpad("masked [s]", 12) *
-             rpad("masked/hybrid", 15) * "masked grad calls/iter (est)"
+    header =
+        rpad("config", 24) * rpad("chains", 8) *
+        rpad("hybrid [s]", 12) * rpad("masked [s]", 12) *
+        rpad("masked/hybrid", 15) * "masked grad calls/iter (est)"
     println(header)
     println(repeat("-", length(header)))
 

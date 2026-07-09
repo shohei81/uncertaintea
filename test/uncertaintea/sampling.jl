@@ -445,7 +445,7 @@
     @test acceptancerate(gaussian_summary) == acceptancerate(gaussian_multichain)
     @test divergencerate(gaussian_summary) == divergencerate(gaussian_multichain)
     @test gaussian_summary.diagnostics.mean_step_size ≈
-        sum(chain.step_size for chain in gaussian_multichain) / nchains(gaussian_multichain) atol=1e-8
+          sum(chain.step_size for chain in gaussian_multichain) / nchains(gaussian_multichain) atol=1e-8
     @test length(gaussian_summary.diagnostics.step_sizes) == nchains(gaussian_multichain)
     @test length(massadaptationwindows(gaussian_summary)) == 1
     @test massadaptationwindows(gaussian_summary)[1] isa HMCMassAdaptationSummary
@@ -478,7 +478,7 @@
     @test gaussian_summary[1].mean ≈ gaussian_summary_unconstrained[1].mean atol=1e-8
     @test length(massadaptationwindows(gaussian_summary_unconstrained)) == 1
     @test gaussian_multichain[1].unconstrained_samples[:, 1] ==
-        gaussian_multichain_replay[1].unconstrained_samples[:, 1]
+          gaussian_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_multichain[1].accepted == gaussian_multichain_replay[1].accepted
     @test gaussian_multichain[1].unconstrained_samples[:, 1] != gaussian_multichain[2].unconstrained_samples[:, 1]
     @test nchains(gaussian_nuts_multichain) == 3
@@ -486,7 +486,9 @@
     @test all(chain.sampler == :nuts for chain in gaussian_nuts_multichain)
     @test all(length(treedepths(chain)) == 50 for chain in gaussian_nuts_multichain)
     @test all(all(1 <= depth <= chain.max_tree_depth for depth in treedepths(chain)) for chain in gaussian_nuts_multichain)
-    @test all(all(1 <= steps <= (2 ^ chain.max_tree_depth - 1) for steps in integrationsteps(chain)) for chain in gaussian_nuts_multichain)
+    @test all(
+        all(1 <= steps <= (2 ^ chain.max_tree_depth - 1) for steps in integrationsteps(chain)) for chain in gaussian_nuts_multichain
+    )
     @test length(gaussian_nuts_rhat) == 1
     @test length(gaussian_nuts_ess) == 1
     @test isfinite(gaussian_nuts_rhat[1])
@@ -498,7 +500,7 @@
     @test acceptancerate(gaussian_nuts_summary) == acceptancerate(gaussian_nuts_multichain)
     @test divergencerate(gaussian_nuts_summary) == divergencerate(gaussian_nuts_multichain)
     @test gaussian_nuts_multichain[1].unconstrained_samples[:, 1] ==
-        gaussian_nuts_multichain_replay[1].unconstrained_samples[:, 1]
+          gaussian_nuts_multichain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_nuts_multichain[1].tree_depths == gaussian_nuts_multichain_replay[1].tree_depths
     @test nchains(gaussian_batched_chain) == 3
     @test numsamples(gaussian_batched_chain) == 40
@@ -530,14 +532,16 @@
     @test massadaptationwindows(gaussian_batched_summary)[1].window_length == 10
     @test massadaptationwindows(gaussian_batched_summary)[1].num_updated == 3
     @test occursin("window 1 [6:15]", repr(MIME"text/plain"(), gaussian_batched_summary))
-    @test !(isapprox(gaussian_batched_chain[1].step_size, gaussian_batched_baseline_chain[1].step_size; atol=1e-8) &&
-        isapprox(gaussian_batched_chain[1].mass_matrix[1], gaussian_batched_baseline_chain[1].mass_matrix[1]; atol=1e-8))
+    @test !(
+        isapprox(gaussian_batched_chain[1].step_size, gaussian_batched_baseline_chain[1].step_size; atol=1e-8) &&
+        isapprox(gaussian_batched_chain[1].mass_matrix[1], gaussian_batched_baseline_chain[1].mass_matrix[1]; atol=1e-8)
+    )
     @test 0.0 <= acceptancerate(gaussian_batched_chain) <= 1.0
     @test 0.0 <= divergencerate(gaussian_batched_chain) <= 1.0
     @test length(gaussian_batched_rhat) == 1
     @test isfinite(gaussian_batched_rhat[1])
     @test gaussian_batched_chain[1].unconstrained_samples[:, 1] ==
-        gaussian_batched_chain_replay[1].unconstrained_samples[:, 1]
+          gaussian_batched_chain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_batched_chain[1].accepted == gaussian_batched_chain_replay[1].accepted
     @test nchains(gaussian_batched_nuts_chain) == 3
     @test numsamples(gaussian_batched_nuts_chain) == 24
@@ -548,13 +552,16 @@
     @test all(chain.mass_matrix[1] > 0 for chain in gaussian_batched_nuts_chain)
     @test all(length(massadaptationwindows(chain)) == 1 for chain in gaussian_batched_nuts_chain)
     @test all(all(1 <= depth <= chain.max_tree_depth for depth in treedepths(chain)) for chain in gaussian_batched_nuts_chain)
-    @test all(all(1 <= steps <= (2 ^ chain.max_tree_depth - 1) for steps in integrationsteps(chain)) for chain in gaussian_batched_nuts_chain)
+    @test all(
+        all(1 <= steps <= (2 ^ chain.max_tree_depth - 1) for steps in integrationsteps(chain)) for
+        chain in gaussian_batched_nuts_chain
+    )
     @test acceptancerate(gaussian_batched_nuts_summary) == acceptancerate(gaussian_batched_nuts_chain)
     @test divergencerate(gaussian_batched_nuts_summary) == divergencerate(gaussian_batched_nuts_chain)
     @test length(massadaptationwindows(gaussian_batched_nuts_summary)) == 1
     @test massadaptationwindows(gaussian_batched_nuts_summary)[1].chains == 3
     @test gaussian_batched_nuts_chain[1].unconstrained_samples[:, 1] ==
-        gaussian_batched_nuts_chain_replay[1].unconstrained_samples[:, 1]
+          gaussian_batched_nuts_chain_replay[1].unconstrained_samples[:, 1]
     @test gaussian_batched_nuts_chain[1].tree_depths == gaussian_batched_nuts_chain_replay[1].tree_depths
     @test nchains(gaussian_batched_nuts_one_step_chain) == 3
     @test numsamples(gaussian_batched_nuts_one_step_chain) == 16
@@ -567,27 +574,29 @@
     @test 0.0 <= acceptancerate(gaussian_batched_nuts_one_step_chain) <= 1.0
     @test 0.0 <= divergencerate(gaussian_batched_nuts_one_step_chain) <= 1.0
     @test gaussian_batched_nuts_one_step_chain[1].unconstrained_samples ==
-        gaussian_batched_nuts_one_step_chain_replay[1].unconstrained_samples
+          gaussian_batched_nuts_one_step_chain_replay[1].unconstrained_samples
     @test gaussian_batched_nuts_one_step_chain[1].accepted ==
-        gaussian_batched_nuts_one_step_chain_replay[1].accepted
+          gaussian_batched_nuts_one_step_chain_replay[1].accepted
     @test gaussian_batched_nuts_one_step_chain[1].tree_depths ==
-        gaussian_batched_nuts_one_step_chain_replay[1].tree_depths
+          gaussian_batched_nuts_one_step_chain_replay[1].tree_depths
     @test nchains(iid_batched_chain) == 2
     @test numsamples(iid_batched_chain) == 24
     @test iid_batched_chain.args == iid_batch_args
     @test length(iid_batched_chain.constraints) == 2
     @test iid_batched_chain[1].args == iid_batch_args[1]
-    @test iid_batched_chain[2].constraints[:y => 3] == iid_batch_constraints[2][:y => 3]
+    @test iid_batched_chain[2].constraints[:y=>3] == iid_batch_constraints[2][:y=>3]
     @test all(all(isfinite, chain.logjoint_values) for chain in iid_batched_chain)
     @test all(gaussian_divergent_chain.divergent)
     @test divergencerate(gaussian_divergent_chain) == 1.0
     @test all(isfinite, gaussian_divergent_chain.energies)
     @test maximum(abs, gaussian_divergent_chain.energy_errors) > 1.0
-    @test !(isapprox(gaussian_chain.step_size, gaussian_baseline_chain.step_size; atol=1e-8) &&
-        isapprox(gaussian_chain.mass_matrix[1], gaussian_baseline_chain.mass_matrix[1]; atol=1e-8))
+    @test !(
+        isapprox(gaussian_chain.step_size, gaussian_baseline_chain.step_size; atol=1e-8) &&
+        isapprox(gaussian_chain.mass_matrix[1], gaussian_baseline_chain.mass_matrix[1]; atol=1e-8)
+    )
     @test abs(gaussian_chain_mean - 0.15) < 0.2
     @test gaussian_chain.logjoint_values[1] ≈
-        logjoint_unconstrained(gaussian_mean, gaussian_chain.unconstrained_samples[:, 1], (), constraints) atol=1e-6
+          logjoint_unconstrained(gaussian_mean, gaussian_chain.unconstrained_samples[:, 1], (), constraints) atol=1e-6
 
     positive_chain = hmc(
         observed_positive_step,
@@ -629,8 +638,8 @@
     @test numsamples(positive_batched_chain) == 30
     @test all(all(x -> x > 0, chain.constrained_samples) for chain in positive_batched_chain)
     @test all(chain.mass_matrix[1] > 0 for chain in positive_batched_chain)
-    @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state => :sigma] ==
-        positive_chain.constrained_samples[1, 1]
+    @test parameterchoicemap(observed_positive_step, positive_chain.constrained_samples[:, 1])[:state=>:sigma] ==
+          positive_chain.constrained_samples[1, 1]
 
     @tea static function observed_only()
         {:y} ~ bernoulli(0.5f0)

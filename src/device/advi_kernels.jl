@@ -27,7 +27,7 @@
     mean_gradient = zero(eltype(location_gradient))
     mean_scale_gradient = zero(eltype(scale_gradient))
     s = @inbounds scale[p]
-    for j in 1:num_particles
+    for j = 1:num_particles
         g = @inbounds grad[p, j]
         mean_gradient += g
         mean_scale_gradient += g * s * @inbounds(noise[p, j])
@@ -116,11 +116,11 @@ function _run_device_batched_advi(
     adam_epsilon_f64 = Float64(adam_epsilon)
     gradient_clip_f64 = Float64(gradient_clip)
 
-    for iteration in 1:num_steps
+    for iteration = 1:num_steps
         _draw_gaussian_particles!(particles, noise, location, log_scale, rng)
         particles_upload .= particles
         noise_upload .= noise
-        for parameter_index in 1:parameter_total
+        for parameter_index = 1:parameter_total
             scale_upload[parameter_index] = convert(T, exp(log_scale[parameter_index]))
         end
         copyto!(inner.params_device, particles_upload)
@@ -142,13 +142,13 @@ function _run_device_batched_advi(
         copyto!(values_download, inner.totals_device)
         copyto!(location_gradient_download, location_gradient_device)
         copyto!(scale_gradient_download, scale_gradient_device)
-        for particle_index in 1:num_particles
+        for particle_index = 1:num_particles
             values[particle_index] = Float64(values_download[particle_index])
         end
         all(isfinite, values) ||
             throw(ArgumentError("batched_advi encountered only non-finite unconstrained logjoint values or gradients"))
 
-        for parameter_index in 1:parameter_total
+        for parameter_index = 1:parameter_total
             location_gradient[parameter_index] = Float64(location_gradient_download[parameter_index])
             log_scale_gradient[parameter_index] = 1.0 + Float64(scale_gradient_download[parameter_index])
         end
@@ -157,7 +157,7 @@ function _run_device_batched_advi(
             location_gradient, log_scale_gradient, gradient_clip_f64,
         )
         elbo_total = 0.0
-        for particle_index in 1:num_particles
+        for particle_index = 1:num_particles
             elbo_total += values[particle_index]
         end
         elbo = elbo_total / num_particles + _gaussian_entropy(log_scale)

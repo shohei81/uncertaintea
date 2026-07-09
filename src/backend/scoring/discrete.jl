@@ -53,7 +53,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
@@ -86,7 +86,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(lambda_values, env, step.lambda, 2)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         lambda = lambda_values[batch_index]
         totals[batch_index] += _backend_poisson_logpdf(lambda, value)
@@ -116,7 +116,7 @@ function _score_backend_observed_loop_choice!(
     observed_values = env.observed_values
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_bernoulli_logpdf(probability, value)
@@ -136,7 +136,7 @@ function _score_backend_observed_loop_choice!(
     observed_values = env.observed_values
     _eval_backend_numeric_expr!(lambda_values, env, step.lambda, 2)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         lambda = lambda_values[batch_index]
         totals[batch_index] += _backend_poisson_logpdf(lambda, value)
@@ -282,7 +282,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         probability = probability_values[batch_index]
         totals[batch_index] += _backend_geometric_logpdf(probability, value)
@@ -318,7 +318,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 4)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         successes = successes_values[batch_index]
         probability = probability_values[batch_index]
@@ -355,7 +355,7 @@ function _score_backend_step!(
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         trials = trials_values[batch_index]
         probability = probability_values[batch_index]
@@ -392,7 +392,7 @@ function _score_backend_step!(
     end
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
     _batched_choice_numeric_values!(choice_values, step.parameter_slot, params, constraints, address_parts)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = choice_values[batch_index]
         probabilities = map(values -> values[batch_index], probability_values)
         totals[batch_index] += _backend_categorical_logpdf(probabilities, value)
@@ -426,7 +426,7 @@ function _score_backend_observed_loop_choice!(
     observed_values = env.observed_values
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         totals[batch_index] += _backend_geometric_logpdf(probability_values[batch_index], observed_values[batch_index])
     end
     return totals
@@ -446,7 +446,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_numeric_expr!(successes_values, env, step.successes, 3)
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 4)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         totals[batch_index] += _backend_negativebinomial_logpdf(
             successes_values[batch_index],
             probability_values[batch_index],
@@ -470,7 +470,7 @@ function _score_backend_observed_loop_choice!(
     _eval_backend_index_value_expr!(trials_values, env, step.trials, 2)
     _eval_backend_numeric_expr!(probability_values, env, step.probability, 2)
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         trials = trials_values[batch_index]
         probability = probability_values[batch_index]
@@ -493,7 +493,7 @@ function _score_backend_observed_loop_choice!(
         _eval_backend_numeric_expr!(probability_values[index], env, probability, length(step.probabilities) + index)
     end
     _batched_observed_choice_values!(observed_values, constraints, address)
-    for batch_index in 1:env.batch_size
+    for batch_index = 1:env.batch_size
         value = observed_values[batch_index]
         probabilities = map(values -> values[batch_index], probability_values)
         totals[batch_index] += _backend_categorical_logpdf(probabilities, value)

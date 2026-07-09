@@ -54,11 +54,11 @@
     @test length(dirichlet_smc.ancestor_history) == count(stage -> stage.resampled, dirichlet_smc.stages)
     @test first(dirichlet_smc.stages).beta_start == 0.0
     @test last(dirichlet_smc.stages).beta_end ≈ 1.0 atol=1e-6
-    for (previous_stage, next_stage) in zip(dirichlet_smc.stages[1:end-1], dirichlet_smc.stages[2:end])
+    for (previous_stage, next_stage) in zip(dirichlet_smc.stages[1:(end-1)], dirichlet_smc.stages[2:end])
         @test previous_stage.beta_end <= next_stage.beta_start + 1e-12
         @test next_stage.beta_end >= next_stage.beta_start
     end
-    for stage in dirichlet_smc.stages[1:end-1]
+    for stage in dirichlet_smc.stages[1:(end-1)]
         @test stage.resampled
         @test stage.move_kernel == :random_walk
         @test stage.effective_sample_size >= 0.95 * 24 - 1e-4
@@ -70,7 +70,7 @@
         @test length(ancestors) == 24
         @test all(1 .<= ancestors .<= 24)
     end
-    for particle_index in 1:size(dirichlet_smc.importance.constrained_particles, 2)
+    for particle_index = 1:size(dirichlet_smc.importance.constrained_particles, 2)
         @test all(>(0.0), dirichlet_smc.importance.constrained_particles[:, particle_index])
         @test sum(dirichlet_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
     end
@@ -95,13 +95,13 @@
     @test numstages(dirichlet_hmc_smc) >= 2
     @test last(dirichlet_hmc_smc.stages).beta_end ≈ 1.0 atol=1e-6
     @test length(dirichlet_hmc_smc.ancestor_history) == count(stage -> stage.resampled, dirichlet_hmc_smc.stages)
-    for stage in dirichlet_hmc_smc.stages[1:end-1]
+    for stage in dirichlet_hmc_smc.stages[1:(end-1)]
         @test stage.move_kernel == :hmc
         @test stage.move_steps == 1
         @test 0.0 <= stage.move_acceptance_rate <= 1.0
     end
     @test any(stage.move_acceptance_rate > 0.0 for stage in dirichlet_hmc_smc.stages if stage.move_steps > 0)
-    for particle_index in 1:size(dirichlet_hmc_smc.importance.constrained_particles, 2)
+    for particle_index = 1:size(dirichlet_hmc_smc.importance.constrained_particles, 2)
         @test all(>(0.0), dirichlet_hmc_smc.importance.constrained_particles[:, particle_index])
         @test sum(dirichlet_hmc_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
     end
@@ -127,13 +127,13 @@
     @test numstages(dirichlet_nuts_smc) >= 2
     @test last(dirichlet_nuts_smc.stages).beta_end ≈ 1.0 atol=1e-6
     @test length(dirichlet_nuts_smc.ancestor_history) == count(stage -> stage.resampled, dirichlet_nuts_smc.stages)
-    for stage in dirichlet_nuts_smc.stages[1:end-1]
+    for stage in dirichlet_nuts_smc.stages[1:(end-1)]
         @test stage.move_kernel == :nuts
         @test stage.move_steps == 1
         @test 0.0 <= stage.move_acceptance_rate <= 1.0
     end
     @test any(stage.move_acceptance_rate > 0.0 for stage in dirichlet_nuts_smc.stages if stage.move_steps > 0)
-    for particle_index in 1:size(dirichlet_nuts_smc.importance.constrained_particles, 2)
+    for particle_index = 1:size(dirichlet_nuts_smc.importance.constrained_particles, 2)
         @test all(>(0.0), dirichlet_nuts_smc.importance.constrained_particles[:, particle_index])
         @test sum(dirichlet_nuts_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
     end
@@ -162,12 +162,12 @@
         stage.move_acceptance_rate > 0.0 for
         stage in dirichlet_nuts_one_step_smc.stages if stage.move_steps > 0
     )
-    for stage in dirichlet_nuts_one_step_smc.stages[1:end-1]
+    for stage in dirichlet_nuts_one_step_smc.stages[1:(end-1)]
         @test stage.move_kernel == :nuts
         @test stage.move_steps == 1
         @test 0.0 <= stage.move_acceptance_rate <= 1.0
     end
-    for particle_index in 1:size(dirichlet_nuts_one_step_smc.importance.constrained_particles, 2)
+    for particle_index = 1:size(dirichlet_nuts_one_step_smc.importance.constrained_particles, 2)
         @test all(>(0.0), dirichlet_nuts_one_step_smc.importance.constrained_particles[:, particle_index])
         @test sum(dirichlet_nuts_one_step_smc.importance.constrained_particles[:, particle_index]) ≈ 1.0 atol=1e-6
     end
@@ -400,7 +400,7 @@
     @test numstages(dirichlet_nuts_deep_smc) >= 2
     @test last(dirichlet_nuts_deep_smc.stages).beta_end ≈ 1.0 atol=1e-6
     @test any(stage.move_acceptance_rate > 0.0 for stage in dirichlet_nuts_deep_smc.stages if stage.move_steps > 0)
-    for stage in dirichlet_nuts_deep_smc.stages[1:end-1]
+    for stage in dirichlet_nuts_deep_smc.stages[1:(end-1)]
         @test stage.move_kernel == :nuts
         @test stage.move_steps == 1
         @test 0.0 <= stage.move_acceptance_rate <= 1.0

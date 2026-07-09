@@ -28,18 +28,21 @@ export batched_logjoint, batched_logjoint_unconstrained, batched_logjoint_gradie
 export BatchedLogjointGradientCache, batched_logjoint_gradient_unconstrained!
 export initialparameters, parameter_vector, parameterchoicemap
 export transform_to_constrained, transform_to_unconstrained, transform_to_constrained_with_logabsdet
-export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSummary, HMCDiagnosticsSummary, HMCParameterSummary, HMCSummary, SamplerWarnings
+export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSummary, HMCDiagnosticsSummary, HMCParameterSummary,
+    HMCSummary, SamplerWarnings
 export ADVIResult, ImportanceSamplingResult, SIRResult, SMCStageSummary, SMCResult
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts, batched_advi
 export batched_importance_sampling, batched_sir, batched_smc
-export acceptancerate, divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
+export acceptancerate,
+    divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
 export check_diagnostics, has_warnings
 export posterior_array, parameter_names, to_arviz_dict, to_mcmcchains
 export pointwise_loglikelihood, observation_addresses, waic, psis_loo, loo, WAICResult, LOOResult
 export map_estimate, laplace_approximation, MAPResult, LaplaceResult
 export variational_mean, variational_samples
 export predict, PredictiveDraws, addresses, log_evidence
-export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric, negativebinomial, poisson, studentt, categorical
+export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric,
+    negativebinomial, poisson, studentt, categorical
 export truncatednormal, truncatedstudentt
 export mixture
 export mvnormaldense

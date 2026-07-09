@@ -239,13 +239,14 @@ function _accumulate_studentt_gradient!(
         dvalue = -((nu + 1) * z) / (sigma * denominator)
         dmu = -dvalue
         dsigma = nu * (z * z - one(T)) / (sigma * denominator)
-        dnu = T(0.5) * (
-            digamma((nu + 1) / 2) -
-            digamma(nu / 2) -
-            1 / nu -
-            log1p((z * z) / nu) +
-            ((nu + 1) * z * z) / (nu * denominator)
-        )
+        dnu =
+            T(0.5) * (
+                digamma((nu + 1) / 2) -
+                digamma(nu / 2) -
+                1 / nu -
+                log1p((z * z) / nu) +
+                ((nu + 1) * z * z) / (nu * denominator)
+            )
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] +=
                 dvalue * value_gradients[parameter_index, batch_index] +
@@ -278,8 +279,18 @@ function _score_backend_step_and_gradient!(
     _fill_choice_gradient!(value_gradients, step.parameter_slot)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 5)
-    _accumulate_normal_gradient!(totals, gradients, value_values, value_gradients, mu_values, mu_gradients, sigma_values, sigma_gradients)
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    _accumulate_normal_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        mu_values,
+        mu_gradients,
+        sigma_values,
+        sigma_gradients,
+    )
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -304,8 +315,18 @@ function _score_backend_step_and_gradient!(
     _fill_choice_gradient!(value_gradients, step.parameter_slot)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 5)
-    _accumulate_lognormal_gradient!(totals, gradients, value_values, value_gradients, mu_values, mu_gradients, sigma_values, sigma_gradients)
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    _accumulate_lognormal_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        mu_values,
+        mu_gradients,
+        sigma_values,
+        sigma_gradients,
+    )
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -328,7 +349,8 @@ function _score_backend_step_and_gradient!(
     _fill_choice_gradient!(value_gradients, step.parameter_slot)
     _eval_backend_numeric_expr_and_gradient!(rate_values, rate_gradients, cache, env, step.rate, 3)
     _accumulate_exponential_gradient!(totals, gradients, value_values, value_gradients, rate_values, rate_gradients)
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -363,7 +385,8 @@ function _score_backend_step_and_gradient!(
         rate_values,
         rate_gradients,
     )
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -398,7 +421,8 @@ function _score_backend_step_and_gradient!(
         scale_values,
         scale_gradients,
     )
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -433,7 +457,8 @@ function _score_backend_step_and_gradient!(
         scale_values,
         scale_gradients,
     )
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -468,7 +493,8 @@ function _score_backend_step_and_gradient!(
         beta_values,
         beta_gradients,
     )
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 
@@ -508,7 +534,8 @@ function _score_backend_step_and_gradient!(
         sigma_values,
         sigma_gradients,
     )
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
 function _accumulate_laplace_gradient!(
@@ -562,7 +589,17 @@ function _score_backend_step_and_gradient!(
     _fill_choice_gradient!(value_gradients, step.parameter_slot)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(scale_values, scale_gradients, cache, env, step.scale, 5)
-    _accumulate_laplace_gradient!(totals, gradients, value_values, value_gradients, mu_values, mu_gradients, scale_values, scale_gradients)
-    isnothing(step.binding_slot) || _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
+    _accumulate_laplace_gradient!(
+        totals,
+        gradients,
+        value_values,
+        value_gradients,
+        mu_values,
+        mu_gradients,
+        scale_values,
+        scale_gradients,
+    )
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_value!(env, cache.slot_gradients, step.binding_slot, value_values, value_gradients)
     return totals, gradients
 end
