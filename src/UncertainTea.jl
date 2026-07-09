@@ -40,7 +40,7 @@ export posterior_array, parameter_names, to_arviz_dict, to_mcmcchains
 export pointwise_loglikelihood, observation_addresses, waic, psis_loo, loo, WAICResult, LOOResult
 export sbc, SBCResult
 export map_estimate, laplace_approximation, MAPResult, LaplaceResult
-export variational_mean, variational_samples
+export variational_mean, variational_samples, variational_covariance
 export predict, PredictiveDraws, addresses, log_evidence
 export normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, dirichlet, mvnormal, bernoulli, geometric,
     negativebinomial, poisson, studentt, categorical
