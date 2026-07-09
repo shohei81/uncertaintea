@@ -258,6 +258,11 @@ end
     @testset "ncc_device_parity" begin
         supported, _ = device_lowering_report(ncc_funnel_flagged)
         @test supported
+        # model-argument-referencing distribution expressions read
+        # uninitialized device slots (issue #38): honestly rejected for now
+        arg_supported, arg_issues = device_lowering_report(ncc_arg_model)
+        @test !arg_supported
+        @test any(occursin("issue #38", issue) for issue in arg_issues)
         points = [0.3 -0.5; 0.9 0.2]
         device_values, device_gradients = device_batched_logjoint_gradient(
             ncc_funnel_flagged,

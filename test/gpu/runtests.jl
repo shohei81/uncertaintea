@@ -185,6 +185,11 @@ end
 end
 
 @testset "device Metal GPU noncentered normal parity" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU smoke test."
+        @test true
+        return
+    end
     constraints = choicemap((:y, 0.5))
     points = Float64[0.3 -0.5; 0.9 0.2]
     supported, _ = device_lowering_report(gpu_noncentered_funnel)
