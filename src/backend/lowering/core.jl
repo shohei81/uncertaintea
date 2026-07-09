@@ -1,3 +1,5 @@
+# Lowering of static models to the backend expression IR: shared machinery.
+
 const GPU_BACKEND_SUPPORTED_PRIMITIVES = Symbol[
     Symbol(":"),
     Symbol("=>"),
@@ -15,30 +17,6 @@ const GPU_BACKEND_SUPPORTED_PRIMITIVES = Symbol[
     :min,
     :max,
     :clamp,
-]
-
-const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
-    :normal,
-    :lognormal,
-    :laplace,
-    :exponential,
-    :gamma,
-    :inversegamma,
-    :weibull,
-    :beta,
-    :dirichlet,
-    :bernoulli,
-    :binomial,
-    :geometric,
-    :negativebinomial,
-    :poisson,
-    :studentt,
-    :categorical,
-    :mvnormal,
-    :truncatednormal,
-    :truncatedstudentt,
-    :mixture,
-    :mvnormaldense,
 ]
 
 abstract type AbstractBackendExpr end
@@ -77,84 +55,6 @@ end
 
 struct BackendAddressSpec{P<:Tuple}
     parts::P
-end
-
-struct BackendNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
-       BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    mu::M
-    sigma::S
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendLognormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
-       BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    mu::M
-    sigma::S
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendExponentialChoicePlanStep{R<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    rate::R
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendGammaChoicePlanStep{SH<:AbstractBackendExpr,R<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
-       BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    shape::SH
-    rate::R
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendBetaChoicePlanStep{A<:AbstractBackendExpr,B<:AbstractBackendExpr,AD<:BackendAddressSpec} <:
-       BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    alpha::A
-    beta::B
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendBernoulliChoicePlanStep{P<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    probability::P
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendCategoricalChoicePlanStep{P<:Tuple,AD<:BackendAddressSpec} <: BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    probabilities::P
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendPoissonChoicePlanStep{L<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    lambda::L
-    parameter_slot::Union{Nothing,Int}
-end
-
-struct BackendStudentTChoicePlanStep{
-    N<:AbstractBackendExpr,
-    M<:AbstractBackendExpr,
-    S<:AbstractBackendExpr,
-    AD<:BackendAddressSpec,
-} <: BackendChoicePlanStep
-    binding_slot::Union{Nothing,Int}
-    address::AD
-    nu::N
-    mu::M
-    sigma::S
-    parameter_slot::Union{Nothing,Int}
 end
 
 struct BackendDeterministicPlanStep{E<:AbstractBackendExpr} <: AbstractBackendPlanStep
@@ -755,122 +655,6 @@ function _mark_backend_choice_address_slots!(
 end
 
 function _collect_backend_slot_kinds!(
-    step::BackendNormalChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendLognormalChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendExponentialChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.rate, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendGammaChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.shape, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.rate, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendBetaChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.alpha, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.beta, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendBernoulliChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.probability, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendCategoricalChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    for probability in step.probabilities
-        _mark_backend_numeric_expr_slots!(probability, numeric_slots, index_slots, generic_slots)
-    end
-    isnothing(step.binding_slot) || _mark_backend_index_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendPoissonChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.lambda, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
-    step::BackendStudentTChoicePlanStep,
-    numeric_slots::BitVector,
-    index_slots::BitVector,
-    generic_slots::BitVector,
-)
-    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.nu, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.mu, numeric_slots, index_slots, generic_slots)
-    _mark_backend_numeric_expr_slots!(step.sigma, numeric_slots, index_slots, generic_slots)
-    isnothing(step.binding_slot) || _mark_backend_numeric_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
-    return nothing
-end
-
-function _collect_backend_slot_kinds!(
     step::BackendDeterministicPlanStep,
     numeric_slots::BitVector,
     index_slots::BitVector,
@@ -996,4 +780,14 @@ function backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
         ArgumentError("model $(model.name) is not supported for $(target) backend lowering; see backend_report(model)"),
     )
     return result.plan
+end
+
+# Lower a truncated-family bound expression. Static bounds (numeric literals and
+# `Inf`/`-Inf`, which arrive as the symbol `:Inf` in the captured AST) become
+# literal backend expressions; anything else (a latent-flowing bound) reuses the
+# standard numeric lowering.
+function _backend_lower_bound_expr(model::TeaModel, layout::EnvironmentLayout, expr, issues::Vector{String}, context::String)
+    static_value = _static_bound_value(expr)
+    isnothing(static_value) || return BackendLiteralExpr(float(static_value))
+    return _backend_lower_expr(model, layout, expr, issues, context)
 end
