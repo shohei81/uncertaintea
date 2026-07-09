@@ -58,13 +58,27 @@ function _lbfgs_dense_inverse_hessian(
     return covariance
 end
 
-# One candidate Gaussian per accepted L-BFGS iterate.
+# One candidate Gaussian per accepted L-BFGS iterate. `elbo` is -Inf whenever
+# any ELBO draw hit a non-finite log joint (the exact ELBO of a Gaussian with
+# mass outside the target support); `finite_elbo`/`finite_fraction` keep the
+# average over the finite draws as a tie-breaker when every candidate leaks.
 struct _PathfinderCandidate
     location::Vector{Float64}
     covariance::Matrix{Float64}
     cholesky_lower::Matrix{Float64}
     logdet_covariance::Float64
     elbo::Float64
+    finite_elbo::Float64
+    finite_fraction::Float64
+end
+
+function _pathfinder_gaussian_logdensity(candidate::_PathfinderCandidate, point::AbstractVector)
+    dim = length(candidate.location)
+    standardized = candidate.location .- point
+    standardized .*= -1.0
+    ldiv!(LowerTriangular(candidate.cholesky_lower), standardized)
+    return -0.5 *
+           (candidate.logdet_covariance + dot(standardized, standardized) + dim * log(2.0 * pi))
 end
 
 function _pathfinder_candidate(
@@ -103,12 +117,17 @@ function _pathfinder_candidate(
         elbo_count += 1
     end
     elbo_count > 0 || return nothing
+    finite_elbo = elbo_total / elbo_count
+    # a draw outside the target support makes the exact ELBO -Inf
+    elbo = elbo_count == num_elbo_draws ? finite_elbo : -Inf
     return _PathfinderCandidate(
         location,
         covariance,
         cholesky_lower,
         logdet_covariance,
-        elbo_total / elbo_count,
+        elbo,
+        finite_elbo,
+        elbo_count / num_elbo_draws,
     )
 end
 
@@ -168,7 +187,10 @@ function _pathfinder_single_path(
         push!(candidates, candidate)
         push!(elbo_history, candidate.elbo)
     end
-    best = argmax([candidate.elbo for candidate in candidates])
+    best = argmax([
+        (isfinite(candidate.elbo), candidate.finite_fraction, candidate.finite_elbo) for
+        candidate in candidates
+    ])
     return candidates[best], elbo_history, converged
 end
 
@@ -203,8 +225,9 @@ the posterior mode in unconstrained space, every accepted iterate yields a
 Gaussian approximation built from the L-BFGS inverse-Hessian estimate, and a
 Monte Carlo ELBO selects the best one. With `num_paths > 1`, the paths start
 from independent prior initializations and the returned `draws` pool the
-per-path draws by importance resampling (raw importance weights -- Pareto
-smoothing is a possible refinement).
+per-path draws by importance resampling against the equal mixture of the
+path Gaussians (Pareto smoothing of the weights is a possible refinement).
+Every returned draw has a finite log joint.
 
 The result can be passed directly as `initial_params` to `hmc`/`nuts`/
 `nuts_chains`/`batched_hmc`/`batched_nuts`, which then start each chain from
@@ -269,28 +292,63 @@ function pathfinder(
 
     draws = Matrix{Float64}(undef, dim, num_draws)
     if length(path_candidates) == 1
-        log_density = Vector{Float64}(undef, num_draws)
-        _pathfinder_gaussian_draws!(draws, log_density, best, rng)
+        # rejection-filter so every returned draw has a finite log joint (the
+        # best Gaussian may still carry a little mass outside the support)
+        noise = Vector{Float64}(undef, dim)
+        filled = 0
+        attempts = 0
+        max_attempts = 200 * num_draws
+        while filled < num_draws
+            attempts += 1
+            attempts <= max_attempts || throw(
+                ErrorException(
+                    "pathfinder could not draw $num_draws points with a finite log joint; " *
+                    "the selected Gaussian lies mostly outside the target support",
+                ),
+            )
+            randn!(rng, noise)
+            column = view(draws, :, filled + 1)
+            copyto!(column, best.location)
+            mul!(column, best.cholesky_lower, noise, 1.0, 1.0)
+            isfinite(objective(column)) || continue
+            filled += 1
+        end
     else
-        # importance-resample the pooled per-path draws toward the target
+        # importance-resample pooled per-path draws toward the target; the
+        # proposal is the equal mixture of the path Gaussians, so the weight
+        # denominator is the mixture density, not the generating component's
         per_path = cld(num_draws, length(path_candidates))
         total = per_path * length(path_candidates)
         pooled = Matrix{Float64}(undef, dim, total)
         log_weights = Vector{Float64}(undef, total)
         log_density = Vector{Float64}(undef, per_path)
+        component_log_density = Vector{Float64}(undef, length(path_candidates))
         for (path_index, candidate) in enumerate(path_candidates)
             offset = (path_index - 1) * per_path
             block = view(pooled, :, (offset+1):(offset+per_path))
             _pathfinder_gaussian_draws!(block, log_density, candidate, rng)
-            for j = 1:per_path
-                logp = objective(view(block, :, j))
-                log_weights[offset+j] = isfinite(logp) ? logp - log_density[j] : -Inf
+        end
+        for j = 1:total
+            point = view(pooled, :, j)
+            logp = objective(point)
+            if !isfinite(logp)
+                log_weights[j] = -Inf
+                continue
             end
+            for (candidate_index, candidate) in enumerate(path_candidates)
+                component_log_density[candidate_index] =
+                    _pathfinder_gaussian_logdensity(candidate, point)
+            end
+            max_component = maximum(component_log_density)
+            log_mixture =
+                max_component +
+                log(sum(exp(value - max_component) for value in component_log_density)) -
+                log(length(path_candidates))
+            log_weights[j] = logp - log_mixture
         end
         max_log_weight = maximum(log_weights)
-        isfinite(max_log_weight) || throw(
-            ErrorException("pathfinder importance weights are all non-finite"),
-        )
+        isfinite(max_log_weight) ||
+            throw(ErrorException("pathfinder importance weights are all non-finite"))
         weights = exp.(log_weights .- max_log_weight)
         weights ./= sum(weights)
         cumulative = cumsum(weights)

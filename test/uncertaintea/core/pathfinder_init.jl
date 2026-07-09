@@ -18,6 +18,12 @@ end
     return v
 end
 
+@tea static function pf_leaky_support_model()
+    lo ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(0.0, 1.0, lo, Inf)
+    return lo
+end
+
 @testset "pathfinder_init" begin
     pf_corr_constraints = choicemap((:y, 1.0))
     pf_corr_cov = [5.0 -4.0; -4.0 5.0] ./ 9.0
@@ -95,6 +101,24 @@ end
         )
         @test length(batched.chains) == 3
         @test all(all(isfinite, chain.constrained_samples) for chain in batched.chains)
+    end
+
+    @testset "pf_finite_draws_on_leaky_support" begin
+        # the log joint is -Inf whenever lo > y, so every candidate Gaussian
+        # carries invalid mass; all returned draws must still be usable inits
+        leaky_constraints = choicemap((:y, 0.5))
+        logjoint_at = theta -> logjoint_unconstrained(pf_leaky_support_model, theta, (), leaky_constraints)
+        single = pathfinder(pf_leaky_support_model, (), leaky_constraints; num_draws=80, rng=MersenneTwister(21))
+        @test all(isfinite(logjoint_at(single.draws[:, j])) for j = 1:80)
+        multi = pathfinder(
+            pf_leaky_support_model,
+            (),
+            leaky_constraints;
+            num_paths=3,
+            num_draws=80,
+            rng=MersenneTwister(22),
+        )
+        @test all(isfinite(logjoint_at(multi.draws[:, j])) for j = 1:80)
     end
 
     @testset "pf_validation" begin
