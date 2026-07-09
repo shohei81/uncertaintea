@@ -52,6 +52,10 @@ function _qualify_builtin_distribution(name)
     )
         return _qualify(name)
     end
+    # Registered user families resolve through the registry so the runtime
+    # body works regardless of what the builder is called in the user's module.
+    isnothing(_registered_user_distribution(name)) ||
+        return :($(_qualify(:_distribution_builder))($(QuoteNode(name))))
     return name
 end
 
@@ -213,30 +217,7 @@ function _rhs_spec_expr(rhs)
         end
 
         if callee isa Symbol &&
-           callee in (
-            :normal,
-            :lognormal,
-            :laplace,
-            :exponential,
-            :gamma,
-            :inversegamma,
-            :weibull,
-            :beta,
-            :dirichlet,
-            :bernoulli,
-            :binomial,
-            :geometric,
-            :negativebinomial,
-            :poisson,
-            :studentt,
-            :categorical,
-            :mvnormal,
-            :mvnormaldense,
-            :lkjcholesky,
-            :truncatednormal,
-            :truncatedstudentt,
-            :mixture,
-        )
+           (callee in BUILTIN_DISTRIBUTION_FAMILIES || haskey(USER_DISTRIBUTION_REGISTRY, callee))
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
         end
 

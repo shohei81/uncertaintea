@@ -220,7 +220,7 @@ function _compile_plan_step(
     arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments)...)
     constructor =
         step.rhs isa BroadcastDistributionSpec ?
-        getfield(@__MODULE__, :BroadcastNormalDist) : getfield(@__MODULE__, step.rhs.family)
+        getfield(@__MODULE__, :BroadcastNormalDist) : _distribution_builder(step.rhs.family)
     parameter_value_indices =
         isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
     return CompiledChoicePlanStep(

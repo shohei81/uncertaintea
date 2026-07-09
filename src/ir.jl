@@ -586,6 +586,8 @@ function _parameter_transform(rhs::DistributionSpec)
     elseif rhs.family === :iid
         return _iid_parameter_transform(rhs.arguments)
     end
+    registration = _registered_user_distribution(rhs.family)
+    isnothing(registration) || return registration.transform
     return nothing
 end
 

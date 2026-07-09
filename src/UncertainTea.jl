@@ -48,6 +48,7 @@ export mixture
 export mvnormaldense
 export lkjcholesky, scale_cholesky
 export iid
+export AbstractTeaDistribution, register_distribution, registered_distributions
 export device_batched_logjoint, device_batched_logjoint!, device_lowering_report, DeviceBatchedWorkspace, DeviceExecutionPlan
 export device_batched_logjoint_gradient, device_batched_logjoint_gradient!
 export DeviceHMCWorkspace

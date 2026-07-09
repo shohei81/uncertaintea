@@ -1,4 +1,5 @@
 include("distributions/core.jl")
+include("distributions/registration.jl")
 include("distributions/continuous.jl")
 include("distributions/discrete.jl")
 include("distributions/structured.jl")
