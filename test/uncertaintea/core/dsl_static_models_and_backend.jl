@@ -1327,10 +1327,23 @@
     @test gaussian_nuts_workspace.left_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].left.logjoint atol=1e-8
     @test gaussian_nuts_workspace.right_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].right.logjoint atol=1e-8
     @test gaussian_nuts_workspace.continuation_proposal_logjoint[1] ≈ gaussian_nuts_workspace.column_continuation_states[1].proposal.logjoint atol=1e-8
-    @test gaussian_nuts_workspace.continuation_proposed_energy[1] ≈
-        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
-    @test gaussian_nuts_workspace.continuation_delta_energy[1] ≈
-        gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
+    # continuation_proposed_energy/-delta_energy track the PROPOSED first leaf;
+    # the column state's proposal_energy/-error track the SELECTED proposal.
+    # They coincide only when the first-step multinomial draw selected the leaf
+    # (continuation_select_proposal); otherwise the column state keeps the
+    # initial energy with zero error. Which branch runs depends on the RNG
+    # stream (the accept probability here is ~0.5), so assert the branch that
+    # actually happened rather than assuming the leaf was selected.
+    if gaussian_nuts_workspace.continuation_select_proposal[1]
+        @test gaussian_nuts_workspace.continuation_proposed_energy[1] ≈
+            gaussian_nuts_workspace.column_continuation_states[1].proposal_energy atol=1e-8
+        @test gaussian_nuts_workspace.continuation_delta_energy[1] ≈
+            gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error atol=1e-8
+    else
+        @test gaussian_nuts_workspace.column_continuation_states[1].proposal_energy ≈
+            gaussian_nuts_workspace.current_energy[1] atol=1e-8
+        @test gaussian_nuts_workspace.column_continuation_states[1].proposal_energy_error == 0.0
+    end
     gaussian_nuts_summary = UncertainTea._nuts_proposal_summary(
         gaussian_nuts_workspace.column_continuation_states[1],
         gaussian_batch_params[:, 1],

@@ -15,9 +15,17 @@
         num_warmup=30,
         rng=MersenneTwister(101),
     )
-    @test warmup_driver_hmc.step_size ≈ 0.80242751762314313 atol = 1e-12
+    if adaptation_pins_exact
+        @test warmup_driver_hmc.step_size ≈ 0.80242751762314313 atol = 1e-12
+    else
+        @test 0.05 < warmup_driver_hmc.step_size < 10.0
+    end
     @test length(warmup_driver_hmc.mass_matrix) == 1
-    @test warmup_driver_hmc.mass_matrix[1] ≈ 0.74579902097242412 atol = 1e-12
+    if adaptation_pins_exact
+        @test warmup_driver_hmc.mass_matrix[1] ≈ 0.74579902097242412 atol = 1e-12
+    else
+        @test 0.01 < warmup_driver_hmc.mass_matrix[1] < 10.0
+    end
 
     warmup_driver_bn = batched_nuts(
         warmup_driver_model,
@@ -32,7 +40,21 @@
     # Values re-pinned after the batched-NUTS merge-cohort stale-select fix
     # (PR 6.4): the previous pins had captured runs where stale proposal
     # selections replayed old tree-proposal columns into the live proposals.
-    @test warmup_driver_bn_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
+    if adaptation_pins_exact
+        @test warmup_driver_bn_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
+    else
+        @test 0.05 < warmup_driver_bn_chain.step_size < 10.0
+    end
     @test length(warmup_driver_bn_chain.mass_matrix) == 1
-    @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12
+    if adaptation_pins_exact
+        @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12
+    else
+        @test 0.01 < warmup_driver_bn_chain.mass_matrix[1] < 10.0
+    end
+    # Version-independent: the shared driver adapts one step size / mass matrix
+    # for the whole batch, so every chain reports identical values.
+    for other_chain in warmup_driver_bn.chains
+        @test other_chain.step_size == warmup_driver_bn_chain.step_size
+        @test other_chain.mass_matrix == warmup_driver_bn_chain.mass_matrix
+    end
 end

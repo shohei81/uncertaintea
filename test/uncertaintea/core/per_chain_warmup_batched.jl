@@ -32,9 +32,17 @@
     for pca_reg_chain in pca_reg.chains
         # Re-pinned after the batched-NUTS merge-cohort stale-select fix
         # (PR 6.4); still matches the warmup_driver_regression shared-driver regression.
-        @test pca_reg_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
+        if adaptation_pins_exact
+            @test pca_reg_chain.step_size ≈ 1.2168785742992647 atol = 1e-12
+        end
         @test length(pca_reg_chain.mass_matrix) == 1
-        @test pca_reg_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12
+        if adaptation_pins_exact
+            @test pca_reg_chain.mass_matrix[1] ≈ 0.5636619744202114 atol = 1e-12
+        end
+        # Version-independent: per_chain_adaptation=false means the shared
+        # driver adapts once for the whole batch.
+        @test pca_reg_chain.step_size == pca_reg.chains[1].step_size
+        @test pca_reg_chain.mass_matrix == pca_reg.chains[1].mass_matrix
     end
 
     # Per-chain divergence: two chains facing different observation scales via a

@@ -84,3 +84,12 @@ positive_batch_constraints = [
     choicemap((:y, 1.2f0)),
     choicemap((:y, 1.5f0)),
 ]
+
+# Seeded exact-value pins for warmup adaptation hold only on the toolchain
+# family they were captured on: Julia 1.12 rewrote the randn ziggurat, so
+# MersenneTwister normal draws differ on older versions, and dual averaging
+# amplifies that into macroscopically different adapted values. On older
+# supported versions the same tests assert version-independent invariants
+# instead. If the pins drift on a future stable (the CI julia "1" jobs start
+# failing), re-pin the values there and raise this bound.
+adaptation_pins_exact = VERSION >= v"1.12"

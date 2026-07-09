@@ -40,9 +40,17 @@ end
         devh_conjugate_gauss,
         (),
         constraints;
-        num_chains=2,
-        num_samples=300,
-        num_warmup=150,
+        # 4 chains x 600/300 rather than 2 x 300/150: the posterior-std smoke
+        # check below must hold for every supported randn stream (the ziggurat
+        # changed in Julia 1.12), and shorter seeded runs leave the std
+        # estimate of the autocorrelated chains too noisy -- the pre-1.12
+        # stream under-adapts the step size at 150 warmup (acceptance pins at
+        # 1.0, std comes out at half its true value) and single short chains
+        # can under-disperse on any stream. Exact device-vs-host parity is
+        # covered separately by devh_hmc_vs_cpu.
+        num_chains=4,
+        num_samples=600,
+        num_warmup=300,
         backend=backend,
         precision=Float64,
         rng=MersenneTwister(46),
