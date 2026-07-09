@@ -30,9 +30,49 @@ function Base.show(io::IO, result::LaplaceResult)
     )
 end
 
+# Two-loop recursion: overwrite `out` with H*v, where H is the L-BFGS
+# inverse-Hessian estimate defined by the (s, y, rho) history and the standard
+# gamma = s'y / y'y initial scaling. Shared by the optimizer's direction
+# computation and Pathfinder's per-iterate Gaussian approximations.
+function _lbfgs_apply_inverse_hessian!(
+    out::AbstractVector,
+    v::AbstractVector,
+    s_history::Vector{Vector{Float64}},
+    y_history::Vector{Vector{Float64}},
+    rho_history::Vector{Float64},
+    alpha_cache::Vector{Float64}=Vector{Float64}(undef, length(s_history)),
+)
+    copyto!(out, v)
+    m = length(s_history)
+    resize!(alpha_cache, m)
+    @inbounds for i = m:-1:1
+        ai = rho_history[i] * dot(s_history[i], out)
+        alpha_cache[i] = ai
+        axpy!(-ai, y_history[i], out)
+    end
+
+    gamma = 1.0
+    if m > 0
+        sy = dot(s_history[end], y_history[end])
+        yy = dot(y_history[end], y_history[end])
+        if yy > 0
+            gamma = sy / yy
+        end
+    end
+    out .*= gamma
+
+    @inbounds for i = 1:m
+        bi = rho_history[i] * dot(y_history[i], out)
+        axpy!(alpha_cache[i] - bi, s_history[i], out)
+    end
+    return out
+end
+
 # Self-contained L-BFGS maximizer of an objective `f` with gradient supplied by
 # `gradient!(g, x)`. Uses two-loop recursion with limited history and a
 # backtracking Armijo line search. Returns (x, fx, g, gnorm, iterations, converged).
+# `iteration_callback(x, fx, g, s_history, y_history, rho_history)` fires after
+# every accepted step with the histories BORROWED (the callee must copy).
 function _lbfgs_maximize(
     f,
     gradient!,
@@ -40,6 +80,7 @@ function _lbfgs_maximize(
     history::Int=10,
     max_iters::Int=500,
     g_tol::Float64=1e-8,
+    iteration_callback=nothing,
 )
     x = collect(float.(x0))
     n = length(x)
@@ -67,29 +108,7 @@ function _lbfgs_maximize(
 
         # Two-loop recursion to compute the search direction (ascent on f, so we
         # work with the maximization gradient directly).
-        copyto!(q, g)
-        m = length(s_history)
-        resize!(alpha_cache, m)
-        @inbounds for i = m:-1:1
-            ai = rho_history[i] * dot(s_history[i], q)
-            alpha_cache[i] = ai
-            axpy!(-ai, y_history[i], q)
-        end
-
-        gamma = 1.0
-        if m > 0
-            sy = dot(s_history[end], y_history[end])
-            yy = dot(y_history[end], y_history[end])
-            if yy > 0
-                gamma = sy / yy
-            end
-        end
-        q .*= gamma
-
-        @inbounds for i = 1:m
-            bi = rho_history[i] * dot(y_history[i], q)
-            axpy!(alpha_cache[i] - bi, s_history[i], q)
-        end
+        _lbfgs_apply_inverse_hessian!(q, g, s_history, y_history, rho_history, alpha_cache)
         direction = q  # ascent direction (approx H * g)
 
         gd = dot(g, direction)
@@ -145,6 +164,9 @@ function _lbfgs_maximize(
         g = g_new
         fx = f_new
         gnorm = norm(g, Inf)
+
+        isnothing(iteration_callback) ||
+            iteration_callback(x, fx, g, s_history, y_history, rho_history)
 
         if gnorm <= g_tol
             converged = true

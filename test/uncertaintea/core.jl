@@ -49,6 +49,7 @@ core_test_files = [
     ("masked_batched_nuts.jl", "inference"),
     ("sbc_calibration.jl", "inference"),
     ("advi_structured_guides.jl", "inference"),
+    ("pathfinder_init.jl", "inference"),
 ]
 
 let registered = Set(first.(core_test_files)), on_disk = Set(f for f in readdir(joinpath(@__DIR__, "core")) if endswith(f, ".jl"))
