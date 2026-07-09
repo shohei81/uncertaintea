@@ -553,7 +553,10 @@ function _find_reasonable_step_size(
 end
 
 function _chain_initial_params(initial_params, chain_index::Int, num_params::Int, constrained_num_params::Int, num_chains::Int)
-    if isnothing(initial_params)
+    if initial_params isa PathfinderResult
+        # passed through whole; _initial_hmc_position draws per chain
+        return initial_params
+    elseif isnothing(initial_params)
         return nothing
     elseif initial_params isa AbstractMatrix
         (size(initial_params) == (num_params, num_chains) ||

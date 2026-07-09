@@ -68,6 +68,11 @@ Accepted batching modes:
 
 The current reference inference layer now includes:
 
+- `pathfinder`, the Zhang et al. (2022) variational initialization: L-BFGS
+  toward the mode with per-iterate Gaussian approximations from the inverse-
+  Hessian estimate, ELBO selection, and optional multi-path importance
+  resampling. A `PathfinderResult` passes directly as `initial_params` to
+  `hmc`/`nuts`/`nuts_chains`/`batched_hmc`/`batched_nuts`
 - `batched_advi`, which fits a Gaussian in unconstrained space and reuses
   `BatchedLogjointGradientCache`. `guide=:meanfield` (default, also the
   device-supported variant) uses a diagonal covariance; `guide=:fullrank`
