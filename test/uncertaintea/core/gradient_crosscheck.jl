@@ -1,0 +1,364 @@
+# Systematic cross-checks between the hand-written analytic batched gradients,
+# the backend-native batched scoring, and the CPU reference logjoint (issue #9).
+#
+# The family list is driven by UncertainTea.GPU_BACKEND_SUPPORTED_DISTRIBUTIONS,
+# so registering a new backend-native family makes this suite FAIL with
+# "family not covered" until a cross-check model is added to gxc_models below.
+#
+# For every model, at several seeded random unconstrained points:
+#   1. the model must lower (backend_report) and sit on the ANALYTIC gradient
+#      tier (backend_cache set) -- otherwise the comparisons below would
+#      silently compare ForwardDiff against itself;
+#   2. batched backend-native scoring == per-column CPU reference logjoint;
+#   3. analytic batched gradient == central finite differences of the CPU
+#      reference logjoint (an oracle independent of ForwardDiff, so it also
+#      catches wrong custom Dual rules);
+#   4. analytic batched gradient == per-column ForwardDiff gradient;
+#   5. the Float32 batched gradient tracks the Float64 one (device precision).
+@testset "gradient_crosscheck" begin
+    gxc_fd_gradient = function (model, x, args, constraints)
+        g = similar(x)
+        for i in eachindex(x)
+            h = cbrt(eps(Float64)) * max(1.0, abs(x[i]))
+            xp = copy(x)
+            xp[i] += h
+            xm = copy(x)
+            xm[i] -= h
+            g[i] = (
+                logjoint_unconstrained(model, xp, args, constraints) -
+                logjoint_unconstrained(model, xm, args, constraints)
+            ) / (2h)
+        end
+        return g
+    end
+
+    gxc_check = function (model, args, constraints, seed)
+        rng = MersenneTwister(seed)
+        trace, _ = generate(model, args, constraints; rng=rng)
+        base = transform_to_unconstrained(trace)
+        points = base .+ 0.4 .* randn(rng, length(base), 3)
+
+        # 1. lowering + analytic tier
+        @test backend_report(model).supported == true
+        cache = BatchedLogjointGradientCache(model, points, args, constraints)
+        @test !isnothing(cache.backend_cache)
+        @test isnothing(cache.flat_cache)
+        @test isempty(cache.column_caches)
+
+        # 2. backend-native scoring vs CPU reference logjoint
+        batched_values = batched_logjoint_unconstrained(model, points, args, constraints)
+        reference_values = [
+            logjoint_unconstrained(model, points[:, i], args, constraints) for i in 1:size(points, 2)
+        ]
+        @test batched_values ≈ reference_values atol = 1e-8
+
+        # 3./4. analytic gradient vs finite differences and vs ForwardDiff
+        analytic = batched_logjoint_gradient_unconstrained(model, points, args, constraints)
+        for i in 1:size(points, 2)
+            @test analytic[:, i] ≈ gxc_fd_gradient(model, points[:, i], args, constraints) atol = 5e-6
+            @test analytic[:, i] ≈
+                logjoint_gradient_unconstrained(model, points[:, i], args, constraints) atol = 1e-8
+        end
+
+        # 5. Float32 gradient tracks Float64 (the Metal device path runs f32)
+        analytic32 = batched_logjoint_gradient_unconstrained(
+            model, Float32.(points), args, constraints
+        )
+        @test eltype(analytic32) == Float32
+        @test Float64.(analytic32) ≈ analytic atol = 2e-3
+        return nothing
+    end
+
+    # ------------------------------------------------------------------
+    # Cross-check models. Every parameter slot the analytic gradient
+    # differentiates should depend on a latent (so d/dmu, d/dsigma, ... all
+    # flow), and latent-form entries exercise each family's d/dvalue partial
+    # plus its transform jacobian.
+    # ------------------------------------------------------------------
+
+    @tea static function gxc_normal_obs()
+        a ~ normal(0.0f0, 1.0f0)
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ normal(a, exp(s))
+        return a
+    end
+
+    @tea static function gxc_lognormal_obs()
+        a ~ normal(0.0f0, 1.0f0)
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ lognormal(a, exp(s))
+        return a
+    end
+
+    @tea static function gxc_lognormal_latent()
+        x ~ lognormal(0.2f0, 0.6f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_laplace_obs()
+        a ~ normal(0.0f0, 1.0f0)
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ laplace(a, exp(s))
+        return a
+    end
+
+    @tea static function gxc_laplace_latent()
+        x ~ laplace(0.5f0, 1.2f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_exponential_obs()
+        s ~ normal(0.0f0, 0.4f0)
+        {:y} ~ exponential(exp(s))
+        return s
+    end
+
+    @tea static function gxc_exponential_latent()
+        x ~ exponential(1.5f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_gamma_obs()
+        a ~ normal(0.5f0, 0.3f0)
+        b ~ normal(0.0f0, 0.3f0)
+        {:y} ~ gamma(exp(a), exp(b))
+        return a
+    end
+
+    @tea static function gxc_gamma_latent()
+        x ~ gamma(2.5f0, 1.5f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_inversegamma_obs()
+        a ~ normal(0.8f0, 0.25f0)
+        b ~ normal(0.3f0, 0.25f0)
+        {:y} ~ inversegamma(exp(a), exp(b))
+        return a
+    end
+
+    @tea static function gxc_inversegamma_latent()
+        x ~ inversegamma(3.0f0, 2.0f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_weibull_obs()
+        a ~ normal(0.4f0, 0.25f0)
+        b ~ normal(0.2f0, 0.25f0)
+        {:y} ~ weibull(exp(a), exp(b))
+        return a
+    end
+
+    @tea static function gxc_weibull_latent()
+        x ~ weibull(1.8f0, 1.2f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_beta_obs()
+        a ~ normal(0.6f0, 0.25f0)
+        b ~ normal(0.9f0, 0.25f0)
+        {:y} ~ beta(exp(a), exp(b))
+        return a
+    end
+
+    @tea static function gxc_beta_latent()
+        x ~ beta(2.0f0, 3.0f0)
+        {:y} ~ normal(x, 0.5f0)
+        return x
+    end
+
+    @tea static function gxc_studentt_obs()
+        a ~ normal(0.0f0, 1.0f0)
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ studentt(4.0f0, a, exp(s))
+        return a
+    end
+
+    @tea static function gxc_studentt_latent()
+        x ~ studentt(5.0f0, 0.3f0, 1.1f0)
+        {:y} ~ normal(x, 1.0f0)
+        return x
+    end
+
+    @tea static function gxc_bernoulli_obs()
+        p ~ beta(2.0f0, 3.0f0)
+        {:y} ~ bernoulli(p)
+        return p
+    end
+
+    @tea static function gxc_binomial_obs()
+        logit ~ normal(0.0f0, 0.5f0)
+        probability = 1.0f0 / (1.0f0 + exp(-logit))
+        {:y} ~ binomial(8, probability)
+        return probability
+    end
+
+    @tea static function gxc_geometric_obs()
+        logit ~ normal(0.0f0, 0.6f0)
+        probability = 1.0f0 / (1.0f0 + exp(-logit))
+        {:y} ~ geometric(probability)
+        return probability
+    end
+
+    @tea static function gxc_negativebinomial_obs()
+        log_successes ~ normal(1.2f0, 0.3f0)
+        logit ~ normal(0.0f0, 0.5f0)
+        successes = exp(log_successes)
+        probability = 1.0f0 / (1.0f0 + exp(-logit))
+        {:y} ~ negativebinomial(successes, probability)
+        return successes
+    end
+
+    @tea static function gxc_poisson_obs()
+        a ~ normal(0.5f0, 0.4f0)
+        {:y} ~ poisson(exp(a))
+        return a
+    end
+
+    @tea static function gxc_categorical_obs()
+        logit1 ~ normal(0.0f0, 0.5f0)
+        logit2 ~ normal(0.0f0, 0.5f0)
+        w1 = exp(logit1)
+        w2 = exp(logit2)
+        denom = w1 + w2 + 1.0f0
+        {:y} ~ categorical(w1 / denom, w2 / denom, 1.0f0 / denom)
+        return logit1
+    end
+
+    # Float64 concentrations: with Float32 alphas the CPU reference computes
+    # its lgamma normalization at Float32 while the backend slots are Float64,
+    # leaving a constant ~6e-7 value offset that is about precision, not math.
+    @tea static function gxc_dirichlet_latent()
+        weights ~ dirichlet([2.0, 3.0, 4.0])
+        return weights
+    end
+
+    @tea static function gxc_mvnormal_latent()
+        state ~ mvnormal([0.0f0, 1.0f0], [1.5f0, 0.8f0])
+        return state
+    end
+
+    @tea static function gxc_mvnormal_obs()
+        m ~ normal(0.0f0, 1.0f0)
+        {:y} ~ mvnormal([m, m], [1.0f0, 0.8f0])
+        return m
+    end
+
+    @tea static function gxc_truncatednormal_obs()
+        s ~ normal(0.0f0, 0.3f0)
+        {:y} ~ truncatednormal(0.5f0, exp(s), 0.0, Inf)
+        return s
+    end
+
+    @tea static function gxc_truncatednormal_mean_obs()
+        m ~ normal(0.0f0, 1.0f0)
+        {:y} ~ truncatednormal(m, 1.0f0, -1.0, 2.0)
+        return m
+    end
+
+    @tea static function gxc_truncatedstudentt_obs()
+        m ~ normal(0.0f0, 1.0f0)
+        {:y} ~ truncatedstudentt(4.0f0, m, 1.0f0, -1.0, 2.0)
+        return m
+    end
+
+    @tea static function gxc_mixture_obs()
+        m ~ normal(0.0f0, 1.0f0)
+        {:y} ~ mixture((0.3, 0.7), normal(m, 1.0f0), normal(2.0f0, 0.5f0))
+        return m
+    end
+
+    @tea static function gxc_mixture_latent()
+        x ~ mixture((0.5f0, 0.5f0), normal(-2.0f0, 0.5f0), normal(2.0f0, 0.5f0))
+        {:y} ~ normal(x, 0.5f0)
+        return x
+    end
+
+    @tea static function gxc_mvnormaldense_obs(Larg)
+        m ~ normal(0.0f0, 1.0f0)
+        {:y} ~ mvnormaldense([m, m], Larg)
+        return m
+    end
+
+    gxc_dense_factor = [1.0 0.0; 0.3 0.8]
+
+    # family => [(model, args, constraints), ...]; every registry family must
+    # have an entry (enforced below).
+    gxc_models = Dict(
+        :normal => [(gxc_normal_obs, (), choicemap((:y, 0.4f0)))],
+        :lognormal => [
+            (gxc_lognormal_obs, (), choicemap((:y, 1.3f0))),
+            (gxc_lognormal_latent, (), choicemap((:y, 1.1f0))),
+        ],
+        :laplace => [
+            (gxc_laplace_obs, (), choicemap((:y, 0.7f0))),
+            (gxc_laplace_latent, (), choicemap((:y, 0.9f0))),
+        ],
+        :exponential => [
+            (gxc_exponential_obs, (), choicemap((:y, 0.8f0))),
+            (gxc_exponential_latent, (), choicemap((:y, 1.2f0))),
+        ],
+        :gamma => [
+            (gxc_gamma_obs, (), choicemap((:y, 1.4f0))),
+            (gxc_gamma_latent, (), choicemap((:y, 1.6f0))),
+        ],
+        :inversegamma => [
+            (gxc_inversegamma_obs, (), choicemap((:y, 0.9f0))),
+            (gxc_inversegamma_latent, (), choicemap((:y, 1.1f0))),
+        ],
+        :weibull => [
+            (gxc_weibull_obs, (), choicemap((:y, 1.1f0))),
+            (gxc_weibull_latent, (), choicemap((:y, 0.9f0))),
+        ],
+        :beta => [
+            (gxc_beta_obs, (), choicemap((:y, 0.45f0))),
+            (gxc_beta_latent, (), choicemap((:y, 0.5f0))),
+        ],
+        :studentt => [
+            (gxc_studentt_obs, (), choicemap((:y, 0.6f0))),
+            (gxc_studentt_latent, (), choicemap((:y, 0.4f0))),
+        ],
+        :bernoulli => [(gxc_bernoulli_obs, (), choicemap((:y, true)))],
+        :binomial => [(gxc_binomial_obs, (), choicemap((:y, 5)))],
+        :geometric => [(gxc_geometric_obs, (), choicemap((:y, 3)))],
+        :negativebinomial => [(gxc_negativebinomial_obs, (), choicemap((:y, 4)))],
+        :poisson => [(gxc_poisson_obs, (), choicemap((:y, 2)))],
+        :categorical => [(gxc_categorical_obs, (), choicemap((:y, 2)))],
+        :dirichlet => [(gxc_dirichlet_latent, (), choicemap())],
+        :mvnormal => [
+            (gxc_mvnormal_latent, (), choicemap()),
+            (gxc_mvnormal_obs, (), choicemap((:y, Float32[0.4, -0.2]))),
+        ],
+        :truncatednormal => [
+            (gxc_truncatednormal_obs, (), choicemap((:y, 0.9f0))),
+            (gxc_truncatednormal_mean_obs, (), choicemap((:y, 0.3f0))),
+        ],
+        :truncatedstudentt => [(gxc_truncatedstudentt_obs, (), choicemap((:y, 0.3f0)))],
+        :mixture => [
+            (gxc_mixture_obs, (), choicemap((:y, 1.2f0))),
+            (gxc_mixture_latent, (), choicemap((:y, 1.5f0))),
+        ],
+        :mvnormaldense => [
+            (gxc_mvnormaldense_obs, (gxc_dense_factor,), choicemap((:y, Float32[0.4, -0.2]))),
+        ],
+    )
+
+    for (gxc_index, gxc_family) in enumerate(UncertainTea.GPU_BACKEND_SUPPORTED_DISTRIBUTIONS)
+        @testset "gxc_$gxc_family" begin
+            haskey(gxc_models, gxc_family) || error(
+                "backend-native family :$gxc_family is not covered by " *
+                "gradient_crosscheck.jl -- add a cross-check model for it",
+            )
+            for (gxc_entry_index, (gxc_model, gxc_args, gxc_constraints)) in
+                enumerate(gxc_models[gxc_family])
+                gxc_check(gxc_model, gxc_args, gxc_constraints, 1000 * gxc_index + gxc_entry_index)
+            end
+        end
+    end
+end

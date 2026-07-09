@@ -85,11 +85,14 @@ struct DirichletDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
-struct MvNormalDist{T<:AbstractFloat} <: AbstractTeaDistribution
+# T<:Real (not AbstractFloat) so the ForwardDiff fallback can score models
+# whose mean/scale vectors carry Dual entries (e.g. a latent mean), matching
+# NormalDist and DirichletDist; rand stays restricted to AbstractFloat.
+struct MvNormalDist{T<:Real} <: AbstractTeaDistribution
     mu::Vector{T}
     sigma::Vector{T}
 
-    function MvNormalDist(mu::Vector{T}, sigma::Vector{T}) where {T<:AbstractFloat}
+    function MvNormalDist(mu::Vector{T}, sigma::Vector{T}) where {T<:Real}
         isempty(mu) && throw(ArgumentError("mvnormal requires at least one dimension"))
         length(mu) == length(sigma) || throw(ArgumentError("mvnormal requires mean and scale vectors with the same length"))
         for value in sigma
