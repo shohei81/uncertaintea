@@ -4,7 +4,7 @@ using ForwardDiff
 using KernelAbstractions
 using LinearAlgebra
 using Random
-using SpecialFunctions: digamma, loggamma, erf, erfc, erfinv, beta_inc
+using SpecialFunctions: digamma, loggamma, erf, erfc, erfinv, beta_inc, gamma_inc
 
 export @tea
 export AddressSpec, ChoiceSpec, ModelSpec
@@ -38,6 +38,7 @@ export acceptancerate,
 export check_diagnostics, has_warnings
 export posterior_array, parameter_names, to_arviz_dict, to_mcmcchains
 export pointwise_loglikelihood, observation_addresses, waic, psis_loo, loo, WAICResult, LOOResult
+export sbc, SBCResult
 export map_estimate, laplace_approximation, MAPResult, LaplaceResult
 export variational_mean, variational_samples
 export predict, PredictiveDraws, addresses, log_evidence
