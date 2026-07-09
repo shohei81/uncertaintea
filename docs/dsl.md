@@ -412,8 +412,8 @@ Rules and caveats:
 
 - Register **before** defining models that use the family (registration is
   consulted at model definition).
-- Re-registration overwrites, but already-defined models keep the builder they
-  were compiled with.
+- Models capture the builder and transform at definition, so re-registering a
+  family affects only models defined afterwards.
 - Built-in family names and expression primitives (`exp`, `log`, ...) cannot
   be registered.
 - Broadcast observations (`family.(...)`) and `iid(family(...), n)` are not

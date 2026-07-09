@@ -218,9 +218,13 @@ function _compile_plan_step(
     step.rhs isa DistributionSpec || step.rhs isa BroadcastDistributionSpec ||
         throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
     arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in step.rhs.arguments)...)
-    constructor =
-        step.rhs isa BroadcastDistributionSpec ?
-        getfield(@__MODULE__, :BroadcastNormalDist) : _distribution_builder(step.rhs.family)
+    constructor = if step.rhs isa BroadcastDistributionSpec
+        getfield(@__MODULE__, :BroadcastNormalDist)
+    elseif !isnothing(step.rhs.builder)
+        step.rhs.builder
+    else
+        getfield(@__MODULE__, step.rhs.family)
+    end
     parameter_value_indices =
         isnothing(step.parameter_slot) ? nothing : parametervalueindices(parameter_layout.slots[step.parameter_slot])
     return CompiledChoicePlanStep(

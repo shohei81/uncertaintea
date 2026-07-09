@@ -52,10 +52,12 @@ function _qualify_builtin_distribution(name)
     )
         return _qualify(name)
     end
-    # Registered user families resolve through the registry so the runtime
-    # body works regardless of what the builder is called in the user's module.
-    isnothing(_registered_user_distribution(name)) ||
-        return :($(_qualify(:_distribution_builder))($(QuoteNode(name))))
+    # Registered user families: splice the builder VALUE captured at macro
+    # expansion, so the runtime body works regardless of what the builder is
+    # called in the user's module and later re-registration cannot change an
+    # already-defined model.
+    registration = _registered_user_distribution(name)
+    isnothing(registration) || return registration.builder
     return name
 end
 
@@ -216,9 +218,12 @@ function _rhs_spec_expr(rhs)
                 )
         end
 
-        if callee isa Symbol &&
-           (callee in BUILTIN_DISTRIBUTION_FAMILIES || haskey(USER_DISTRIBUTION_REGISTRY, callee))
+        if callee isa Symbol && callee in BUILTIN_DISTRIBUTION_FAMILIES
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments))
+        end
+        if callee isa Symbol && haskey(USER_DISTRIBUTION_REGISTRY, callee)
+            registration = USER_DISTRIBUTION_REGISTRY[callee]
+            return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments, $(registration.builder)))
         end
 
         return :($(_qualify(:GenerativeCallSpec))($callee, $arguments))

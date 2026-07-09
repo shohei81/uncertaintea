@@ -84,6 +84,29 @@ end
     return z
 end
 
+# Re-registration capture semantics: models keep the builder/transform they
+# were DEFINED with. These definitions must be sequential top-level statements
+# (macro expansion inside one top-level block would see a single registry
+# snapshot), so the swap sequence lives here rather than inside the testset.
+creg_swap_builder_a(scale) = CregHalfCauchyDist(scale)
+creg_swap_builder_b(scale) = CregSkewNormalDist(promote(0.0, scale, 0.0)...)
+
+register_distribution(:cregswap; builder=creg_swap_builder_a, transform=LogTransform())
+
+@tea static function creg_swap_before()
+    x ~ cregswap(2.0)
+    {:y} ~ normal(x, 1.0)
+    return x
+end
+
+register_distribution(:cregswap; builder=creg_swap_builder_b, transform=IdentityTransform())
+
+@tea static function creg_swap_after()
+    x ~ cregswap(2.0)
+    {:y} ~ normal(x, 1.0)
+    return x
+end
+
 @testset "custom_distribution_registration" begin
     creg_constraints = choicemap((:y, 0.4))
 
@@ -164,6 +187,18 @@ end
         chain = nuts(creg_model, (), creg_constraints; num_samples=40, num_warmup=40, rng=MersenneTwister(3))
         @test all(isfinite, chain.constrained_samples)
         @test all(chain.constrained_samples[2, :] .> 0)
+    end
+
+    @testset "creg_reregistration_capture" begin
+        # the model defined before the swap keeps the half-Cauchy builder and
+        # its LogTransform; the model defined after uses the new builder
+        @test parameterlayout(creg_swap_before).slots[1].transform isa LogTransform
+        @test parameterlayout(creg_swap_after).slots[1].transform isa IdentityTransform
+        swap_constraints = choicemap((:y, 0.5))
+        @test logjoint(creg_swap_before, [-1.0], (), swap_constraints) == -Inf
+        @test isfinite(logjoint(creg_swap_after, [-1.0], (), swap_constraints))
+        before_trace, _ = generate(creg_swap_before, (), swap_constraints; rng=MersenneTwister(11))
+        @test before_trace[:x] > 0
     end
 
     @testset "creg_observation_only" begin

@@ -64,9 +64,10 @@ support, `LogitTransform()` for (0,1), `BoundedTransform(lower, upper)`).
 Leave it `nothing` for observation-only families -- a latent then gets no
 parameter slot, matching how unsupported built-in latents behave.
 
-Registering an already-registered family overwrites it; models keep the
-builder that was registered when they were defined/compiled, so re-register
-before redefining models. Built-in family names cannot be overridden.
+Models capture the builder and transform when they are DEFINED, so
+re-registering a family affects only models defined afterwards; existing
+models keep the distribution they were defined with. Built-in family names
+cannot be overridden.
 """
 function register_distribution(family::Symbol; builder, transform::Union{Nothing,AbstractParameterTransform}=nothing)
     family in BUILTIN_DISTRIBUTION_FAMILIES &&
@@ -91,12 +92,4 @@ registered_distributions() = sort!(collect(keys(USER_DISTRIBUTION_REGISTRY)))
 
 function _registered_user_distribution(family::Symbol)
     return get(USER_DISTRIBUTION_REGISTRY, family, nothing)
-end
-
-# Builder for a family on the compiled scoring path: registered families use
-# the stored builder; built-ins resolve to their constructor in this module.
-function _distribution_builder(family::Symbol)
-    registration = _registered_user_distribution(family)
-    isnothing(registration) || return registration.builder
-    return getfield(@__MODULE__, family)
 end
