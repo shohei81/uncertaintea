@@ -189,6 +189,15 @@ end
     cm_cat_oob = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), (:c => 1, 4.0), ((:c => i, cs[i]) for i = 2:4)...)
     dev_cat_oob = device_batched_logjoint(dev_count_model, params2, (4,), cm_cat_oob)
     @test all(==(-Inf), dev_cat_oob)
+
+    # near-integer (non-integral) observations are out of support on the CPU path
+    # and must stay out of support on the device (exact-integer check).
+    cm_frac = choicemap((:k, 7.0000001), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    @test all(==(-Inf), device_batched_logjoint(dev_count_model, params2, (4,), cm_frac))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_count_model, params2, (4,), cm_frac))
+    cm_cat_frac = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), (:c => 1, 2.0000001), ((:c => i, cs[i]) for i = 2:4)...)
+    @test all(==(-Inf), device_batched_logjoint(dev_count_model, params2, (4,), cm_cat_frac))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_count_model, params2, (4,), cm_cat_frac))
 end
 
 # binomial trials via a named deterministic binding: the symbol is classified as an

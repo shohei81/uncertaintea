@@ -104,10 +104,9 @@ end
     return ifelse(x > T(0.5), log(p), log1p(-p))
 end
 
-# Nonnegative near-integer support check shared by the count families; mirrors the
-# CPU `_poisson_count` acceptance up to the device float tolerance.
-@inline _device_count_ok(x::T, k::T) where {T} =
-    (x >= zero(T)) & (abs(x - k) <= T(1e-6) * (one(T) + abs(x)))
+# Nonnegative exact-integer support check shared by the count families; mirrors the
+# CPU `_poisson_count` acceptance (staged integer counts are exact in Float32/64).
+@inline _device_count_ok(x::T, k::T) where {T} = (x >= zero(T)) & (x == k)
 
 @inline function _device_poisson_logpdf(lambda::T, x::T) where {T}
     k = round(x)
@@ -153,8 +152,7 @@ end
 
 @inline function _device_categorical_logpdf(probabilities::Tuple, x::T) where {T}
     k = round(x)
-    in_support = (x >= one(T)) & (x <= T(length(probabilities))) &
-                 (abs(x - k) <= T(1e-6) * (one(T) + abs(x)))
+    in_support = (x >= one(T)) & (x <= T(length(probabilities))) & (x == k)
     total = _device_categorical_pick(probabilities, k, Int32(1), zero(T))
     return ifelse(in_support, total, oftype(total, -Inf))
 end
