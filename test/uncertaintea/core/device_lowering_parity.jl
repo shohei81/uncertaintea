@@ -441,6 +441,32 @@ end
     return m
 end
 
+# finite interval wholly in a deep light tail (codex review round 7): both plain
+# CDFs underflow, so the finite-bounds normalizer must difference LOG CDFs via
+# expm1 (the CPU reference collapses to +Inf here too).
+@tea static function dev_deeptail_interval_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(1.0e5, m, 1.0, 15.0, 16.0)
+    return m
+end
+
+@testset "dev_truncated_deeptail_interval" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+    cm = choicemap((:y, 15.2))
+    dev32 = device_batched_logjoint(dev_deeptail_interval_tt_model, params32, (), cm; precision=Float32)
+    dev64 = device_batched_logjoint(dev_deeptail_interval_tt_model, Float64.(params32), (), cm)
+    @test all(isfinite, dev64)
+    @test all(isfinite, dev32)
+    @test dev_check_float32(dev32, dev64)
+    # the mass above the upper bound is a ~e^-15.5 (~1.9e-7) relative correction,
+    # which the expm1 log-difference resolves; the one-sided normalizer agrees to
+    # exactly that order
+    dev64_onesided =
+        device_batched_logjoint(dev_lighttail_tt_model, Float64.(params32), (), cm)
+    @test dev64 ≈ dev64_onesided rtol = 1e-6
+    @test !isapprox(dev64, dev64_onesided; rtol=1e-9) # the correction is real, not noise
+end
+
 @testset "dev_truncated_lighttail_logspace" begin
     @test isapprox(
         UncertainTea._device_std_t_log_cdf(-15.0, 1.0e5),

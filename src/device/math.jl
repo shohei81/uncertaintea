@@ -406,17 +406,22 @@ end
 end
 
 # log(T_cdf(z; nu)), staying in log space so light tails survive underflow.
+# Both signs route through the SINGLE log-space incomplete beta (the z > 0
+# complement exponentiates it, which is safe: I_x <= 1), keeping the number of
+# inlined `_device_betacf` loop instantiations per kernel low -- duplicating
+# the plain-value path here made Metal's shader compiler blow up for minutes
+# on the fused truncated kernels.
 @inline function _device_std_t_log_cdf(z::T, nu::T) where {T}
     isinf(z) && return ifelse(z > zero(T), zero(T), _device_neginf(T))
     z == zero(T) && return -log(T(2))
     denominator = nu + z * z
     x = nu / denominator
     y = z * z / denominator
+    log_regularized = _device_log_beta_inc_reg_parts(nu / T(2), T(0.5), x, y)
     if z < zero(T)
-        return _device_log_beta_inc_reg_parts(nu / T(2), T(0.5), x, y) - log(T(2))
+        return log_regularized - log(T(2))
     end
-    regularized = _device_beta_inc_reg_parts(nu / T(2), T(0.5), x, y)
-    return log1p(-regularized / T(2))
+    return log1p(-exp(log_regularized) / T(2))
 end
 
 # d/dz log cdf = exp(log pdf - log cdf), computed in log space so a tail whose
@@ -515,17 +520,6 @@ end
 @inline _device_tiny(::Type{T}) where {T} = T(1e-30)
 @inline _device_tiny(::Type{DeviceDual{T}}) where {T} = DeviceDual{T}(T(1e-30), zero(T))
 
-# log of a two-term difference with a cancellation guard: when the difference
-# has lost (nearly) all significance relative to its larger term -- Float32
-# rounding on a narrow interval, or an upper-tail CDF difference -- fall back to
-# the midpoint approximation log(pdf(mid)) + log(width), exact as width -> 0.
-@inline function _device_log_diff_or_midpoint(big::T, small::T, log_offset::T, log_fallback::T) where {T}
-    diff = big - small
-    # abs: a rounded-negative diff never SELECTS the log branch, but ifelse
-    # evaluates it, and a GPU log() throws on negative arguments
-    return ifelse(diff > T(8) * eps(T) * big, log(abs(diff)) - log_offset, log_fallback)
-end
-
 # log(Phi(zb) - Phi(za)), same branch structure as the CPU
 # `_log_normal_cdf_diff` but with each branch computed in log space: one-sided
 # tails via log(erfc) (asymptotic past underflow), same-sign two-sided
@@ -582,17 +576,22 @@ end
     elseif upper_infinite
         return _device_std_t_log_cdf(-za, nu)
     end
+    # both finite: difference of LOG CDFs via expm1 -- log Z = L_big +
+    # log(-expm1(L_small - L_big)) -- which stays exact when the plain CDFs
+    # underflow (deep light tails) AND when the interval is narrow (the log
+    # difference has relative resolution where the plain difference cancels)
     if za > zero(T) # right tail: S(za) - S(zb) = cdf(-za) - cdf(-zb)
-        big = _device_std_t_cdf(-za, nu)
-        small = _device_std_t_cdf(-zb, nu)
+        log_big = _device_std_t_log_cdf(-za, nu)
+        log_small = _device_std_t_log_cdf(-zb, nu)
     else # left tail and straddling: cdf(zb) - cdf(za)
-        big = _device_std_t_cdf(zb, nu)
-        small = _device_std_t_cdf(za, nu)
+        log_big = _device_std_t_log_cdf(zb, nu)
+        log_small = _device_std_t_log_cdf(za, nu)
     end
-    # log-space midpoint density (t tails only underflow at astronomical |z|,
-    # but the log form is exact, cheaper, and symmetric with the normal path)
+    s = log_small - log_big
+    # an ulp-narrow interval can round s to zero; the log-space midpoint form is
+    # exact there (and log(abs(expm1(s))) keeps the unselected branch GPU-safe)
     log_fallback = _device_studentt_logpdf(nu, zero(T), one(T), (za + zb) / T(2)) + log(abs(zb - za))
-    return _device_log_diff_or_midpoint(big, small, zero(T), log_fallback)
+    return ifelse(s < zero(T), log_big + log(abs(expm1(s))), log_fallback)
 end
 
 @inline function _device_truncatedstudentt_logpdf(nu::T, mu::T, sigma::T, lower::T, upper::T, x::T) where {T}
