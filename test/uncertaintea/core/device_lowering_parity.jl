@@ -222,6 +222,58 @@ end
     @test dev ≈ ref rtol = 1e-12
 end
 
+# an argument rebound into a host-only loop bound: the emitted index deterministic
+# is pruned (no kernel expression reads it), so the rebinding audit must not fire.
+@tea static function dev_rebound_loop_bound_model(n)
+    n = n + 1
+    mu ~ normal(0.0, 1.0)
+    for i = 1:n
+        {:y => i} ~ normal(mu, 1.0)
+    end
+    return mu
+end
+
+# a loop-body binding read after the loop: a zero-trip loop would leave the slot
+# unwritten on device, so the audit must reject the shape.
+@tea static function dev_postloop_read_model(n)
+    mu ~ normal(0.0, 1.0)
+    for i = 1:n
+        c = i * 1.0
+    end
+    {:y} ~ normal(c, 1.0)
+    return mu
+end
+
+# a random choice binding feeding a loop bound: host staging can never resolve
+# the range, so lowering must reject it instead of leaking a staging error.
+@tea static function dev_choice_loop_bound_model(N)
+    p ~ beta(2.0, 2.0)
+    n = {:n} ~ binomial(N, p)
+    for i = 1:n
+        {:y => i} ~ normal(0.0, 1.0)
+    end
+    return p
+end
+
+@testset "dev_slot_read_write_audit" begin
+    sup_rebind, rebind_issues = device_lowering_report(dev_rebound_loop_bound_model)
+    @test sup_rebind
+    @test isempty(rebind_issues)
+    cm = choicemap((:y => 1, 0.4), (:y => 2, -0.7), (:y => 3, 1.1))
+    params = reshape([0.3, -0.8], 1, 2)
+    dev = device_batched_logjoint(dev_rebound_loop_bound_model, params, (2,), cm)
+    ref = batched_logjoint_unconstrained(dev_rebound_loop_bound_model, params, (2,), cm)
+    @test dev ≈ ref rtol = 1e-12
+
+    sup_postloop, postloop_issues = device_lowering_report(dev_postloop_read_model)
+    @test !sup_postloop
+    @test any(occursin("not materialized on the device", issue) for issue in postloop_issues)
+
+    sup_bound, bound_issues = device_lowering_report(dev_choice_loop_bound_model)
+    @test !sup_bound
+    @test any(occursin("random choice binding", issue) for issue in bound_issues)
+end
+
 @testset "dev_workspace_reuse" begin
     ys = [0.4, -0.7, 1.1, 0.2]
     cm = choicemap((:y => i, ys[i]) for i = 1:4)

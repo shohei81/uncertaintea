@@ -696,7 +696,10 @@ function _lower_device_step!(out, step::BackendLoopPlanStep, backend, layout, ::
 end
 
 # Read/write audit over the lowered steps: which slots kernel expressions read,
-# and which slots the kernel itself materializes.
+# and which slots the kernel itself materializes. Reads and writes are grouped by
+# loop context (`loop_id == 0` is top level) because a loop-body write only
+# materializes a slot while that loop's body runs -- a zero-trip loop never
+# writes it, so a read outside the loop cannot rely on it.
 _device_expr_reads!(reads::BitSet, expr::DeviceSlotExpr) = (push!(reads, Int(expr.slot)); nothing)
 function _device_expr_reads!(reads::BitSet, expr::DevicePrimitiveExpr)
     for arg in expr.args
@@ -706,19 +709,137 @@ function _device_expr_reads!(reads::BitSet, expr::DevicePrimitiveExpr)
 end
 _device_expr_reads!(reads::BitSet, expr::AbstractDeviceExpr) = nothing
 
-function _device_collect_expr_reads!(reads::BitSet, steps)
+function _device_step_expr_reads!(reads::BitSet, step)
+    for name in propertynames(step)
+        value = getproperty(step, name)
+        if value isa AbstractDeviceExpr
+            _device_expr_reads!(reads, value)
+        elseif value isa Tuple # categorical probabilities
+            for element in value
+                element isa AbstractDeviceExpr && _device_expr_reads!(reads, element)
+            end
+        end
+    end
+    return nothing
+end
+
+function _device_collect_expr_reads!(reads_by_loop::Dict{Int32,BitSet}, steps, loop_id::Int32)
+    reads = get!(BitSet, reads_by_loop, loop_id)
     for step in steps
         if step isa DeviceLoopStep
-            _device_collect_expr_reads!(reads, step.body)
-            continue
+            _device_collect_expr_reads!(reads_by_loop, step.body, step.loop_id)
+        else
+            _device_step_expr_reads!(reads, step)
         end
-        for name in propertynames(step)
-            value = getproperty(step, name)
-            if value isa AbstractDeviceExpr
-                _device_expr_reads!(reads, value)
-            elseif value isa Tuple # categorical probabilities
-                for element in value
-                    element isa AbstractDeviceExpr && _device_expr_reads!(reads, element)
+    end
+    return nothing
+end
+
+function _device_collect_written_slots!(written_by_loop::Dict{Int32,BitSet}, steps, loop_id::Int32)
+    written = get!(BitSet, written_by_loop, loop_id)
+    for step in steps
+        if step isa DeviceLoopStep
+            # the iterator is only defined while the loop body runs
+            body_written = get!(BitSet, written_by_loop, step.loop_id)
+            step.iterator_slot > Int32(0) && push!(body_written, Int(step.iterator_slot))
+            _device_collect_written_slots!(written_by_loop, step.body, step.loop_id)
+        elseif step.binding_slot > Int32(0)
+            push!(written, Int(step.binding_slot))
+        end
+    end
+    return nothing
+end
+
+# Drop device-emitted index deterministics no live kernel expression reads: they
+# only exist to feed kernel reads (host staging keeps its own evaluation), and an
+# unread emission would needlessly trip the argument-rebinding audit for models
+# that rebind an argument into a host-only loop bound. Liveness closes over
+# chains of index deterministics but never over a pruned step's own expression
+# (a self-referential rebind must not keep itself alive).
+_device_is_index_deterministic(step, index_slots::BitVector) =
+    step isa DeviceDeterministicStep && index_slots[Int(step.binding_slot)]
+
+function _device_collect_reads_filtered!(reads::BitSet, steps, keep::F) where {F}
+    for step in steps
+        if step isa DeviceLoopStep
+            _device_collect_reads_filtered!(reads, step.body, keep)
+        elseif keep(step)
+            _device_step_expr_reads!(reads, step)
+        end
+    end
+    return nothing
+end
+
+function _device_live_reads(steps, index_slots::BitVector)
+    live = BitSet()
+    _device_collect_reads_filtered!(live, steps, step -> !_device_is_index_deterministic(step, index_slots))
+    while true
+        before = length(live)
+        _device_collect_reads_filtered!(
+            live,
+            steps,
+            step -> _device_is_index_deterministic(step, index_slots) && Int(step.binding_slot) in live,
+        )
+        length(live) == before && break
+    end
+    return live
+end
+
+function _device_prune_step(step::DeviceLoopStep, index_slots::BitVector, live::BitSet)
+    body = Any[]
+    for inner in step.body
+        kept = _device_prune_step(inner, index_slots, live)
+        isnothing(kept) || push!(body, kept)
+    end
+    return DeviceLoopStep(step.loop_id, step.iterator_slot, tuple(body...))
+end
+function _device_prune_step(step::DeviceDeterministicStep, index_slots::BitVector, live::BitSet)
+    (_device_is_index_deterministic(step, index_slots) && !(Int(step.binding_slot) in live)) && return nothing
+    return step
+end
+_device_prune_step(step, index_slots::BitVector, live::BitSet) = step
+
+# ---- host-staging feasibility (backend-plan level) -------------------------------
+# Staging resolves loop ranges and choice addresses on the host, where choice
+# bindings (latent or observed) are never materialized; a range or address that
+# depends on one -- directly or through deterministics -- cannot be staged.
+
+_backend_expr_slot_refs!(refs::BitSet, expr::BackendSlotExpr) = (push!(refs, expr.slot); nothing)
+function _backend_expr_slot_refs!(refs::BitSet, expr::Union{BackendPrimitiveExpr,BackendBlockExpr,BackendTupleExpr})
+    for arg in expr.arguments
+        _backend_expr_slot_refs!(refs, arg)
+    end
+    return nothing
+end
+_backend_expr_slot_refs!(refs::BitSet, expr::AbstractBackendExpr) = nothing
+
+function _device_staging_taint(backend::BackendExecutionPlan)
+    taint = BitSet()
+    changed = Ref(true)
+    while changed[]
+        changed[] = false
+        _device_staging_taint_pass!(taint, backend.steps, changed)
+    end
+    return taint
+end
+
+function _device_staging_taint_pass!(taint::BitSet, steps, changed::Ref{Bool})
+    for step in steps
+        if step isa BackendLoopPlanStep
+            _device_staging_taint_pass!(taint, step.body, changed)
+        elseif step isa BackendChoicePlanStep
+            slot = step.binding_slot
+            if !isnothing(slot) && !(slot in taint)
+                push!(taint, slot)
+                changed[] = true
+            end
+        elseif step isa BackendDeterministicPlanStep
+            if !(step.binding_slot in taint)
+                refs = BitSet()
+                _backend_expr_slot_refs!(refs, step.expr)
+                if !isempty(intersect(refs, taint))
+                    push!(taint, step.binding_slot)
+                    changed[] = true
                 end
             end
         end
@@ -726,15 +847,56 @@ function _device_collect_expr_reads!(reads::BitSet, steps)
     return nothing
 end
 
-function _device_collect_written_slots!(written::BitSet, steps)
+function _device_check_staging_refs!(issues::Vector{String}, steps, taint::BitSet, symbols)
     for step in steps
-        if step isa DeviceLoopStep
-            step.iterator_slot > Int32(0) && push!(written, Int(step.iterator_slot))
-            _device_collect_written_slots!(written, step.body)
-        elseif step.binding_slot > Int32(0)
-            push!(written, Int(step.binding_slot))
+        if step isa BackendLoopPlanStep
+            refs = BitSet()
+            _backend_expr_slot_refs!(refs, step.iterable)
+            for slot in intersect(refs, taint)
+                _device_issue!(
+                    issues,
+                    "device staging cannot resolve a loop range that depends on the random choice binding `$(symbols[slot])`",
+                )
+            end
+            _device_check_staging_refs!(issues, step.body, taint, symbols)
+        elseif step isa BackendChoicePlanStep
+            for part in step.address.parts
+                part isa BackendAddressExprPart || continue
+                refs = BitSet()
+                _backend_expr_slot_refs!(refs, part.expr)
+                for slot in intersect(refs, taint)
+                    _device_issue!(
+                        issues,
+                        "device staging cannot resolve a choice address that depends on the random choice binding `$(symbols[slot])`",
+                    )
+                end
+            end
         end
     end
+    return nothing
+end
+
+# When the audit rejects a read of a deterministic binding, recover the concrete
+# reason its device emission was skipped (the emission probe discards issues) so
+# the report points at the real blocker instead of a generic host-only message.
+function _device_find_deterministic(steps, slot::Int)
+    for step in steps
+        if step isa BackendDeterministicPlanStep && step.binding_slot == slot
+            return step
+        elseif step isa BackendLoopPlanStep
+            found = _device_find_deterministic(step.body, slot)
+            isnothing(found) || return found
+        end
+    end
+    return nothing
+end
+
+function _device_probe_deterministic_issue(backend::BackendExecutionPlan, slot::Int)
+    step = _device_find_deterministic(backend.steps, slot)
+    isnothing(step) && return nothing
+    probe_issues = String[]
+    expr = _lower_device_expr(step.expr, backend.generic_slots, Float64, probe_issues, "its defining expression")
+    (isnothing(expr) && !isempty(probe_issues)) && return first(probe_issues)
     return nothing
 end
 
@@ -762,22 +924,50 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         return issues, nothing
     end
 
+    environment_layout = executionplan(model).environment_layout
+    symbols = environment_layout.symbols
+
+    # loop ranges and choice addresses are resolved by host staging, where choice
+    # bindings are never materialized; reject those dependencies here instead of
+    # leaking a staging error out of workspace construction.
+    _device_check_staging_refs!(issues, backend.steps, _device_staging_taint(backend), symbols)
+    if !isempty(issues)
+        return issues, nothing
+    end
+
+    # drop emitted index deterministics no live kernel expression reads (host
+    # staging keeps its own evaluation of them)
+    live_reads = _device_live_reads(out, backend.index_slots)
+    pruned = Any[]
+    for step in out
+        kept = _device_prune_step(step, backend.index_slots, live_reads)
+        isnothing(kept) || push!(pruned, kept)
+    end
+    out = pruned
+
     # every slot a kernel expression reads must be materialized on the device:
-    # written by an earlier kernel step (choice/deterministic binding, loop
-    # iterator) or staged from a model argument (issue #38). Host-only slots
-    # (index/generic deterministics that did not lower, e.g. range iterables)
-    # would otherwise be read as uninitialized scratch.
-    device_written = BitSet(executionplan(model).environment_layout.argument_slots)
-    _device_collect_written_slots!(device_written, out)
-    device_reads = BitSet()
-    _device_collect_expr_reads!(device_reads, out)
-    for slot in device_reads
-        if !(slot in device_written)
-            symbol = executionplan(model).environment_layout.symbols[slot]
-            _device_issue!(
-                issues,
-                "device lowering cannot read binding `$symbol` (slot $slot): it is only materialized on the host",
-            )
+    # written by a kernel step in scope (choice/deterministic binding; the loop
+    # iterator and loop-body writes only while that loop's body runs) or staged
+    # from a model argument (issue #38). Host-only slots (index/generic
+    # deterministics that did not lower, e.g. range iterables) would otherwise
+    # be read as uninitialized scratch.
+    reads_by_loop = Dict{Int32,BitSet}()
+    _device_collect_expr_reads!(reads_by_loop, out, Int32(0))
+    written_by_loop = Dict{Int32,BitSet}()
+    _device_collect_written_slots!(written_by_loop, out, Int32(0))
+    top_available = union(
+        BitSet(environment_layout.argument_slots),
+        get(written_by_loop, Int32(0), BitSet()),
+    )
+    for (loop_id, reads) in reads_by_loop
+        available =
+            loop_id == Int32(0) ? top_available :
+            union(top_available, get(written_by_loop, loop_id, BitSet()))
+        for slot in setdiff(reads, available)
+            message = "device lowering cannot read binding `$(symbols[slot])` (slot $slot): it is not materialized on the device at that point"
+            probe = _device_probe_deterministic_issue(backend, slot)
+            isnothing(probe) || (message *= " ($probe)")
+            _device_issue!(issues, message)
         end
     end
     if !isempty(issues)
