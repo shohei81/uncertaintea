@@ -415,6 +415,29 @@ end
     return ifelse(e > zero(T), log(e), asymptotic)
 end
 
+# Scaled complementary error function erfcx(y) = erfc(y) exp(y^2) for y >= 0:
+# the Cody tail intervals compute it natively; the central interval scales the
+# plain erfc (both factors representable there). The unselected branch is
+# domain-safe: exp(y^2) can only overflow where erfc is exactly 0.
+@inline _device_erfcx(y::T) where {T} =
+    ifelse(y > T(0.46875), _device_erfcx_tail(y), _device_erfc(y) * exp(y * y))
+
+# log(erfc(a) - erfc(b)) for 0 < a < b, cancellation- and underflow-free:
+# erfc(a) - erfc(b) = e^{-a^2} erfcx(a) (1 - e^{a^2-b^2} erfcx(b)/erfcx(a)),
+# so the tail magnitude lives in the -a^2 log term and the parenthesis is
+# -expm1(s) with s < 0, exact for narrow AND wide intervals alike.
+@inline function _device_log_erfc_diff(a::T, b::T) where {T}
+    ea = _device_erfcx(a)
+    eb = _device_erfcx(b)
+    s = (a - b) * (a + b) + log(eb / ea)
+    return -a * a + log(ea) + log(-expm1(min(s, -_device_tiny(T))))
+end
+
+# smallest useful positive magnitude for clamping (keeps -expm1(s) > 0 when
+# rounding lands s exactly on zero)
+@inline _device_tiny(::Type{T}) where {T} = T(1e-30)
+@inline _device_tiny(::Type{DeviceDual{T}}) where {T} = DeviceDual{T}(T(1e-30), zero(T))
+
 # log of a two-term difference with a cancellation guard: when the difference
 # has lost (nearly) all significance relative to its larger term -- Float32
 # rounding on a narrow interval, or an upper-tail CDF difference -- fall back to
@@ -426,10 +449,12 @@ end
     return ifelse(diff > T(8) * eps(T) * big, log(abs(diff)) - log_offset, log_fallback)
 end
 
-# log(Phi(zb) - Phi(za)), branch-for-branch mirror of the CPU
-# `_log_normal_cdf_diff` (erfc-based tails for numerical stability), with the
-# midpoint fallback on cancelled differences (the one-sided branches are single
-# erfc evaluations and cannot cancel).
+# log(Phi(zb) - Phi(za)), same branch structure as the CPU
+# `_log_normal_cdf_diff` but with each branch computed in log space: one-sided
+# tails via log(erfc) (asymptotic past underflow), same-sign two-sided
+# intervals via the erfcx difference identity (exact for narrow and far-tail
+# intervals where plain erfc differences cancel or underflow), and the
+# straddling branch directly (an addition -- it cannot cancel).
 @inline function _device_log_normal_cdf_diff(za::T, zb::T) where {T}
     root2 = sqrt(T(2))
     log2 = log(T(2))
@@ -441,15 +466,11 @@ end
         return _device_log_erfc(-zb / root2) - log2
     elseif upper_infinite
         return _device_log_erfc(za / root2) - log2
-    end
-    log_fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(abs(zb - za))
-    if za > zero(T)
-        return _device_log_diff_or_midpoint(_device_erfc(za / root2), _device_erfc(zb / root2), log2, log_fallback)
+    elseif za > zero(T)
+        return _device_log_erfc_diff(za / root2, zb / root2) - log2
     elseif zb < zero(T)
-        return _device_log_diff_or_midpoint(_device_erfc(-zb / root2), _device_erfc(-za / root2), log2, log_fallback)
+        return _device_log_erfc_diff(-zb / root2, -za / root2) - log2
     end
-    # straddling branch: erf(zb) and erf(za) have opposite signs, so the
-    # difference is an addition and cannot cancel -- no fallback needed
     return log(_device_erf(zb / root2) - _device_erf(za / root2)) - log2
 end
 
@@ -457,14 +478,9 @@ end
     base = _device_normal_logpdf(mu, sigma, x)
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
+    # collapsed/cancelled differences fall back to the log-space midpoint
+    # approximation inside `_device_log_normal_cdf_diff` itself
     log_z = _device_log_normal_cdf_diff(za, zb)
-    # a narrow valid interval can collapse the CDF difference to zero (Float32
-    # rounding, or a true double underflow with both bounds deep in one tail);
-    # fall back to the midpoint approximation log Z ~ log(phi(mid)) + log(width),
-    # exact as the width shrinks, instead of scoring +Inf through log(0)
-    fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(abs(zb - za))
-    collapse = (log_z == _device_neginf(T)) & isfinite(za) & isfinite(zb)
-    log_z = ifelse(collapse, fallback, log_z)
     # degrade the degenerate lower >= upper (zero-width) case to -Inf; the
     # exception-free device path must never accept it as an infinite density
     in_support = (x >= lower) & (x <= upper) & (lower < upper)
@@ -496,7 +512,9 @@ end
         big = _device_std_t_cdf(zb, nu)
         small = _device_std_t_cdf(za, nu)
     end
-    log_fallback = log(_device_std_t_pdf((za + zb) / T(2), nu)) + log(abs(zb - za))
+    # log-space midpoint density (t tails only underflow at astronomical |z|,
+    # but the log form is exact, cheaper, and symmetric with the normal path)
+    log_fallback = _device_studentt_logpdf(nu, zero(T), one(T), (za + zb) / T(2)) + log(abs(zb - za))
     return _device_log_diff_or_midpoint(big, small, zero(T), log_fallback)
 end
 

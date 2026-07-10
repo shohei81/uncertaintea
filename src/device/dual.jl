@@ -89,6 +89,9 @@ end
 @inline Base.log(a::DeviceDual{T}) where {T} = DeviceDual{T}(log(a.value), a.deriv / a.value)
 @inline Base.log1p(a::DeviceDual{T}) where {T} =
     DeviceDual{T}(log1p(a.value), a.deriv / (one(T) + a.value))
+@inline function Base.expm1(a::DeviceDual{T}) where {T}
+    DeviceDual{T}(expm1(a.value), exp(a.value) * a.deriv)
+end
 @inline function Base.sqrt(a::DeviceDual{T}) where {T}
     s = sqrt(a.value)
     DeviceDual{T}(s, a.deriv / (T(2) * s))
