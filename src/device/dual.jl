@@ -9,7 +9,7 @@
 #
 # Only the operations exercised by the device logjoint (see `math.jl` and
 # `_device_transform`) are implemented: +, -, *, /, ^ (integer & real powers),
-# exp, log, log1p, sqrt, abs, min, max, clamp, sin, cos, and value-based comparisons.
+# exp, log, log1p, sqrt, abs, min, max, clamp, sin, cos, round, and value-based comparisons.
 # `DeviceDual` is a `Number`, so mixed arithmetic with a plain real scalar is resolved
 # by Julia's promotion fallback (`+(::Number, ::Number) = +(promote(...)...)`) once we
 # register `promote_rule` / `convert` below.
@@ -96,6 +96,9 @@ end
     s = ifelse(a.value > zero(T), one(T), ifelse(a.value < zero(T), -one(T), zero(T)))
     DeviceDual{T}(abs(a.value), s * a.deriv)
 end
+# round is used only by the discrete-support checks; a rounded value is locally
+# constant, so its derivative channel is zero.
+@inline Base.round(a::DeviceDual{T}) where {T} = DeviceDual{T}(round(a.value), zero(T))
 @inline function Base.sin(a::DeviceDual{T}) where {T}
     DeviceDual{T}(sin(a.value), cos(a.value) * a.deriv)
 end

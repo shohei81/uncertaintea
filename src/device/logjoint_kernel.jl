@@ -110,6 +110,61 @@ end
     return (_device_beta_logpdf(alpha, beta, value) + lad, cur)
 end
 
+@inline function _device_score_step(step::DeviceStudentTChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    nu = _device_eval(step.nu, slots, col)
+    mu = _device_eval(step.mu, slots, col)
+    sigma = _device_eval(step.sigma, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_studentt_logpdf(nu, mu, sigma, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceInverseGammaChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    shape = _device_eval(step.shape, slots, col)
+    scale = _device_eval(step.scale, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_inversegamma_logpdf(shape, scale, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceWeibullChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    shape = _device_eval(step.shape, slots, col)
+    scale = _device_eval(step.scale, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_weibull_logpdf(shape, scale, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceBinomialChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    trials = _device_eval(step.trials, slots, col)
+    p = _device_eval(step.probability, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_binomial_logpdf(trials, p, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceGeometricChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    p = _device_eval(step.probability, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_geometric_logpdf(p, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceNegativeBinomialChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    successes = _device_eval(step.successes, slots, col)
+    p = _device_eval(step.probability, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_negativebinomial_logpdf(successes, p, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceCategoricalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    probabilities = _device_eval_args(step.probabilities, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_categorical_logpdf(probabilities, value) + lad, cur)
+end
+
 @inline function _device_score_step(step::DeviceBernoulliChoiceStep, slots, params, observed, tc, ls, col, cursor)
     p = _device_eval(step.probability, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)

@@ -44,6 +44,31 @@ end
     return theta
 end
 
+# issue #12 group 1 (continuous): studentt (identity latent), inversegamma and
+# weibull (log latents), studentt loop observations with a derived scale.
+@tea static function dev_heavytail_model(n)
+    loc ~ studentt(4.0, 0.0, 1.0)
+    s ~ inversegamma(3.0, 2.0)
+    w ~ weibull(2.0, 1.5)
+    for i = 1:n
+        {:y => i} ~ studentt(5.0, loc, s + w)
+    end
+    return loc
+end
+
+# issue #12 group 1 (discrete): binomial/geometric/negativebinomial observations and
+# categorical loop observations, all driven by one beta (logit) latent probability.
+@tea static function dev_count_model(n)
+    p ~ beta(2.0, 2.0)
+    {:k} ~ binomial(20, p)
+    {:g} ~ geometric(p)
+    {:nb} ~ negativebinomial(4.0, p)
+    for i = 1:n
+        {:c => i} ~ categorical(p / 2.0, p / 2.0, 1.0 - p)
+    end
+    return p
+end
+
 # helper: assert Float32 device output matches a Float64 reference with the
 # rtol 1e-4 / atol 1e-4*max(1,|ref|) contract, elementwise.
 function dev_check_float32(dev32, ref)
@@ -127,6 +152,126 @@ end
     @test dev3 ≈ ref3 rtol = 1e-12
     dev3_32 = device_batched_logjoint(dev_bernoulli_model, Float32.(params3), (4,), cm3; precision=Float32)
     @test dev_check_float32(dev3_32, ref3)
+end
+
+@testset "dev_numerical_parity_group1" begin
+    supported_ht, ht_issues = device_lowering_report(dev_heavytail_model)
+    @test supported_ht
+    @test isempty(ht_issues)
+    supported_ct, ct_issues = device_lowering_report(dev_count_model)
+    @test supported_ct
+    @test isempty(ct_issues)
+
+    # --- continuous: studentt / inversegamma / weibull ---
+    ys = [0.4, -0.7, 1.1, 0.2, 0.9]
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6]
+    dev = device_batched_logjoint(dev_heavytail_model, params, (5,), cm)
+    ref = batched_logjoint_unconstrained(dev_heavytail_model, params, (5,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_heavytail_model, Float32.(params), (5,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    # --- discrete: binomial / geometric / negativebinomial / categorical ---
+    cs = [1.0, 3.0, 2.0, 3.0]
+    cm2 = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    params2 = reshape([0.3, -0.8, 1.5], 1, 3)
+    dev2 = device_batched_logjoint(dev_count_model, params2, (4,), cm2)
+    ref2 = batched_logjoint_unconstrained(dev_count_model, params2, (4,), cm2)
+    @test dev2 ≈ ref2 rtol = 1e-12
+    dev2_32 = device_batched_logjoint(dev_count_model, Float32.(params2), (4,), cm2; precision=Float32)
+    @test dev_check_float32(dev2_32, ref2)
+
+    # out-of-support discrete observations must land on -Inf, matching the CPU path.
+    cm_oob = choicemap((:k, 25.0), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    dev_oob = device_batched_logjoint(dev_count_model, params2, (4,), cm_oob)
+    @test all(==(-Inf), dev_oob)
+    cm_cat_oob = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), (:c => 1, 4.0), ((:c => i, cs[i]) for i = 2:4)...)
+    dev_cat_oob = device_batched_logjoint(dev_count_model, params2, (4,), cm_cat_oob)
+    @test all(==(-Inf), dev_cat_oob)
+
+    # near-integer (non-integral) observations are out of support on the CPU path
+    # and must stay out of support on the device (exact-integer check).
+    cm_frac = choicemap((:k, 7.0000001), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    @test all(==(-Inf), device_batched_logjoint(dev_count_model, params2, (4,), cm_frac))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_count_model, params2, (4,), cm_frac))
+    cm_cat_frac = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), (:c => 1, 2.0000001), ((:c => i, cs[i]) for i = 2:4)...)
+    @test all(==(-Inf), device_batched_logjoint(dev_count_model, params2, (4,), cm_cat_frac))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_count_model, params2, (4,), cm_cat_frac))
+end
+
+# binomial trials via a named deterministic binding: the symbol is classified as an
+# index slot, which the kernel must materialize on device (codex review of issue #12
+# group 1; previously read uninitialized scratch).
+@tea static function dev_named_trials_model(n)
+    p ~ beta(2.0, 2.0)
+    trials = n + 1
+    {:k} ~ binomial(trials, p)
+    return p
+end
+
+@testset "dev_named_trials_index_slot" begin
+    supported, issues = device_lowering_report(dev_named_trials_model)
+    @test supported
+    @test isempty(issues)
+
+    cm = choicemap((:k, 7.0))
+    params = reshape([0.3, -0.8, 1.5], 1, 3)
+    dev = device_batched_logjoint(dev_named_trials_model, params, (10,), cm)
+    ref = batched_logjoint_unconstrained(dev_named_trials_model, params, (10,), cm)
+    @test dev ≈ ref rtol = 1e-12
+end
+
+# an argument rebound into a host-only loop bound: the emitted index deterministic
+# is pruned (no kernel expression reads it), so the rebinding audit must not fire.
+@tea static function dev_rebound_loop_bound_model(n)
+    n = n + 1
+    mu ~ normal(0.0, 1.0)
+    for i = 1:n
+        {:y => i} ~ normal(mu, 1.0)
+    end
+    return mu
+end
+
+# a loop-body binding read after the loop: a zero-trip loop would leave the slot
+# unwritten on device, so the audit must reject the shape.
+@tea static function dev_postloop_read_model(n)
+    mu ~ normal(0.0, 1.0)
+    for i = 1:n
+        c = i * 1.0
+    end
+    {:y} ~ normal(c, 1.0)
+    return mu
+end
+
+# a random choice binding feeding a loop bound: host staging can never resolve
+# the range, so lowering must reject it instead of leaking a staging error.
+@tea static function dev_choice_loop_bound_model(N)
+    p ~ beta(2.0, 2.0)
+    n = {:n} ~ binomial(N, p)
+    for i = 1:n
+        {:y => i} ~ normal(0.0, 1.0)
+    end
+    return p
+end
+
+@testset "dev_slot_read_write_audit" begin
+    sup_rebind, rebind_issues = device_lowering_report(dev_rebound_loop_bound_model)
+    @test sup_rebind
+    @test isempty(rebind_issues)
+    cm = choicemap((:y => 1, 0.4), (:y => 2, -0.7), (:y => 3, 1.1))
+    params = reshape([0.3, -0.8], 1, 2)
+    dev = device_batched_logjoint(dev_rebound_loop_bound_model, params, (2,), cm)
+    ref = batched_logjoint_unconstrained(dev_rebound_loop_bound_model, params, (2,), cm)
+    @test dev ≈ ref rtol = 1e-12
+
+    sup_postloop, postloop_issues = device_lowering_report(dev_postloop_read_model)
+    @test !sup_postloop
+    @test any(occursin("not materialized on the device", issue) for issue in postloop_issues)
+
+    sup_bound, bound_issues = device_lowering_report(dev_choice_loop_bound_model)
+    @test !sup_bound
+    @test any(occursin("random choice binding", issue) for issue in bound_issues)
 end
 
 @testset "dev_workspace_reuse" begin

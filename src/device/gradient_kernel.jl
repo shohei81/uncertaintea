@@ -123,6 +123,79 @@ end
     return (_device_beta_logpdf(al, be, v) + lad, cur)
 end
 
+@inline function _device_grad_score_step(step::DeviceStudentTChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    nu = _device_grad_eval(step.nu, slots, pidx, b)
+    mu = _device_grad_eval(step.mu, slots, pidx, b)
+    sigma = _device_grad_eval(step.sigma, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    n, m, s, v = promote(nu, mu, sigma, value)
+    return (_device_studentt_logpdf(n, m, s, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(step::DeviceInverseGammaChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    shape = _device_grad_eval(step.shape, slots, pidx, b)
+    scale = _device_grad_eval(step.scale, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    sh, sc, v = promote(shape, scale, value)
+    return (_device_inversegamma_logpdf(sh, sc, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(step::DeviceWeibullChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    shape = _device_grad_eval(step.shape, slots, pidx, b)
+    scale = _device_grad_eval(step.scale, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    sh, sc, v = promote(shape, scale, value)
+    return (_device_weibull_logpdf(sh, sc, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(step::DeviceBinomialChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    trials = _device_grad_eval(step.trials, slots, pidx, b)
+    p = _device_grad_eval(step.probability, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    n, pp, v = promote(trials, p, value)
+    return (_device_binomial_logpdf(n, pp, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(step::DeviceGeometricChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    p = _device_grad_eval(step.probability, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    pp, v = promote(p, value)
+    return (_device_geometric_logpdf(pp, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(
+    step::DeviceNegativeBinomialChoiceStep,
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
+    successes = _device_grad_eval(step.successes, slots, pidx, b)
+    p = _device_grad_eval(step.probability, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    r, pp, v = promote(successes, p, value)
+    return (_device_negativebinomial_logpdf(r, pp, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(step::DeviceCategoricalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    probabilities = _device_grad_eval_args(step.probabilities, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    # `_device_categorical_logpdf` promotes the heterogeneous probability tuple
+    # internally, so only the value dual drives the working type here.
+    return (_device_categorical_logpdf(probabilities, value) + lad, cur)
+end
+
 @inline function _device_grad_score_step(step::DeviceBernoulliChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
     p = _device_grad_eval(step.probability, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))

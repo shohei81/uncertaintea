@@ -92,6 +92,75 @@ end
     @test gpu_check_float32(vec(Float64.(gb)), vec(grefb))
 end
 
+# --- issue #12 group 1 families: logjoint + gradient parity smoke ------------
+
+@tea static function gpu_heavytail_model(n)
+    loc ~ studentt(4.0, 0.0, 1.0)
+    s ~ inversegamma(3.0, 2.0)
+    w ~ weibull(2.0, 1.5)
+    for i = 1:n
+        {:y => i} ~ studentt(5.0, loc, s + w)
+    end
+    return loc
+end
+
+@tea static function gpu_count_model(n)
+    p ~ beta(2.0, 2.0)
+    {:k} ~ binomial(20, p)
+    {:g} ~ geometric(p)
+    {:nb} ~ negativebinomial(4.0, p)
+    for i = 1:n
+        {:c => i} ~ categorical(p / 2.0, p / 2.0, 1.0 - p)
+    end
+    return p
+end
+
+@testset "device Metal GPU group-1 family smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU group-1 smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+
+    # continuous: studentt (identity) + inversegamma/weibull (log) latents.
+    ys = [0.4, -0.7, 1.1, 0.2, 0.9]
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6]
+    ref = batched_logjoint_unconstrained(gpu_heavytail_model, params, (5,), cm)
+    dev = device_batched_logjoint(gpu_heavytail_model, Float32.(params), (5,), cm; backend=backend, precision=Float32)
+    @test gpu_check_float32(dev, ref)
+    gref = batched_logjoint_gradient_unconstrained(gpu_heavytail_model, params, (5,), cm)
+    _, g = device_batched_logjoint_gradient(
+        gpu_heavytail_model,
+        Float32.(params),
+        (5,),
+        cm;
+        backend=backend,
+        precision=Float32,
+    )
+    @test gpu_check_float32(vec(Float64.(g)), vec(gref))
+
+    # discrete: binomial / geometric / negativebinomial / categorical observations.
+    cs = [1.0, 3.0, 2.0, 3.0]
+    cm2 = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    params2 = reshape([0.3, -0.8, 1.5], 1, 3)
+    ref2 = batched_logjoint_unconstrained(gpu_count_model, params2, (4,), cm2)
+    dev2 = device_batched_logjoint(gpu_count_model, Float32.(params2), (4,), cm2; backend=backend, precision=Float32)
+    @test gpu_check_float32(dev2, ref2)
+    g2ref = batched_logjoint_gradient_unconstrained(gpu_count_model, params2, (4,), cm2)
+    _, g2 = device_batched_logjoint_gradient(
+        gpu_count_model,
+        Float32.(params2),
+        (4,),
+        cm2;
+        backend=backend,
+        precision=Float32,
+    )
+    @test gpu_check_float32(vec(Float64.(g2)), vec(g2ref))
+end
+
 # --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
 # Mirrors test/uncertaintea/core/device_hmc_advi.jl on a Metal.MetalBackend at Float32.
 # RNG stays host-side, so results are statistically (not bitwise) equivalent to the

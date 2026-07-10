@@ -48,6 +48,45 @@ end
     return theta
 end
 
+# issue #12 group 1 mirrors of device_lowering_parity.jl.
+@tea static function devg_heavytail_model(n)
+    loc ~ studentt(4.0, 0.0, 1.0)
+    s ~ inversegamma(3.0, 2.0)
+    w ~ weibull(2.0, 1.5)
+    for i = 1:n
+        {:y => i} ~ studentt(5.0, loc, s + w)
+    end
+    return loc
+end
+
+@tea static function devg_count_model(n)
+    p ~ beta(2.0, 2.0)
+    {:k} ~ binomial(20, p)
+    {:g} ~ geometric(p)
+    {:nb} ~ negativebinomial(4.0, p)
+    for i = 1:n
+        {:c => i} ~ categorical(p / 2.0, p / 2.0, 1.0 - p)
+    end
+    return p
+end
+
+@tea static function devg_named_trials_model(n)
+    p ~ beta(2.0, 2.0)
+    trials = n + 1
+    {:k} ~ binomial(trials, p)
+    return p
+end
+
+# poisson observations with a gamma(log) latent rate: regression for round() on
+# DeviceDual (the discrete-support check inside the dual gradient walk).
+@tea static function devg_poisson_model(n)
+    lam ~ gamma(2.0, 1.0)
+    for i = 1:n
+        {:y => i} ~ poisson(lam)
+    end
+    return lam
+end
+
 @testset "devg_dual_algebra" begin
     # For each supported DeviceDual operation, the .deriv channel must match
     # ForwardDiff.derivative of the equivalent scalar function on a grid of points.
@@ -159,6 +198,50 @@ end
     g3ref = batched_logjoint_gradient_unconstrained(devg_bernoulli_model, params3, (4,), cm3)
     _, g3_32 = device_batched_logjoint_gradient(devg_bernoulli_model, Float32.(params3), (4,), cm3; precision=Float32)
     @test Float64.(g3_32) ≈ g3ref rtol = 1e-3 atol = 1e-3
+end
+
+@testset "devg_gradient_parity_group1" begin
+    # --- continuous: studentt / inversegamma / weibull ---
+    ys = [0.4, -0.7, 1.1, 0.2, 0.9]
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6]
+    v, g = device_batched_logjoint_gradient(devg_heavytail_model, params, (5,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_heavytail_model, params, (5,), cm)
+    vref = batched_logjoint_unconstrained(devg_heavytail_model, params, (5,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_heavytail_model, Float32.(params), (5,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+
+    # --- discrete: binomial / geometric / negativebinomial / categorical ---
+    cs = [1.0, 3.0, 2.0, 3.0]
+    cm2 = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    params2 = reshape([0.3, -0.8, 1.5], 1, 3)
+    v2, g2 = device_batched_logjoint_gradient(devg_count_model, params2, (4,), cm2)
+    g2ref = batched_logjoint_gradient_unconstrained(devg_count_model, params2, (4,), cm2)
+    v2ref = batched_logjoint_unconstrained(devg_count_model, params2, (4,), cm2)
+    @test g2 ≈ g2ref rtol = 1e-10
+    @test v2 ≈ v2ref rtol = 1e-12
+    _, g2_32 = device_batched_logjoint_gradient(devg_count_model, Float32.(params2), (4,), cm2; precision=Float32)
+    @test Float64.(g2_32) ≈ g2ref rtol = 1e-3 atol = 1e-3
+
+    # --- binomial trials via a named (index-slot) deterministic binding ---
+    cmk = choicemap((:k, 7.0))
+    paramsk = reshape([0.3, -0.8, 1.5], 1, 3)
+    vk, gk = device_batched_logjoint_gradient(devg_named_trials_model, paramsk, (10,), cmk)
+    gkref = batched_logjoint_gradient_unconstrained(devg_named_trials_model, paramsk, (10,), cmk)
+    vkref = batched_logjoint_unconstrained(devg_named_trials_model, paramsk, (10,), cmk)
+    @test gk ≈ gkref rtol = 1e-10
+    @test vk ≈ vkref rtol = 1e-12
+
+    # --- poisson round-on-dual regression ---
+    cmp = choicemap((:y => 1, 3.0), (:y => 2, 1.0))
+    paramsp = reshape([0.2, -0.5], 1, 2)
+    vp, gp = device_batched_logjoint_gradient(devg_poisson_model, paramsp, (2,), cmp)
+    gpref = batched_logjoint_gradient_unconstrained(devg_poisson_model, paramsp, (2,), cmp)
+    vpref = batched_logjoint_unconstrained(devg_poisson_model, paramsp, (2,), cmp)
+    @test gp ≈ gpref rtol = 1e-10
+    @test vp ≈ vpref rtol = 1e-12
 end
 
 @testset "devg_unsupported_throws" begin

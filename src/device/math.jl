@@ -80,15 +80,81 @@ end
     return ifelse((x > zero(T)) & (x < one(T)), base, _device_neginf(T))
 end
 
+@inline function _device_studentt_logpdf(nu::T, mu::T, sigma::T, x::T) where {T}
+    z = (x - mu) / sigma
+    return _device_loggamma((nu + one(T)) / T(2)) - _device_loggamma(nu / T(2)) -
+           (log(nu) + T(1.1447298858494002)) / T(2) - log(sigma) - # log(pi)
+           (nu + one(T)) * log1p(z * z / nu) / T(2)
+end
+
+@inline function _device_inversegamma_logpdf(shape::T, scale::T, x::T) where {T}
+    base = shape * log(scale) - _device_loggamma(shape) -
+           (shape + one(T)) * log(x) - scale / x
+    return ifelse(x > zero(T), base, _device_neginf(T))
+end
+
+@inline function _device_weibull_logpdf(shape::T, scale::T, x::T) where {T}
+    base = log(shape) + (shape - one(T)) * log(x) -
+           shape * log(scale) - exp(shape * (log(x) - log(scale)))
+    at_zero = ifelse(shape < one(T), T(Inf), ifelse(shape == one(T), -log(scale), _device_neginf(T)))
+    return ifelse(x > zero(T), base, ifelse(x == zero(T), at_zero, _device_neginf(T)))
+end
+
 @inline function _device_bernoulli_logpdf(p::T, x::T) where {T}
     return ifelse(x > T(0.5), log(p), log1p(-p))
 end
 
+# Nonnegative exact-integer support check shared by the count families; mirrors the
+# CPU `_poisson_count` acceptance (staged integer counts are exact in Float32/64).
+@inline _device_count_ok(x::T, k::T) where {T} = (x >= zero(T)) & (x == k)
+
 @inline function _device_poisson_logpdf(lambda::T, x::T) where {T}
     k = round(x)
-    in_support = (x >= zero(T)) & (abs(x - k) <= T(1e-6) * (one(T) + abs(x)))
     base = k * log(lambda) - lambda - _device_loggamma(k + one(T))
+    return ifelse(_device_count_ok(x, k), base, _device_neginf(T))
+end
+
+@inline function _device_binomial_logpdf(trials::T, p::T, x::T) where {T}
+    n = round(trials)
+    k = round(x)
+    in_support = _device_count_ok(x, k) & _device_count_ok(trials, n) & (k <= n)
+    log_combination = _device_loggamma(n + one(T)) - _device_loggamma(k + one(T)) -
+                      _device_loggamma(n - k + one(T))
+    # guard the k == 0 / k == n corners so p in {0, 1} cannot produce 0 * -Inf
+    base = log_combination + ifelse(k > zero(T), k * log(p), zero(T)) +
+           ifelse(k < n, (n - k) * log1p(-p), zero(T))
     return ifelse(in_support, base, _device_neginf(T))
+end
+
+@inline function _device_geometric_logpdf(p::T, x::T) where {T}
+    k = round(x)
+    base = log(p) + ifelse(k > zero(T), k * log1p(-p), zero(T))
+    return ifelse(_device_count_ok(x, k), base, _device_neginf(T))
+end
+
+@inline function _device_negativebinomial_logpdf(successes::T, p::T, x::T) where {T}
+    k = round(x)
+    base =
+        _device_loggamma(k + successes) - _device_loggamma(successes) -
+        _device_loggamma(k + one(T)) + successes * log(p) +
+        ifelse(k > zero(T), k * log1p(-p), zero(T))
+    return ifelse(_device_count_ok(x, k), base, _device_neginf(T))
+end
+
+# Compile-time unrolled selection of log(probabilities[k]); unmatched entries
+# contribute an exact zero so heterogeneous (literal/dual) tuples promote safely.
+@inline _device_categorical_pick(::Tuple{}, k, index::Int32, acc) = acc
+@inline function _device_categorical_pick(probabilities::Tuple, k, index::Int32, acc)
+    logp = log(first(probabilities))
+    term = ifelse(k == index, logp, zero(logp))
+    return _device_categorical_pick(Base.tail(probabilities), k, index + Int32(1), acc + term)
+end
+
+@inline function _device_categorical_logpdf(probabilities::Tuple, x::T) where {T}
+    k = round(x)
+    in_support = (x >= one(T)) & (x <= T(length(probabilities))) & (x == k)
+    total = _device_categorical_pick(probabilities, k, Int32(1), zero(T))
+    return ifelse(in_support, total, oftype(total, -Inf))
 end
 
 # Parameter transform codes shared by lowering, kernel, and staging.
