@@ -395,13 +395,35 @@ end
     return exp(-z * z / T(2)) * T(0.3989422804014327) # 1/sqrt(2*pi)
 end
 
+# log(erfc(x)) with an asymptotic fallback once erfc underflows (Float32 loses
+# erfc around x ~ 9.3, far before the CPU Float64 reference):
+# erfc(x) ~ exp(-x^2)/(x sqrt(pi)) * (1 - u/2 + 3u^2/4 - 15u^3/8), u = 1/x^2.
+# At the smallest engaging x the truncated series is accurate to ~1e-7, well
+# inside the Float32 tolerance contract; the derivative matches to the same
+# order.
+@inline function _device_log_erfc(x::T) where {T}
+    e = _device_erfc(x)
+    u = one(T) / (x * x)
+    # clamp: the series is only SELECTED for large x (u <= ~0.012, argument
+    # ~ -0.006), but ifelse evaluates it everywhere and small x would push the
+    # log1p argument below -1 (a DomainError on CPU and GPU alike)
+    series = log1p(max(-u / T(2) + T(0.75) * u * u - T(1.875) * u * u * u, -T(0.5)))
+    # log(abs(x)): the asymptote is only SELECTED for large positive x (erfc
+    # underflow), but ifelse evaluates both branches and a GPU log() throws a
+    # DomainError on negative arguments instead of returning NaN
+    asymptotic = -x * x - log(abs(x)) - T(0.5723649429247001) + series # log(sqrt(pi))
+    return ifelse(e > zero(T), log(e), asymptotic)
+end
+
 # log of a two-term difference with a cancellation guard: when the difference
 # has lost (nearly) all significance relative to its larger term -- Float32
 # rounding on a narrow interval, or an upper-tail CDF difference -- fall back to
 # the midpoint approximation log(pdf(mid)) + log(width), exact as width -> 0.
 @inline function _device_log_diff_or_midpoint(big::T, small::T, log_offset::T, log_fallback::T) where {T}
     diff = big - small
-    return ifelse(diff > T(8) * eps(T) * big, log(diff) - log_offset, log_fallback)
+    # abs: a rounded-negative diff never SELECTS the log branch, but ifelse
+    # evaluates it, and a GPU log() throws on negative arguments
+    return ifelse(diff > T(8) * eps(T) * big, log(abs(diff)) - log_offset, log_fallback)
 end
 
 # log(Phi(zb) - Phi(za)), branch-for-branch mirror of the CPU
@@ -416,11 +438,11 @@ end
     if lower_infinite && upper_infinite
         return zero(T)
     elseif lower_infinite
-        return log(_device_erfc(-zb / root2)) - log2
+        return _device_log_erfc(-zb / root2) - log2
     elseif upper_infinite
-        return log(_device_erfc(za / root2)) - log2
+        return _device_log_erfc(za / root2) - log2
     end
-    log_fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(zb - za)
+    log_fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(abs(zb - za))
     if za > zero(T)
         return _device_log_diff_or_midpoint(_device_erfc(za / root2), _device_erfc(zb / root2), log2, log_fallback)
     elseif zb < zero(T)
@@ -440,7 +462,7 @@ end
     # rounding, or a true double underflow with both bounds deep in one tail);
     # fall back to the midpoint approximation log Z ~ log(phi(mid)) + log(width),
     # exact as the width shrinks, instead of scoring +Inf through log(0)
-    fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(zb - za)
+    fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(abs(zb - za))
     collapse = (log_z == _device_neginf(T)) & isfinite(za) & isfinite(zb)
     log_z = ifelse(collapse, fallback, log_z)
     # degrade the degenerate lower >= upper (zero-width) case to -Inf; the
@@ -449,17 +471,40 @@ end
     return ifelse(in_support, base - log_z, _device_neginf(T))
 end
 
+# log(T_cdf(zb) - T_cdf(za)) for a constant nu. One-sided normalizers use the
+# symmetry S(z) = cdf(-z) so a tail probability is computed DIRECTLY (the
+# regularized incomplete beta is small there and keeps relative accuracy) rather
+# than as 1 - cdf, which cancels at Float32. Two-sided same-sign intervals use
+# the tail-side representation for the same reason, with the midpoint fallback
+# guarding what cancellation remains; the straddling branch spans ~0.5 of mass
+# on each side, so only a narrow straddle can cancel (also caught by the guard,
+# and its midpoint is finite by construction).
+@inline function _device_t_log_normalizer(nu::T, za::T, zb::T) where {T}
+    lower_infinite = isinf(za) & (za < zero(T))
+    upper_infinite = isinf(zb) & (zb > zero(T))
+    if lower_infinite && upper_infinite
+        return zero(T)
+    elseif lower_infinite
+        return log(_device_std_t_cdf(zb, nu))
+    elseif upper_infinite
+        return log(_device_std_t_cdf(-za, nu))
+    end
+    if za > zero(T) # right tail: S(za) - S(zb) = cdf(-za) - cdf(-zb)
+        big = _device_std_t_cdf(-za, nu)
+        small = _device_std_t_cdf(-zb, nu)
+    else # left tail and straddling: cdf(zb) - cdf(za)
+        big = _device_std_t_cdf(zb, nu)
+        small = _device_std_t_cdf(za, nu)
+    end
+    log_fallback = log(_device_std_t_pdf((za + zb) / T(2), nu)) + log(abs(zb - za))
+    return _device_log_diff_or_midpoint(big, small, zero(T), log_fallback)
+end
+
 @inline function _device_truncatedstudentt_logpdf(nu::T, mu::T, sigma::T, lower::T, upper::T, x::T) where {T}
     base = _device_studentt_logpdf(nu, mu, sigma, x)
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
-    # a narrow valid interval can round both CDFs together at Float32 (e.g.
-    # nu/(nu + z^2) -> 1), and an upper-tail difference cancels against 1; the
-    # helper falls back to log Z ~ log(pdf(mid)) + log(width) on cancellation
-    cdf_a = _device_std_t_cdf(za, nu)
-    cdf_b = _device_std_t_cdf(zb, nu)
-    log_fallback = log(_device_std_t_pdf((za + zb) / T(2), nu)) + log(zb - za)
-    log_z = _device_log_diff_or_midpoint(cdf_b, cdf_a, zero(T), log_fallback)
+    log_z = _device_t_log_normalizer(nu, za, zb)
     # the CPU reference REJECTS lower >= upper (ArgumentError); the exception-free
     # device contract degrades that to -Inf instead of an infinite density
     in_support = (x >= lower) & (x <= upper) & (lower < upper)

@@ -335,6 +335,57 @@ end
     return m
 end
 
+# one-sided far-tail truncations at Float32 (codex review round 3): the normal
+# side loses erfc to underflow around z ~ 13 (Float32) and must switch to the
+# asymptotic log(erfc); the Student-t side computes the tail probability
+# directly via the symmetry S(z) = cdf(-z) instead of cancelling against 1.
+@tea static function dev_onesided_tail_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 15.0, Inf)
+    return m
+end
+
+@tea static function dev_onesided_tail_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(5.0, m, 1.0, 100.0, Inf)
+    return m
+end
+
+@testset "dev_truncated_onesided_tail_f32" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+
+    dev_tn = device_batched_logjoint(dev_onesided_tail_tn_model, params32, (), choicemap((:y, 15.2)); precision=Float32)
+    ref_tn = batched_logjoint_unconstrained(dev_onesided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.2)))
+    @test all(isfinite, dev_tn)
+    @test dev_check_float32(dev_tn, ref_tn)
+    _, g_tn = device_batched_logjoint_gradient(
+        dev_onesided_tail_tn_model,
+        params32,
+        (),
+        choicemap((:y, 15.2));
+        precision=Float32,
+    )
+    g_tn_ref = batched_logjoint_gradient_unconstrained(dev_onesided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.2)))
+    @test all(isfinite, g_tn)
+    @test dev_check_float32(vec(g_tn), vec(g_tn_ref))
+
+    dev_tt = device_batched_logjoint(dev_onesided_tail_tt_model, params32, (), choicemap((:y, 105.0)); precision=Float32)
+    ref_tt = batched_logjoint_unconstrained(dev_onesided_tail_tt_model, Float64.(params32), (), choicemap((:y, 105.0)))
+    @test all(isfinite, dev_tt)
+    @test dev_check_float32(dev_tt, ref_tt)
+    _, g_tt = device_batched_logjoint_gradient(
+        dev_onesided_tail_tt_model,
+        params32,
+        (),
+        choicemap((:y, 105.0));
+        precision=Float32,
+    )
+    g_tt_ref =
+        batched_logjoint_gradient_unconstrained(dev_onesided_tail_tt_model, Float64.(params32), (), choicemap((:y, 105.0)))
+    @test all(isfinite, g_tt)
+    @test dev_check_float32(vec(g_tt), vec(g_tt_ref))
+end
+
 @testset "dev_truncated_narrow_interval_f32" begin
     params32 = reshape(Float32[0.01, -0.02], 1, 2)
     dev_tt = device_batched_logjoint(dev_narrow_tt_model, params32, (), choicemap((:y, 0.0)); precision=Float32)
