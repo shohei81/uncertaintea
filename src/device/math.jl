@@ -507,18 +507,16 @@ end
 # log(erfc(a) - erfc(b)) for 0 < a < b, cancellation- and underflow-free:
 # erfc(a) - erfc(b) = e^{-a^2} erfcx(a) (1 - e^{a^2-b^2} erfcx(b)/erfcx(a)),
 # so the tail magnitude lives in the -a^2 log term and the parenthesis is
-# -expm1(s) with s < 0, exact for narrow AND wide intervals alike.
-@inline function _device_log_erfc_diff(a::T, b::T) where {T}
+# -expm1(s) with s < 0. `s` carries ~eps-level absolute error from the erfcx
+# ratio, so once |s| sinks under sqrt(eps) the expm1 form has lost half its
+# digits -- there the caller-supplied log-space midpoint form takes over (its
+# own error is O(s^2), negligible exactly where it is selected).
+@inline function _device_log_erfc_diff(a::T, b::T, log_fallback::T) where {T}
     ea = _device_erfcx(a)
     eb = _device_erfcx(b)
     s = (a - b) * (a + b) + log(eb / ea)
-    return -a * a + log(ea) + log(-expm1(min(s, -_device_tiny(T))))
+    return ifelse(s < -sqrt(eps(T)), -a * a + log(ea) + log(abs(expm1(s))), log_fallback)
 end
-
-# smallest useful positive magnitude for clamping (keeps -expm1(s) > 0 when
-# rounding lands s exactly on zero)
-@inline _device_tiny(::Type{T}) where {T} = T(1e-30)
-@inline _device_tiny(::Type{DeviceDual{T}}) where {T} = DeviceDual{T}(T(1e-30), zero(T))
 
 # log(Phi(zb) - Phi(za)), same branch structure as the CPU
 # `_log_normal_cdf_diff` but with each branch computed in log space: one-sided
@@ -537,10 +535,16 @@ end
         return _device_log_erfc(-zb / root2) - log2
     elseif upper_infinite
         return _device_log_erfc(za / root2) - log2
-    elseif za > zero(T)
-        return _device_log_erfc_diff(za / root2, zb / root2) - log2
+    end
+    # log-space midpoint form for ulp-narrow same-sign intervals (mid^2 is
+    # symmetric under the za <-> -zb mirror, so both tails share it); the +log2
+    # aligns it with the erfc-difference scale the branches subtract log2 from
+    mid = (za + zb) / T(2)
+    log_fallback = -mid * mid / T(2) - T(0.9189385332046727) + log(abs(zb - za)) + log2
+    if za > zero(T)
+        return _device_log_erfc_diff(za / root2, zb / root2, log_fallback) - log2
     elseif zb < zero(T)
-        return _device_log_erfc_diff(-zb / root2, -za / root2) - log2
+        return _device_log_erfc_diff(-zb / root2, -za / root2, log_fallback) - log2
     end
     return log(_device_erf(zb / root2) - _device_erf(za / root2)) - log2
 end
@@ -588,10 +592,11 @@ end
         log_small = _device_std_t_log_cdf(za, nu)
     end
     s = log_small - log_big
-    # an ulp-narrow interval can round s to zero; the log-space midpoint form is
-    # exact there (and log(abs(expm1(s))) keeps the unselected branch GPU-safe)
+    # under sqrt(eps) the log-CDF difference is rounding noise; the log-space
+    # midpoint form is exact exactly there (its error is O(s^2)), and
+    # log(abs(expm1(s))) keeps the unselected branch GPU-safe
     log_fallback = _device_studentt_logpdf(nu, zero(T), one(T), (za + zb) / T(2)) + log(abs(zb - za))
-    return ifelse(s < zero(T), log_big + log(abs(expm1(s))), log_fallback)
+    return ifelse(s < -sqrt(eps(T)), log_big + log(abs(expm1(s))), log_fallback)
 end
 
 @inline function _device_truncatedstudentt_logpdf(nu::T, mu::T, sigma::T, lower::T, upper::T, x::T) where {T}

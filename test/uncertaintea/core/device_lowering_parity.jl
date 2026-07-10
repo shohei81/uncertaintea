@@ -489,6 +489,15 @@ end
     @test all(isapprox(Float64(a), b; rtol=2e-3, atol=2e-3) for (a, b) in zip(vec(g32), vec(g64)))
 end
 
+# ultra-narrow same-sign interval (codex review round 8): `s` in the erfcx
+# difference sinks under the Float32 rounding noise floor, so the sqrt(eps)
+# threshold must hand over to the log-space midpoint form.
+@tea static function dev_ultranarrow_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 0.5, 0.500001)
+    return m
+end
+
 @testset "dev_truncated_narrow_interval_f32" begin
     params32 = reshape(Float32[0.01, -0.02], 1, 2)
     dev_tt = device_batched_logjoint(dev_narrow_tt_model, params32, (), choicemap((:y, 0.0)); precision=Float32)
@@ -500,6 +509,18 @@ end
     ref_tn = batched_logjoint_unconstrained(dev_narrow_tn_model, Float64.(params32), (), choicemap((:y, 0.50005)))
     @test all(isfinite, dev_tn)
     @test dev_check_float32(dev_tn, ref_tn)
+
+    cm_ultra = choicemap((:y, 0.5000005))
+    dev_ultra = device_batched_logjoint(dev_ultranarrow_tn_model, params32, (), cm_ultra; precision=Float32)
+    ref_ultra = batched_logjoint_unconstrained(dev_ultranarrow_tn_model, Float64.(params32), (), cm_ultra)
+    @test all(isfinite, dev_ultra)
+    @test all(isapprox(Float64(d), r; rtol=2e-3, atol=2e-3 * max(1.0, abs(r))) for (d, r) in zip(dev_ultra, ref_ultra))
+    _, g_ultra = device_batched_logjoint_gradient(dev_ultranarrow_tn_model, params32, (), cm_ultra; precision=Float32)
+    g_ultra_ref = batched_logjoint_gradient_unconstrained(dev_ultranarrow_tn_model, Float64.(params32), (), cm_ultra)
+    @test all(isfinite, g_ultra)
+    @test all(
+        isapprox(Float64(d), r; rtol=2e-3, atol=2e-3 * max(1.0, abs(r))) for (d, r) in zip(vec(g_ultra), vec(g_ultra_ref))
+    )
 end
 
 # an argument rebound into a host-only loop bound: the emitted index deterministic
