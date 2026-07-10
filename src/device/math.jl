@@ -336,23 +336,33 @@ end
     return h
 end
 
-@inline function _device_beta_inc_reg(a::T, b::T, x::T) where {T}
+# `x` and `y` are the caller-computed pair with x + y == 1 in exact arithmetic;
+# passing both lets the caller keep each accurate near its own zero (recomputing
+# `1 - x` at x ~ 1 destroys the low bits Float32 needs, e.g. the Student-t CDF
+# at small |z|).
+@inline function _device_beta_inc_reg_parts(a::T, b::T, x::T, y::T) where {T}
     x <= zero(T) && return zero(T)
-    x >= one(T) && return one(T)
-    front = exp(a * log(x) + b * log1p(-x) + _device_loggamma(a + b) - _device_loggamma(a) - _device_loggamma(b))
+    y <= zero(T) && return one(T)
+    logx = ifelse(x < T(0.5), log(x), log1p(-y))
+    logy = ifelse(y < T(0.5), log(y), log1p(-x))
+    front = exp(a * logx + b * logy + _device_loggamma(a + b) - _device_loggamma(a) - _device_loggamma(b))
     if x < (a + one(T)) / (a + b + T(2))
         return front * _device_betacf(a, b, x) / a
     end
-    return one(T) - front * _device_betacf(b, a, one(T) - x) / b
+    return one(T) - front * _device_betacf(b, a, y) / b
 end
+
+@inline _device_beta_inc_reg(a::T, b::T, x::T) where {T} = _device_beta_inc_reg_parts(a, b, x, one(T) - x)
 
 # Standard Student-t CDF for a lowering-guaranteed constant nu; mirrors the CPU
 # `_std_t_cdf` branch structure exactly.
 @inline function _device_std_t_cdf(z::T, nu::T) where {T}
     isinf(z) && return ifelse(z > zero(T), one(T), zero(T))
     z == zero(T) && return T(0.5)
-    x = nu / (nu + z * z)
-    regularized = _device_beta_inc_reg(nu / T(2), T(0.5), x)
+    denominator = nu + z * z
+    x = nu / denominator
+    y = z * z / denominator # accurate complement of x (see _device_beta_inc_reg_parts)
+    regularized = _device_beta_inc_reg_parts(nu / T(2), T(0.5), x, y)
     return ifelse(z > zero(T), one(T) - regularized / T(2), regularized / T(2))
 end
 
@@ -385,8 +395,19 @@ end
     return exp(-z * z / T(2)) * T(0.3989422804014327) # 1/sqrt(2*pi)
 end
 
+# log of a two-term difference with a cancellation guard: when the difference
+# has lost (nearly) all significance relative to its larger term -- Float32
+# rounding on a narrow interval, or an upper-tail CDF difference -- fall back to
+# the midpoint approximation log(pdf(mid)) + log(width), exact as width -> 0.
+@inline function _device_log_diff_or_midpoint(big::T, small::T, log_offset::T, log_fallback::T) where {T}
+    diff = big - small
+    return ifelse(diff > T(8) * eps(T) * big, log(diff) - log_offset, log_fallback)
+end
+
 # log(Phi(zb) - Phi(za)), branch-for-branch mirror of the CPU
-# `_log_normal_cdf_diff` (erfc-based tails for numerical stability).
+# `_log_normal_cdf_diff` (erfc-based tails for numerical stability), with the
+# midpoint fallback on cancelled differences (the one-sided branches are single
+# erfc evaluations and cannot cancel).
 @inline function _device_log_normal_cdf_diff(za::T, zb::T) where {T}
     root2 = sqrt(T(2))
     log2 = log(T(2))
@@ -398,11 +419,15 @@ end
         return log(_device_erfc(-zb / root2)) - log2
     elseif upper_infinite
         return log(_device_erfc(za / root2)) - log2
-    elseif za > zero(T)
-        return log(_device_erfc(za / root2) - _device_erfc(zb / root2)) - log2
-    elseif zb < zero(T)
-        return log(_device_erfc(-zb / root2) - _device_erfc(-za / root2)) - log2
     end
+    log_fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(zb - za)
+    if za > zero(T)
+        return _device_log_diff_or_midpoint(_device_erfc(za / root2), _device_erfc(zb / root2), log2, log_fallback)
+    elseif zb < zero(T)
+        return _device_log_diff_or_midpoint(_device_erfc(-zb / root2), _device_erfc(-za / root2), log2, log_fallback)
+    end
+    # straddling branch: erf(zb) and erf(za) have opposite signs, so the
+    # difference is an addition and cannot cancel -- no fallback needed
     return log(_device_erf(zb / root2) - _device_erf(za / root2)) - log2
 end
 
@@ -410,15 +435,31 @@ end
     base = _device_normal_logpdf(mu, sigma, x)
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
-    in_support = (x >= lower) & (x <= upper)
-    return ifelse(in_support, base - _device_log_normal_cdf_diff(za, zb), _device_neginf(T))
+    log_z = _device_log_normal_cdf_diff(za, zb)
+    # a narrow valid interval can collapse the CDF difference to zero (Float32
+    # rounding, or a true double underflow with both bounds deep in one tail);
+    # fall back to the midpoint approximation log Z ~ log(phi(mid)) + log(width),
+    # exact as the width shrinks, instead of scoring +Inf through log(0)
+    fallback = log(_device_std_normal_pdf((za + zb) / T(2))) + log(zb - za)
+    collapse = (log_z == _device_neginf(T)) & isfinite(za) & isfinite(zb)
+    log_z = ifelse(collapse, fallback, log_z)
+    # degrade the degenerate lower >= upper (zero-width) case to -Inf; the
+    # exception-free device path must never accept it as an infinite density
+    in_support = (x >= lower) & (x <= upper) & (lower < upper)
+    return ifelse(in_support, base - log_z, _device_neginf(T))
 end
 
 @inline function _device_truncatedstudentt_logpdf(nu::T, mu::T, sigma::T, lower::T, upper::T, x::T) where {T}
     base = _device_studentt_logpdf(nu, mu, sigma, x)
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
-    log_z = log(_device_std_t_cdf(zb, nu) - _device_std_t_cdf(za, nu))
+    # a narrow valid interval can round both CDFs together at Float32 (e.g.
+    # nu/(nu + z^2) -> 1), and an upper-tail difference cancels against 1; the
+    # helper falls back to log Z ~ log(pdf(mid)) + log(width) on cancellation
+    cdf_a = _device_std_t_cdf(za, nu)
+    cdf_b = _device_std_t_cdf(zb, nu)
+    log_fallback = log(_device_std_t_pdf((za + zb) / T(2), nu)) + log(zb - za)
+    log_z = _device_log_diff_or_midpoint(cdf_b, cdf_a, zero(T), log_fallback)
     # the CPU reference REJECTS lower >= upper (ArgumentError); the exception-free
     # device contract degrades that to -Inf instead of an infinite density
     in_support = (x >= lower) & (x <= upper) & (lower < upper)

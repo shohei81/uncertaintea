@@ -41,6 +41,7 @@ Base.convert(::Type{DeviceDual{T}}, x::DeviceDual) where {T<:Real} =
     DeviceDual{T}(convert(T, x.value), convert(T, x.deriv))
 Base.convert(::Type{DeviceDual{T}}, x::DeviceDual{T}) where {T<:Real} = x
 
+Base.eps(::Type{DeviceDual{T}}) where {T<:Real} = DeviceDual{T}(eps(T), zero(T))
 Base.zero(::Type{DeviceDual{T}}) where {T<:Real} = DeviceDual{T}(zero(T), zero(T))
 Base.one(::Type{DeviceDual{T}}) where {T<:Real} = DeviceDual{T}(one(T), zero(T))
 Base.zero(x::DeviceDual{T}) where {T<:Real} = zero(DeviceDual{T})

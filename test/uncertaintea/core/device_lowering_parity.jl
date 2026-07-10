@@ -314,9 +314,38 @@ end
     @test all(isfinite, dev_tail)
     @test dev_tail ≈ ref_tail rtol = 1e-10
 
-    # degenerate lower == upper bounds: the CPU reference throws; the
-    # exception-free device path must degrade to -Inf, never +Inf
+    # degenerate lower == upper bounds: the CPU reference throws (studentt) or
+    # hits log(0); the exception-free device path must degrade to -Inf, never +Inf
     @test UncertainTea._device_truncatedstudentt_logpdf(5.0, 0.0, 1.0, 1.0, 1.0, 1.0) == -Inf
+    @test UncertainTea._device_truncatednormal_logpdf(0.0, 1.0, 1.0, 1.0, 1.0) == -Inf
+end
+
+# narrow valid intervals at Float32: the CDF difference quantizes (codex review);
+# the accurate-complement beta_inc and the midpoint fallback keep the device
+# finite and close to the Float64 CPU reference.
+@tea static function dev_narrow_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(5.0, m, 1.0, -1.0e-4, 1.0e-4)
+    return m
+end
+
+@tea static function dev_narrow_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 0.5, 0.5001)
+    return m
+end
+
+@testset "dev_truncated_narrow_interval_f32" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+    dev_tt = device_batched_logjoint(dev_narrow_tt_model, params32, (), choicemap((:y, 0.0)); precision=Float32)
+    ref_tt = batched_logjoint_unconstrained(dev_narrow_tt_model, Float64.(params32), (), choicemap((:y, 0.0)))
+    @test all(isfinite, dev_tt)
+    @test dev_check_float32(dev_tt, ref_tt)
+
+    dev_tn = device_batched_logjoint(dev_narrow_tn_model, params32, (), choicemap((:y, 0.50005)); precision=Float32)
+    ref_tn = batched_logjoint_unconstrained(dev_narrow_tn_model, Float64.(params32), (), choicemap((:y, 0.50005)))
+    @test all(isfinite, dev_tn)
+    @test dev_check_float32(dev_tn, ref_tn)
 end
 
 # an argument rebound into a host-only loop bound: the emitted index deterministic
