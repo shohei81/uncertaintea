@@ -664,9 +664,18 @@ function _lower_device_step!(
         expr = _lower_device_expr(step.expr, backend.generic_slots, T, issues, "deterministic assignment")
         isnothing(expr) && return nothing
         push!(out, DeviceDeterministicStep(expr, Int32(slot)))
+    elseif backend.index_slots[slot]
+        # Index deterministic slots are staged on the host for loop iterables and
+        # addresses, but kernel expressions may read them too (e.g. binomial trials),
+        # so emit them on device when the expression lowers; a host-only leftover
+        # (e.g. a range iterable) is caught by the read/write audit below if a
+        # kernel expression references it.
+        probe_issues = String[]
+        expr = _lower_device_expr(step.expr, backend.generic_slots, T, probe_issues, "deterministic assignment")
+        isnothing(expr) || push!(out, DeviceDeterministicStep(expr, Int32(slot)))
     end
-    # Index/generic deterministic slots only feed loop iterables / addresses, which
-    # are resolved on the host during staging; the kernel does not need them.
+    # Generic deterministic slots only feed addresses, which are resolved on the
+    # host during staging; the kernel does not need them.
     return nothing
 end
 
@@ -683,6 +692,49 @@ function _lower_device_step!(out, step::BackendLoopPlanStep, backend, layout, ::
     end
     any(isnothing, body_vec) && return nothing
     push!(out, DeviceLoopStep(loop_id, Int32(step.iterator_slot), tuple(body_vec...)))
+    return nothing
+end
+
+# Read/write audit over the lowered steps: which slots kernel expressions read,
+# and which slots the kernel itself materializes.
+_device_expr_reads!(reads::BitSet, expr::DeviceSlotExpr) = (push!(reads, Int(expr.slot)); nothing)
+function _device_expr_reads!(reads::BitSet, expr::DevicePrimitiveExpr)
+    for arg in expr.args
+        _device_expr_reads!(reads, arg)
+    end
+    return nothing
+end
+_device_expr_reads!(reads::BitSet, expr::AbstractDeviceExpr) = nothing
+
+function _device_collect_expr_reads!(reads::BitSet, steps)
+    for step in steps
+        if step isa DeviceLoopStep
+            _device_collect_expr_reads!(reads, step.body)
+            continue
+        end
+        for name in propertynames(step)
+            value = getproperty(step, name)
+            if value isa AbstractDeviceExpr
+                _device_expr_reads!(reads, value)
+            elseif value isa Tuple # categorical probabilities
+                for element in value
+                    element isa AbstractDeviceExpr && _device_expr_reads!(reads, element)
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+function _device_collect_written_slots!(written::BitSet, steps)
+    for step in steps
+        if step isa DeviceLoopStep
+            step.iterator_slot > Int32(0) && push!(written, Int(step.iterator_slot))
+            _device_collect_written_slots!(written, step.body)
+        elseif step.binding_slot > Int32(0)
+            push!(written, Int(step.binding_slot))
+        end
+    end
     return nothing
 end
 
@@ -706,6 +758,28 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         _lower_device_step!(out, step, backend, layout, T, issues, loop_counter, false)
     end
 
+    if !isempty(issues)
+        return issues, nothing
+    end
+
+    # every slot a kernel expression reads must be materialized on the device:
+    # written by an earlier kernel step (choice/deterministic binding, loop
+    # iterator) or staged from a model argument (issue #38). Host-only slots
+    # (index/generic deterministics that did not lower, e.g. range iterables)
+    # would otherwise be read as uninitialized scratch.
+    device_written = BitSet(executionplan(model).environment_layout.argument_slots)
+    _device_collect_written_slots!(device_written, out)
+    device_reads = BitSet()
+    _device_collect_expr_reads!(device_reads, out)
+    for slot in device_reads
+        if !(slot in device_written)
+            symbol = executionplan(model).environment_layout.symbols[slot]
+            _device_issue!(
+                issues,
+                "device lowering cannot read binding `$symbol` (slot $slot): it is only materialized on the host",
+            )
+        end
+    end
     if !isempty(issues)
         return issues, nothing
     end

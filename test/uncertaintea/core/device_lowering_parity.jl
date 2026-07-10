@@ -191,6 +191,28 @@ end
     @test all(==(-Inf), dev_cat_oob)
 end
 
+# binomial trials via a named deterministic binding: the symbol is classified as an
+# index slot, which the kernel must materialize on device (codex review of issue #12
+# group 1; previously read uninitialized scratch).
+@tea static function dev_named_trials_model(n)
+    p ~ beta(2.0, 2.0)
+    trials = n + 1
+    {:k} ~ binomial(trials, p)
+    return p
+end
+
+@testset "dev_named_trials_index_slot" begin
+    supported, issues = device_lowering_report(dev_named_trials_model)
+    @test supported
+    @test isempty(issues)
+
+    cm = choicemap((:k, 7.0))
+    params = reshape([0.3, -0.8, 1.5], 1, 3)
+    dev = device_batched_logjoint(dev_named_trials_model, params, (10,), cm)
+    ref = batched_logjoint_unconstrained(dev_named_trials_model, params, (10,), cm)
+    @test dev ≈ ref rtol = 1e-12
+end
+
 @testset "dev_workspace_reuse" begin
     ys = [0.4, -0.7, 1.1, 0.2]
     cm = choicemap((:y => i, ys[i]) for i = 1:4)
