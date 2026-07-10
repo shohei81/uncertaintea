@@ -161,6 +161,46 @@ end
     @test gpu_check_float32(vec(Float64.(g2)), vec(g2ref))
 end
 
+# --- issue #12 group 2: truncated families smoke ------------------------------
+
+@tea static function gpu_truncated_model(n)
+    m ~ normal(0.0, 1.0)
+    s ~ gamma(2.0, 2.0)
+    {:h} ~ truncatednormal(m, 1.0, 0.0, Inf)
+    for i = 1:n
+        {:y => i} ~ truncatednormal(m, s, -1.0, 2.0)
+        {:t => i} ~ truncatedstudentt(5.0, m, s, -2.0, 2.0)
+    end
+    return m
+end
+
+@testset "device Metal GPU truncated family smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU truncated smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+    ys = [0.4, -0.7, 1.1]
+    ts = [1.5, -0.2, 0.8]
+    cm = choicemap((:h, 0.6), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
+    ref = batched_logjoint_unconstrained(gpu_truncated_model, params, (3,), cm)
+    dev = device_batched_logjoint(gpu_truncated_model, Float32.(params), (3,), cm; backend=backend, precision=Float32)
+    @test gpu_check_float32(dev, ref)
+    gref = batched_logjoint_gradient_unconstrained(gpu_truncated_model, params, (3,), cm)
+    _, g = device_batched_logjoint_gradient(
+        gpu_truncated_model,
+        Float32.(params),
+        (3,),
+        cm;
+        backend=backend,
+        precision=Float32,
+    )
+    @test gpu_check_float32(vec(Float64.(g)), vec(gref))
+end
+
 # --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
 # Mirrors test/uncertaintea/core/device_hmc_advi.jl on a Metal.MetalBackend at Float32.
 # RNG stays host-side, so results are statistically (not bitwise) equivalent to the

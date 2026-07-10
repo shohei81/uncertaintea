@@ -212,6 +212,51 @@ end
     return (_device_poisson_logpdf(lam, v) + lad, cur)
 end
 
+@inline function _device_grad_score_step(
+    step::DeviceTruncatedNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
+    mu = _device_grad_eval(step.mu, slots, pidx, b)
+    sigma = _device_grad_eval(step.sigma, slots, pidx, b)
+    lower = _device_grad_eval(step.lower, slots, pidx, b)
+    upper = _device_grad_eval(step.upper, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    m, s, lo, up, v = promote(mu, sigma, lower, upper, value)
+    return (_device_truncatednormal_logpdf(m, s, lo, up, v) + lad, cur)
+end
+
+@inline function _device_grad_score_step(
+    step::DeviceTruncatedStudentTChoiceStep,
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
+    nu = _device_grad_eval(step.nu, slots, pidx, b)
+    mu = _device_grad_eval(step.mu, slots, pidx, b)
+    sigma = _device_grad_eval(step.sigma, slots, pidx, b)
+    lower = _device_grad_eval(step.lower, slots, pidx, b)
+    upper = _device_grad_eval(step.upper, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    # nu is a literal: promoting it yields a zero-derivative dual, so the omitted
+    # d/dnu term stays genuinely zero (the t-CDF dual ignores the nu channel).
+    n, m, s, lo, up, v = promote(nu, mu, sigma, lower, upper, value)
+    return (_device_truncatedstudentt_logpdf(n, m, s, lo, up, v) + lad, cur)
+end
+
 @inline function _device_grad_score_step(step::DeviceDeterministicStep, slots, params, observed, tc, ls, pidx, b, cursor)
     @inbounds slots[step.binding_slot, pidx, b] = _device_grad_eval(step.expr, slots, pidx, b)
     return (zero(eltype(slots)), cursor)

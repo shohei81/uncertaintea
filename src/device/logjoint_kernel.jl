@@ -179,6 +179,27 @@ end
     return (_device_poisson_logpdf(lambda, value) + lad, cur)
 end
 
+@inline function _device_score_step(step::DeviceTruncatedNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    mu = _device_eval(step.mu, slots, col)
+    sigma = _device_eval(step.sigma, slots, col)
+    lower = _device_eval(step.lower, slots, col)
+    upper = _device_eval(step.upper, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_truncatednormal_logpdf(mu, sigma, lower, upper, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceTruncatedStudentTChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    nu = _device_eval(step.nu, slots, col)
+    mu = _device_eval(step.mu, slots, col)
+    sigma = _device_eval(step.sigma, slots, col)
+    lower = _device_eval(step.lower, slots, col)
+    upper = _device_eval(step.upper, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_truncatedstudentt_logpdf(nu, mu, sigma, lower, upper, value) + lad, cur)
+end
+
 @inline function _device_score_step(step::DeviceDeterministicStep, slots, params, observed, tc, ls, col, cursor)
     @inbounds slots[step.binding_slot, col] = _device_eval(step.expr, slots, col)
     return (zero(eltype(slots)), cursor)

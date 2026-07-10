@@ -222,6 +222,71 @@ end
     @test dev ≈ ref rtol = 1e-12
 end
 
+# issue #12 group 2: truncated families (observed-only on the backend path).
+# truncatednormal with a one-sided (Inf) bound and a two-sided loop observation;
+# truncatedstudentt with the lowering-required literal nu.
+@tea static function dev_truncated_model(n)
+    m ~ normal(0.0, 1.0)
+    s ~ gamma(2.0, 2.0)
+    {:h} ~ truncatednormal(m, 1.0, 0.0, Inf)
+    for i = 1:n
+        {:y => i} ~ truncatednormal(m, s, -1.0, 2.0)
+        {:t => i} ~ truncatedstudentt(5.0, m, s, -2.0, 2.0)
+    end
+    return m
+end
+
+@testset "dev_device_erf_tcdf_grid" begin
+    # Cody erf/erfc vs SpecialFunctions (the CPU reference)
+    max_abs = 0.0
+    for x = -6.0:0.01:6.0
+        max_abs = max(
+            max_abs,
+            abs(UncertainTea._device_erf(x) - UncertainTea.erf(x)),
+            abs(UncertainTea._device_erfc(x) - UncertainTea.erfc(x)),
+        )
+    end
+    @test max_abs < 1e-14
+    max_rel_tail = 0.0
+    for x = 4.0:0.05:26.0
+        reference = UncertainTea.erfc(x)
+        max_rel_tail = max(max_rel_tail, abs(UncertainTea._device_erfc(x) - reference) / reference)
+    end
+    @test max_rel_tail < 1e-13
+
+    # continued-fraction t-CDF vs the beta_inc-based CPU `_std_t_cdf`
+    max_t = 0.0
+    for nu in (1.5, 3.0, 5.0, 12.0), z = -8.0:0.05:8.0
+        max_t = max(max_t, abs(UncertainTea._device_std_t_cdf(z, nu) - UncertainTea._std_t_cdf(z, nu)))
+    end
+    @test max_t < 1e-13
+
+    # Float32 sanity on the same surfaces
+    @test abs(Float64(UncertainTea._device_erf(0.8f0)) - UncertainTea.erf(0.8)) < 1e-6
+    @test abs(Float64(UncertainTea._device_std_t_cdf(1.3f0, 5.0f0)) - UncertainTea._std_t_cdf(1.3, 5.0)) < 1e-5
+end
+
+@testset "dev_numerical_parity_truncated" begin
+    supported, issues = device_lowering_report(dev_truncated_model)
+    @test supported
+    @test isempty(issues)
+
+    ys = [0.4, -0.7, 1.1]
+    ts = [1.5, -0.2, 0.8]
+    cm = choicemap((:h, 0.6), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
+    dev = device_batched_logjoint(dev_truncated_model, params, (3,), cm)
+    ref = batched_logjoint_unconstrained(dev_truncated_model, params, (3,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_truncated_model, Float32.(params), (3,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    # out-of-support observations land on -Inf on both paths
+    cm_oob = choicemap((:h, -0.5), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+    @test all(==(-Inf), device_batched_logjoint(dev_truncated_model, params, (3,), cm_oob))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_truncated_model, params, (3,), cm_oob))
+end
+
 # an argument rebound into a host-only loop bound: the emitted index deterministic
 # is pruned (no kernel expression reads it), so the rebinding audit must not fire.
 @tea static function dev_rebound_loop_bound_model(n)

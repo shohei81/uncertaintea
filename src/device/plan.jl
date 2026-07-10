@@ -162,6 +162,30 @@ struct DevicePoissonChoiceStep{L} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# Truncated families are observed-only on the backend path (latents fall back at
+# backend lowering: the bounded transform is unimplemented there), so the value
+# source is always the staged observation; the fields stay generic regardless.
+struct DeviceTruncatedNormalChoiceStep{M,S,L,U} <: AbstractDeviceChoiceStep
+    mu::M
+    sigma::S
+    lower::L
+    upper::U
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceTruncatedStudentTChoiceStep{N,M,S,L,U} <: AbstractDeviceChoiceStep
+    nu::N
+    mu::M
+    sigma::S
+    lower::L
+    upper::U
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
 struct DeviceDeterministicStep{E} <: AbstractDevicePlanStep
     expr::E
     binding_slot::Int32
@@ -525,6 +549,66 @@ function _lower_device_step!(
     (isnothing(src) || any(isnothing, probabilities)) && return nothing
     value_source, tcode = src
     push!(out, DeviceCategoricalChoiceStep(probabilities, value_source, tcode, _device_slot32(step.binding_slot)))
+    return nothing
+end
+
+function _lower_device_step!(
+    out,
+    step::BackendTruncatedNormalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    src = _device_choice_value_source(step, layout, in_loop, issues, "truncatednormal")
+    mu = _lower_device_expr(step.mu, backend.generic_slots, T, issues, "truncatednormal argument")
+    sigma = _lower_device_expr(step.sigma, backend.generic_slots, T, issues, "truncatednormal argument")
+    lower = _lower_device_expr(step.lower, backend.generic_slots, T, issues, "truncatednormal bound")
+    upper = _lower_device_expr(step.upper, backend.generic_slots, T, issues, "truncatednormal bound")
+    (isnothing(src) || isnothing(mu) || isnothing(sigma) || isnothing(lower) || isnothing(upper)) && return nothing
+    value_source, tcode = src
+    push!(
+        out,
+        DeviceTruncatedNormalChoiceStep(mu, sigma, lower, upper, value_source, tcode, _device_slot32(step.binding_slot)),
+    )
+    return nothing
+end
+
+function _lower_device_step!(
+    out,
+    step::BackendTruncatedStudentTChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    src = _device_choice_value_source(step, layout, in_loop, issues, "truncatedstudentt")
+    # backend lowering guarantees a literal nu (the analytic d/dnu is omitted)
+    nu = _lower_device_expr(step.nu, backend.generic_slots, T, issues, "truncatedstudentt argument")
+    mu = _lower_device_expr(step.mu, backend.generic_slots, T, issues, "truncatedstudentt argument")
+    sigma = _lower_device_expr(step.sigma, backend.generic_slots, T, issues, "truncatedstudentt argument")
+    lower = _lower_device_expr(step.lower, backend.generic_slots, T, issues, "truncatedstudentt bound")
+    upper = _lower_device_expr(step.upper, backend.generic_slots, T, issues, "truncatedstudentt bound")
+    (isnothing(src) || isnothing(nu) || isnothing(mu) || isnothing(sigma) || isnothing(lower) || isnothing(upper)) &&
+        return nothing
+    value_source, tcode = src
+    push!(
+        out,
+        DeviceTruncatedStudentTChoiceStep(
+            nu,
+            mu,
+            sigma,
+            lower,
+            upper,
+            value_source,
+            tcode,
+            _device_slot32(step.binding_slot),
+        ),
+    )
     return nothing
 end
 

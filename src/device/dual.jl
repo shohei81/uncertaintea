@@ -122,6 +122,7 @@ end
 @inline Base.isless(a::DeviceDual, b::DeviceDual) = isless(a.value, b.value)
 @inline Base.isnan(a::DeviceDual) = isnan(a.value)
 @inline Base.isfinite(a::DeviceDual) = isfinite(a.value)
+@inline Base.isinf(a::DeviceDual) = isinf(a.value)
 
 # Value/derivative accessors that also accept a bare real (a step whose contribution
 # never touched the seeded parameter stays a plain `T`).
