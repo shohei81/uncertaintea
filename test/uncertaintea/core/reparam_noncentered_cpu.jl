@@ -296,11 +296,29 @@ end
     @testset "ncc_device_parity" begin
         supported, _ = device_lowering_report(ncc_funnel_flagged)
         @test supported
-        # model-argument-referencing distribution expressions read
-        # uninitialized device slots (issue #38): honestly rejected for now
-        arg_supported, arg_issues = device_lowering_report(ncc_arg_model)
-        @test !arg_supported
-        @test any(occursin("issue #38", issue) for issue in arg_issues)
+        # model arguments stage into the device slots (issue #38 fixed), so
+        # argument-dependent locations run with full parity
+        arg_supported, _ = device_lowering_report(ncc_arg_model)
+        @test arg_supported
+        arg_points = [0.2 -0.3; 0.7 0.1]
+        arg_constraints = choicemap((:y, 0.4))
+        arg_values, arg_gradients = device_batched_logjoint_gradient(
+            ncc_arg_model,
+            arg_points,
+            (2.5,),
+            arg_constraints;
+            backend=ReparamDeviceCPU(),
+            precision=Float64,
+        )
+        @test collect(arg_values) ≈
+              [logjoint_unconstrained(ncc_arg_model, arg_points[:, i], (2.5,), arg_constraints) for i = 1:2] atol =
+            1e-10
+        @test collect(arg_gradients) ≈ hcat(
+            [
+                logjoint_gradient_unconstrained(ncc_arg_model, arg_points[:, i], (2.5,), arg_constraints) for
+                i = 1:2
+            ]...,
+        ) atol = 1e-10
         points = [0.3 -0.5; 0.9 0.2]
         device_values, device_gradients = device_batched_logjoint_gradient(
             ncc_funnel_flagged,
