@@ -386,6 +386,49 @@ end
     @test dev_check_float32(vec(g_tt), vec(g_tt_ref))
 end
 
+# two-sided far-tail interval at Float32 (codex review round 4): both plain erfc
+# values underflow, so the same-sign branch must go through the erfcx identity.
+@tea static function dev_twosided_tail_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 15.0, 15.1)
+    return m
+end
+
+# large literal nu at Float32 (codex review round 5): the loggamma half-ratio
+# keeps the Student-t density and CDF from losing the O(1) gamma-ratio to
+# rounding of two ~nu log nu sized loggammas.
+@tea static function dev_large_nu_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(1.0e5, m, 1.0, -1.0, 2.0)
+    return m
+end
+
+@testset "dev_truncated_extreme_f32" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+
+    dev_tn = device_batched_logjoint(dev_twosided_tail_tn_model, params32, (), choicemap((:y, 15.02)); precision=Float32)
+    ref_tn = batched_logjoint_unconstrained(dev_twosided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.02)))
+    @test all(isfinite, dev_tn)
+    @test dev_check_float32(dev_tn, ref_tn)
+    _, g_tn = device_batched_logjoint_gradient(
+        dev_twosided_tail_tn_model,
+        params32,
+        (),
+        choicemap((:y, 15.02));
+        precision=Float32,
+    )
+    @test all(isfinite, g_tn)
+    @test dev_check_float32(
+        vec(g_tn),
+        vec(batched_logjoint_gradient_unconstrained(dev_twosided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.02)))),
+    )
+
+    dev_nu = device_batched_logjoint(dev_large_nu_tt_model, params32, (), choicemap((:y, 0.5)); precision=Float32)
+    ref_nu = batched_logjoint_unconstrained(dev_large_nu_tt_model, Float64.(params32), (), choicemap((:y, 0.5)))
+    @test dev_check_float32(dev_nu, ref_nu)
+    @test abs(Float64(UncertainTea._device_std_t_cdf(1.0f0, 1.0f5)) - UncertainTea._std_t_cdf(1.0, 1.0e5)) < 1e-6
+end
+
 @testset "dev_truncated_narrow_interval_f32" begin
     params32 = reshape(Float32[0.01, -0.02], 1, 2)
     dev_tt = device_batched_logjoint(dev_narrow_tt_model, params32, (), choicemap((:y, 0.0)); precision=Float32)

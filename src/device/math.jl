@@ -49,6 +49,26 @@ end
 
 @inline _device_neginf(::Type{T}) where {T} = T(-Inf)
 
+# log Gamma(x + 1/2) - log Gamma(x), computed WITHOUT differencing two large
+# loggammas: at large x each loggamma is ~ x log x, so their O(log x) difference
+# drowns in rounding (0.06 absolute at Float32 for x ~ 5e4, visible in any
+# large-nu Student-t density or CDF). Below the precision-dependent crossover
+# the direct difference is more accurate; above it, the Stirling-series form
+#   x log1p(1/(2x)) + log(x)/2 - 1/2 + (1/(x+1/2) - 1/x)/12
+# carries relative error ~1/(360 x^3).
+@inline _device_loggamma_half_ratio_crossover(::Type{Float32}) = 12.0f0
+@inline _device_loggamma_half_ratio_crossover(::Type{T}) where {T} = T(1200)
+@inline _device_loggamma_half_ratio_crossover(::Type{DeviceDual{T}}) where {T} =
+    DeviceDual{T}(_device_loggamma_half_ratio_crossover(T), zero(T))
+
+@inline function _device_loggamma_half_ratio(x::T) where {T}
+    if x > _device_loggamma_half_ratio_crossover(T)
+        return x * log1p(one(T) / (T(2) * x)) + log(x) / T(2) - T(0.5) +
+               (one(T) / (x + T(0.5)) - one(T) / x) / T(12)
+    end
+    return _device_loggamma(x + T(0.5)) - _device_loggamma(x)
+end
+
 @inline function _device_normal_logpdf(mu::T, sigma::T, x::T) where {T}
     z = (x - mu) / sigma
     return -log(sigma) - T(0.9189385332046727) - z * z / T(2)
@@ -82,7 +102,8 @@ end
 
 @inline function _device_studentt_logpdf(nu::T, mu::T, sigma::T, x::T) where {T}
     z = (x - mu) / sigma
-    return _device_loggamma((nu + one(T)) / T(2)) - _device_loggamma(nu / T(2)) -
+    # loggamma((nu+1)/2) - loggamma(nu/2) via the half-ratio (large-nu safe)
+    return _device_loggamma_half_ratio(nu / T(2)) -
            (log(nu) + T(1.1447298858494002)) / T(2) - log(sigma) - # log(pi)
            (nu + one(T)) * log1p(z * z / nu) / T(2)
 end
@@ -345,7 +366,16 @@ end
     y <= zero(T) && return one(T)
     logx = ifelse(x < T(0.5), log(x), log1p(-y))
     logy = ifelse(y < T(0.5), log(y), log1p(-x))
-    front = exp(a * logx + b * logy + _device_loggamma(a + b) - _device_loggamma(a) - _device_loggamma(b))
+    # the Student-t CDF calls this with b == 1/2, where loggamma(a+b) -
+    # loggamma(a) is exactly the half-ratio; computing it as a ratio keeps
+    # large-a (large-nu) accuracy that the difference of two huge loggammas
+    # loses. Other b fall back to the direct difference.
+    log_gamma_ratio = ifelse(
+        b == T(0.5),
+        _device_loggamma_half_ratio(a),
+        _device_loggamma(a + b) - _device_loggamma(a),
+    )
+    front = exp(a * logx + b * logy + log_gamma_ratio - _device_loggamma(b))
     if x < (a + one(T)) / (a + b + T(2))
         return front * _device_betacf(a, b, x) / a
     end
