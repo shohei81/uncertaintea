@@ -384,6 +384,53 @@ end
 
 @inline _device_beta_inc_reg(a::T, b::T, x::T) where {T} = _device_beta_inc_reg_parts(a, b, x, one(T) - x)
 
+# log I_x(a, b) computed IN LOG SPACE on the direct branch (x small), so a tail
+# probability that underflows as a plain value (light Student-t tails at large
+# nu, Float32) still yields a finite log. The symmetric branch is the
+# complement of a small quantity and is safe as log1p.
+@inline function _device_log_beta_inc_reg_parts(a::T, b::T, x::T, y::T) where {T}
+    x <= zero(T) && return _device_neginf(T)
+    y <= zero(T) && return zero(T)
+    logx = ifelse(x < T(0.5), log(x), log1p(-y))
+    logy = ifelse(y < T(0.5), log(y), log1p(-x))
+    log_gamma_ratio = ifelse(
+        b == T(0.5),
+        _device_loggamma_half_ratio(a),
+        _device_loggamma(a + b) - _device_loggamma(a),
+    )
+    log_front = a * logx + b * logy + log_gamma_ratio - _device_loggamma(b)
+    if x < (a + one(T)) / (a + b + T(2))
+        return log_front + log(_device_betacf(a, b, x)) - log(a)
+    end
+    return log1p(-exp(log_front) * _device_betacf(b, a, y) / b)
+end
+
+# log(T_cdf(z; nu)), staying in log space so light tails survive underflow.
+@inline function _device_std_t_log_cdf(z::T, nu::T) where {T}
+    isinf(z) && return ifelse(z > zero(T), zero(T), _device_neginf(T))
+    z == zero(T) && return -log(T(2))
+    denominator = nu + z * z
+    x = nu / denominator
+    y = z * z / denominator
+    if z < zero(T)
+        return _device_log_beta_inc_reg_parts(nu / T(2), T(0.5), x, y) - log(T(2))
+    end
+    regularized = _device_beta_inc_reg_parts(nu / T(2), T(0.5), x, y)
+    return log1p(-regularized / T(2))
+end
+
+# d/dz log cdf = exp(log pdf - log cdf), computed in log space so a tail whose
+# plain cdf underflows still gets a finite derivative ratio.
+@inline function _device_std_t_log_cdf(z::DeviceDual{T}, nu::Real) where {T}
+    nu_value = convert(T, nu)
+    v = z.value
+    log_cdf = _device_std_t_log_cdf(v, nu_value)
+    log_pdf = _device_studentt_logpdf(nu_value, zero(T), one(T), v)
+    deriv = ifelse(isinf(v), zero(T), exp(log_pdf - log_cdf) * z.deriv)
+    return DeviceDual{T}(log_cdf, deriv)
+end
+@inline _device_std_t_log_cdf(z::DeviceDual{T}, nu::DeviceDual{T}) where {T} = _device_std_t_log_cdf(z, nu.value)
+
 # Standard Student-t CDF for a lowering-guaranteed constant nu; mirrors the CPU
 # `_std_t_cdf` branch structure exactly.
 @inline function _device_std_t_cdf(z::T, nu::T) where {T}
@@ -531,9 +578,9 @@ end
     if lower_infinite && upper_infinite
         return zero(T)
     elseif lower_infinite
-        return log(_device_std_t_cdf(zb, nu))
+        return _device_std_t_log_cdf(zb, nu)
     elseif upper_infinite
-        return log(_device_std_t_cdf(-za, nu))
+        return _device_std_t_log_cdf(-za, nu)
     end
     if za > zero(T) # right tail: S(za) - S(zb) = cdf(-za) - cdf(-zb)
         big = _device_std_t_cdf(-za, nu)
