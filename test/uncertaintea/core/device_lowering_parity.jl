@@ -44,6 +44,31 @@ end
     return theta
 end
 
+# issue #12 group 1 (continuous): studentt (identity latent), inversegamma and
+# weibull (log latents), studentt loop observations with a derived scale.
+@tea static function dev_heavytail_model(n)
+    loc ~ studentt(4.0, 0.0, 1.0)
+    s ~ inversegamma(3.0, 2.0)
+    w ~ weibull(2.0, 1.5)
+    for i = 1:n
+        {:y => i} ~ studentt(5.0, loc, s + w)
+    end
+    return loc
+end
+
+# issue #12 group 1 (discrete): binomial/geometric/negativebinomial observations and
+# categorical loop observations, all driven by one beta (logit) latent probability.
+@tea static function dev_count_model(n)
+    p ~ beta(2.0, 2.0)
+    {:k} ~ binomial(20, p)
+    {:g} ~ geometric(p)
+    {:nb} ~ negativebinomial(4.0, p)
+    for i = 1:n
+        {:c => i} ~ categorical(p / 2.0, p / 2.0, 1.0 - p)
+    end
+    return p
+end
+
 # helper: assert Float32 device output matches a Float64 reference with the
 # rtol 1e-4 / atol 1e-4*max(1,|ref|) contract, elementwise.
 function dev_check_float32(dev32, ref)
@@ -127,6 +152,43 @@ end
     @test dev3 ≈ ref3 rtol = 1e-12
     dev3_32 = device_batched_logjoint(dev_bernoulli_model, Float32.(params3), (4,), cm3; precision=Float32)
     @test dev_check_float32(dev3_32, ref3)
+end
+
+@testset "dev_numerical_parity_group1" begin
+    supported_ht, ht_issues = device_lowering_report(dev_heavytail_model)
+    @test supported_ht
+    @test isempty(ht_issues)
+    supported_ct, ct_issues = device_lowering_report(dev_count_model)
+    @test supported_ct
+    @test isempty(ct_issues)
+
+    # --- continuous: studentt / inversegamma / weibull ---
+    ys = [0.4, -0.7, 1.1, 0.2, 0.9]
+    cm = choicemap((:y => i, ys[i]) for i = 1:5)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6]
+    dev = device_batched_logjoint(dev_heavytail_model, params, (5,), cm)
+    ref = batched_logjoint_unconstrained(dev_heavytail_model, params, (5,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_heavytail_model, Float32.(params), (5,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    # --- discrete: binomial / geometric / negativebinomial / categorical ---
+    cs = [1.0, 3.0, 2.0, 3.0]
+    cm2 = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    params2 = reshape([0.3, -0.8, 1.5], 1, 3)
+    dev2 = device_batched_logjoint(dev_count_model, params2, (4,), cm2)
+    ref2 = batched_logjoint_unconstrained(dev_count_model, params2, (4,), cm2)
+    @test dev2 ≈ ref2 rtol = 1e-12
+    dev2_32 = device_batched_logjoint(dev_count_model, Float32.(params2), (4,), cm2; precision=Float32)
+    @test dev_check_float32(dev2_32, ref2)
+
+    # out-of-support discrete observations must land on -Inf, matching the CPU path.
+    cm_oob = choicemap((:k, 25.0), (:g, 3.0), (:nb, 5.0), ((:c => i, cs[i]) for i = 1:4)...)
+    dev_oob = device_batched_logjoint(dev_count_model, params2, (4,), cm_oob)
+    @test all(==(-Inf), dev_oob)
+    cm_cat_oob = choicemap((:k, 7.0), (:g, 3.0), (:nb, 5.0), (:c => 1, 4.0), ((:c => i, cs[i]) for i = 2:4)...)
+    dev_cat_oob = device_batched_logjoint(dev_count_model, params2, (4,), cm_cat_oob)
+    @test all(==(-Inf), dev_cat_oob)
 end
 
 @testset "dev_workspace_reuse" begin

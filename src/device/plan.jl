@@ -93,8 +93,63 @@ struct DeviceBetaChoiceStep{A,B} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+struct DeviceStudentTChoiceStep{N,M,S} <: AbstractDeviceChoiceStep
+    nu::N
+    mu::M
+    sigma::S
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceInverseGammaChoiceStep{SH,SC} <: AbstractDeviceChoiceStep
+    shape::SH
+    scale::SC
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceWeibullChoiceStep{SH,SC} <: AbstractDeviceChoiceStep
+    shape::SH
+    scale::SC
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
 struct DeviceBernoulliChoiceStep{P} <: AbstractDeviceChoiceStep
     probability::P
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceBinomialChoiceStep{N,P} <: AbstractDeviceChoiceStep
+    trials::N
+    probability::P
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceGeometricChoiceStep{P} <: AbstractDeviceChoiceStep
+    probability::P
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceNegativeBinomialChoiceStep{R,P} <: AbstractDeviceChoiceStep
+    successes::R
+    probability::P
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
+struct DeviceCategoricalChoiceStep{PS<:Tuple} <: AbstractDeviceChoiceStep
+    probabilities::PS
     value_source::Int32
     transform::Int32
     binding_slot::Int32
@@ -318,6 +373,159 @@ function _lower_device_step!(
     in_loop,
 ) where {T}
     _lower_device_two_arg!(out, step, step.alpha, step.beta, DeviceBetaChoiceStep, backend, layout, T, issues, in_loop, "beta")
+end
+
+function _lower_device_step!(
+    out,
+    step::BackendInverseGammaChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    _lower_device_two_arg!(
+        out,
+        step,
+        step.shape,
+        step.scale,
+        DeviceInverseGammaChoiceStep,
+        backend,
+        layout,
+        T,
+        issues,
+        in_loop,
+        "inversegamma",
+    )
+end
+function _lower_device_step!(
+    out,
+    step::BackendWeibullChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    _lower_device_two_arg!(
+        out,
+        step,
+        step.shape,
+        step.scale,
+        DeviceWeibullChoiceStep,
+        backend,
+        layout,
+        T,
+        issues,
+        in_loop,
+        "weibull",
+    )
+end
+function _lower_device_step!(
+    out,
+    step::BackendBinomialChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    _lower_device_two_arg!(
+        out,
+        step,
+        step.trials,
+        step.probability,
+        DeviceBinomialChoiceStep,
+        backend,
+        layout,
+        T,
+        issues,
+        in_loop,
+        "binomial",
+    )
+end
+function _lower_device_step!(
+    out,
+    step::BackendNegativeBinomialChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    _lower_device_two_arg!(
+        out,
+        step,
+        step.successes,
+        step.probability,
+        DeviceNegativeBinomialChoiceStep,
+        backend,
+        layout,
+        T,
+        issues,
+        in_loop,
+        "negativebinomial",
+    )
+end
+function _lower_device_step!(
+    out,
+    step::BackendStudentTChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    src = _device_choice_value_source(step, layout, in_loop, issues, "studentt")
+    nu = _lower_device_expr(step.nu, backend.generic_slots, T, issues, "studentt argument")
+    mu = _lower_device_expr(step.mu, backend.generic_slots, T, issues, "studentt argument")
+    sigma = _lower_device_expr(step.sigma, backend.generic_slots, T, issues, "studentt argument")
+    (isnothing(src) || isnothing(nu) || isnothing(mu) || isnothing(sigma)) && return nothing
+    value_source, tcode = src
+    push!(out, DeviceStudentTChoiceStep(nu, mu, sigma, value_source, tcode, _device_slot32(step.binding_slot)))
+    return nothing
+end
+function _lower_device_step!(
+    out,
+    step::BackendGeometricChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    src = _device_choice_value_source(step, layout, in_loop, issues, "geometric")
+    p = _lower_device_expr(step.probability, backend.generic_slots, T, issues, "geometric argument")
+    (isnothing(src) || isnothing(p)) && return nothing
+    value_source, tcode = src
+    push!(out, DeviceGeometricChoiceStep(p, value_source, tcode, _device_slot32(step.binding_slot)))
+    return nothing
+end
+function _lower_device_step!(
+    out,
+    step::BackendCategoricalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    src = _device_choice_value_source(step, layout, in_loop, issues, "categorical")
+    probabilities = map(
+        probability -> _lower_device_expr(probability, backend.generic_slots, T, issues, "categorical argument"),
+        step.probabilities,
+    )
+    (isnothing(src) || any(isnothing, probabilities)) && return nothing
+    value_source, tcode = src
+    push!(out, DeviceCategoricalChoiceStep(probabilities, value_source, tcode, _device_slot32(step.binding_slot)))
+    return nothing
 end
 
 function _lower_device_two_arg!(

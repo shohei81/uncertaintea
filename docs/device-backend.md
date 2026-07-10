@@ -13,8 +13,12 @@ backend; a lightweight package extension declares `Float32` as Metal's precision
 Supported today:
 
 - **Distributions:** `normal`, `lognormal`, `exponential`, `gamma`, `laplace`,
-  `bernoulli`, `poisson`, `beta` (device-safe, `T`-generic log-densities with a
-  pure-Julia Lanczos `loggamma`, no exceptions, out-of-support -> `-Inf`).
+  `bernoulli`, `poisson`, `beta`, `studentt`, `inversegamma`, `weibull`,
+  `binomial`, `geometric`, `negativebinomial`, `categorical` (device-safe,
+  `T`-generic log-densities with a pure-Julia Lanczos `loggamma`, no exceptions,
+  out-of-support -> `-Inf`). Still unsupported: the truncated families (need a
+  device-safe `erf`/t-CDF), vector latents (`mvnormal`, `dirichlet`,
+  `lkjcholesky`), and `mixture`.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar). Vector
   transforms (`Simplex`/`VectorIdentity`, i.e. `dirichlet`/`mvnormal` latents) are
   reported as unsupported.
