@@ -236,6 +236,12 @@ end
     return m
 end
 
+@tea static function dev_far_tail_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 37.49, Inf)
+    return m
+end
+
 @testset "dev_device_erf_tcdf_grid" begin
     # Cody erf/erfc vs SpecialFunctions (the CPU reference)
     max_abs = 0.0
@@ -261,6 +267,20 @@ end
     end
     @test max_t < 1e-13
 
+    # subnormal erfc tail: representable values must survive down to the true
+    # Float64 underflow point (~27.2), not collapse at Cody's XBIG (codex review)
+    max_rel_subnormal = 0.0
+    for x = 26.0:0.01:27.4
+        reference = UncertainTea.erfc(x)
+        device = UncertainTea._device_erfc(x)
+        if reference > 0
+            max_rel_subnormal = max(max_rel_subnormal, abs(device - reference) / reference)
+        else
+            @test device == 0.0
+        end
+    end
+    @test max_rel_subnormal < 1e-13
+
     # Float32 sanity on the same surfaces
     @test abs(Float64(UncertainTea._device_erf(0.8f0)) - UncertainTea.erf(0.8)) < 1e-6
     @test abs(Float64(UncertainTea._device_std_t_cdf(1.3f0, 5.0f0)) - UncertainTea._std_t_cdf(1.3, 5.0)) < 1e-5
@@ -285,6 +305,18 @@ end
     cm_oob = choicemap((:h, -0.5), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
     @test all(==(-Inf), device_batched_logjoint(dev_truncated_model, params, (3,), cm_oob))
     @test all(==(-Inf), batched_logjoint_unconstrained(dev_truncated_model, params, (3,), cm_oob))
+
+    # far-tail one-sided bound: the erfc subnormal tail keeps the device finite
+    # and matching the CPU reference (codex review regression)
+    tail_params = reshape([0.2, -0.4], 1, 2)
+    dev_tail = device_batched_logjoint(dev_far_tail_model, tail_params, (), choicemap((:y, 37.6)))
+    ref_tail = batched_logjoint_unconstrained(dev_far_tail_model, tail_params, (), choicemap((:y, 37.6)))
+    @test all(isfinite, dev_tail)
+    @test dev_tail ≈ ref_tail rtol = 1e-10
+
+    # degenerate lower == upper bounds: the CPU reference throws; the
+    # exception-free device path must degrade to -Inf, never +Inf
+    @test UncertainTea._device_truncatedstudentt_logpdf(5.0, 0.0, 1.0, 1.0, 1.0, 1.0) == -Inf
 end
 
 # an argument rebound into a host-only loop bound: the emitted index deterministic

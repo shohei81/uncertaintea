@@ -274,10 +274,10 @@ end
 @inline function _device_erfc(x::T) where {T}
     y = abs(x)
     y <= T(0.46875) && return one(T) - _device_erf(x)
-    if y > T(26.5)
-        # underflow region for the positive side; exact 2 on the negative side
-        return ifelse(x > zero(T), zero(T), T(2))
-    end
+    # no explicit big-argument cutoff: exp(-ysq^2) underflows naturally, so
+    # representable subnormal tails (e.g. erfc(26.51) ~ 1.3e-307 at Float64)
+    # survive instead of collapsing to zero before the type does
+    isinf(y) && return ifelse(x > zero(T), zero(T), T(2))
     result = _device_erfc_positive(y)
     return ifelse(x < zero(T), T(2) - result, result)
 end
@@ -419,7 +419,9 @@ end
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
     log_z = log(_device_std_t_cdf(zb, nu) - _device_std_t_cdf(za, nu))
-    in_support = (x >= lower) & (x <= upper)
+    # the CPU reference REJECTS lower >= upper (ArgumentError); the exception-free
+    # device contract degrades that to -Inf instead of an infinite density
+    in_support = (x >= lower) & (x <= upper) & (lower < upper)
     return ifelse(in_support, base - log_z, _device_neginf(T))
 end
 
