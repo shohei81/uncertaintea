@@ -222,6 +222,307 @@ end
     @test dev ≈ ref rtol = 1e-12
 end
 
+# issue #12 group 2: truncated families (observed-only on the backend path).
+# truncatednormal with a one-sided (Inf) bound and a two-sided loop observation;
+# truncatedstudentt with the lowering-required literal nu.
+@tea static function dev_truncated_model(n)
+    m ~ normal(0.0, 1.0)
+    s ~ gamma(2.0, 2.0)
+    {:h} ~ truncatednormal(m, 1.0, 0.0, Inf)
+    for i = 1:n
+        {:y => i} ~ truncatednormal(m, s, -1.0, 2.0)
+        {:t => i} ~ truncatedstudentt(5.0, m, s, -2.0, 2.0)
+    end
+    return m
+end
+
+@tea static function dev_far_tail_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 37.49, Inf)
+    return m
+end
+
+@testset "dev_device_erf_tcdf_grid" begin
+    # Cody erf/erfc vs SpecialFunctions (the CPU reference)
+    max_abs = 0.0
+    for x = -6.0:0.01:6.0
+        max_abs = max(
+            max_abs,
+            abs(UncertainTea._device_erf(x) - UncertainTea.erf(x)),
+            abs(UncertainTea._device_erfc(x) - UncertainTea.erfc(x)),
+        )
+    end
+    @test max_abs < 1e-14
+    max_rel_tail = 0.0
+    for x = 4.0:0.05:26.0
+        reference = UncertainTea.erfc(x)
+        max_rel_tail = max(max_rel_tail, abs(UncertainTea._device_erfc(x) - reference) / reference)
+    end
+    @test max_rel_tail < 1e-13
+
+    # continued-fraction t-CDF vs the beta_inc-based CPU `_std_t_cdf`
+    max_t = 0.0
+    for nu in (1.5, 3.0, 5.0, 12.0), z = -8.0:0.05:8.0
+        max_t = max(max_t, abs(UncertainTea._device_std_t_cdf(z, nu) - UncertainTea._std_t_cdf(z, nu)))
+    end
+    @test max_t < 1e-13
+
+    # subnormal erfc tail: representable values must survive down to the true
+    # Float64 underflow point (~27.2), not collapse at Cody's XBIG (codex review)
+    max_rel_subnormal = 0.0
+    for x = 26.0:0.01:27.4
+        reference = UncertainTea.erfc(x)
+        device = UncertainTea._device_erfc(x)
+        if reference > 0
+            max_rel_subnormal = max(max_rel_subnormal, abs(device - reference) / reference)
+        else
+            @test device == 0.0
+        end
+    end
+    @test max_rel_subnormal < 1e-13
+
+    # Float32 sanity on the same surfaces
+    @test abs(Float64(UncertainTea._device_erf(0.8f0)) - UncertainTea.erf(0.8)) < 1e-6
+    @test abs(Float64(UncertainTea._device_std_t_cdf(1.3f0, 5.0f0)) - UncertainTea._std_t_cdf(1.3, 5.0)) < 1e-5
+end
+
+@testset "dev_numerical_parity_truncated" begin
+    supported, issues = device_lowering_report(dev_truncated_model)
+    @test supported
+    @test isempty(issues)
+
+    ys = [0.4, -0.7, 1.1]
+    ts = [1.5, -0.2, 0.8]
+    cm = choicemap((:h, 0.6), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
+    dev = device_batched_logjoint(dev_truncated_model, params, (3,), cm)
+    ref = batched_logjoint_unconstrained(dev_truncated_model, params, (3,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_truncated_model, Float32.(params), (3,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    # out-of-support observations land on -Inf on both paths
+    cm_oob = choicemap((:h, -0.5), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+    @test all(==(-Inf), device_batched_logjoint(dev_truncated_model, params, (3,), cm_oob))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_truncated_model, params, (3,), cm_oob))
+
+    # far-tail one-sided bound: the erfc subnormal tail keeps the device finite
+    # and matching the CPU reference (codex review regression)
+    tail_params = reshape([0.2, -0.4], 1, 2)
+    dev_tail = device_batched_logjoint(dev_far_tail_model, tail_params, (), choicemap((:y, 37.6)))
+    ref_tail = batched_logjoint_unconstrained(dev_far_tail_model, tail_params, (), choicemap((:y, 37.6)))
+    @test all(isfinite, dev_tail)
+    @test dev_tail ≈ ref_tail rtol = 1e-10
+
+    # degenerate lower == upper bounds: the CPU reference throws (studentt) or
+    # hits log(0); the exception-free device path must degrade to -Inf, never +Inf
+    @test UncertainTea._device_truncatedstudentt_logpdf(5.0, 0.0, 1.0, 1.0, 1.0, 1.0) == -Inf
+    @test UncertainTea._device_truncatednormal_logpdf(0.0, 1.0, 1.0, 1.0, 1.0) == -Inf
+end
+
+# narrow valid intervals at Float32: the CDF difference quantizes (codex review);
+# the accurate-complement beta_inc and the midpoint fallback keep the device
+# finite and close to the Float64 CPU reference.
+@tea static function dev_narrow_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(5.0, m, 1.0, -1.0e-4, 1.0e-4)
+    return m
+end
+
+@tea static function dev_narrow_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 0.5, 0.5001)
+    return m
+end
+
+# one-sided far-tail truncations at Float32 (codex review round 3): the normal
+# side loses erfc to underflow around z ~ 13 (Float32) and must switch to the
+# asymptotic log(erfc); the Student-t side computes the tail probability
+# directly via the symmetry S(z) = cdf(-z) instead of cancelling against 1.
+@tea static function dev_onesided_tail_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 15.0, Inf)
+    return m
+end
+
+@tea static function dev_onesided_tail_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(5.0, m, 1.0, 100.0, Inf)
+    return m
+end
+
+@testset "dev_truncated_onesided_tail_f32" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+
+    dev_tn = device_batched_logjoint(dev_onesided_tail_tn_model, params32, (), choicemap((:y, 15.2)); precision=Float32)
+    ref_tn = batched_logjoint_unconstrained(dev_onesided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.2)))
+    @test all(isfinite, dev_tn)
+    @test dev_check_float32(dev_tn, ref_tn)
+    _, g_tn = device_batched_logjoint_gradient(
+        dev_onesided_tail_tn_model,
+        params32,
+        (),
+        choicemap((:y, 15.2));
+        precision=Float32,
+    )
+    g_tn_ref = batched_logjoint_gradient_unconstrained(dev_onesided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.2)))
+    @test all(isfinite, g_tn)
+    @test dev_check_float32(vec(g_tn), vec(g_tn_ref))
+
+    dev_tt = device_batched_logjoint(dev_onesided_tail_tt_model, params32, (), choicemap((:y, 105.0)); precision=Float32)
+    ref_tt = batched_logjoint_unconstrained(dev_onesided_tail_tt_model, Float64.(params32), (), choicemap((:y, 105.0)))
+    @test all(isfinite, dev_tt)
+    @test dev_check_float32(dev_tt, ref_tt)
+    _, g_tt = device_batched_logjoint_gradient(
+        dev_onesided_tail_tt_model,
+        params32,
+        (),
+        choicemap((:y, 105.0));
+        precision=Float32,
+    )
+    g_tt_ref =
+        batched_logjoint_gradient_unconstrained(dev_onesided_tail_tt_model, Float64.(params32), (), choicemap((:y, 105.0)))
+    @test all(isfinite, g_tt)
+    @test dev_check_float32(vec(g_tt), vec(g_tt_ref))
+end
+
+# two-sided far-tail interval at Float32 (codex review round 4): both plain erfc
+# values underflow, so the same-sign branch must go through the erfcx identity.
+@tea static function dev_twosided_tail_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 15.0, 15.1)
+    return m
+end
+
+# large literal nu at Float32 (codex review round 5): the loggamma half-ratio
+# keeps the Student-t density and CDF from losing the O(1) gamma-ratio to
+# rounding of two ~nu log nu sized loggammas.
+@tea static function dev_large_nu_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(1.0e5, m, 1.0, -1.0, 2.0)
+    return m
+end
+
+@testset "dev_truncated_extreme_f32" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+
+    dev_tn = device_batched_logjoint(dev_twosided_tail_tn_model, params32, (), choicemap((:y, 15.02)); precision=Float32)
+    ref_tn = batched_logjoint_unconstrained(dev_twosided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.02)))
+    @test all(isfinite, dev_tn)
+    @test dev_check_float32(dev_tn, ref_tn)
+    _, g_tn = device_batched_logjoint_gradient(
+        dev_twosided_tail_tn_model,
+        params32,
+        (),
+        choicemap((:y, 15.02));
+        precision=Float32,
+    )
+    @test all(isfinite, g_tn)
+    @test dev_check_float32(
+        vec(g_tn),
+        vec(batched_logjoint_gradient_unconstrained(dev_twosided_tail_tn_model, Float64.(params32), (), choicemap((:y, 15.02)))),
+    )
+
+    dev_nu = device_batched_logjoint(dev_large_nu_tt_model, params32, (), choicemap((:y, 0.5)); precision=Float32)
+    ref_nu = batched_logjoint_unconstrained(dev_large_nu_tt_model, Float64.(params32), (), choicemap((:y, 0.5)))
+    @test dev_check_float32(dev_nu, ref_nu)
+    @test abs(Float64(UncertainTea._device_std_t_cdf(1.0f0, 1.0f5)) - UncertainTea._std_t_cdf(1.0, 1.0e5)) < 1e-6
+end
+
+# one-sided light-tail truncatedstudentt (codex review round 6): the plain tail
+# CDF underflows before its log, so the one-sided normalizer computes in log
+# space. NOTE: the CPU batched reference itself collapses to +Inf here (its
+# `1 - cdf` cancels at Float64 -- a pre-existing CPU limitation), so the Float32
+# device result is checked against the Float64 DEVICE result; the Float64 device
+# log-CDF itself matches log(_std_t_cdf(-15, 1e5)) to machine precision.
+@tea static function dev_lighttail_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(1.0e5, m, 1.0, 15.0, Inf)
+    return m
+end
+
+# finite interval wholly in a deep light tail (codex review round 7): both plain
+# CDFs underflow, so the finite-bounds normalizer must difference LOG CDFs via
+# expm1 (the CPU reference collapses to +Inf here too).
+@tea static function dev_deeptail_interval_tt_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatedstudentt(1.0e5, m, 1.0, 15.0, 16.0)
+    return m
+end
+
+@testset "dev_truncated_deeptail_interval" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+    cm = choicemap((:y, 15.2))
+    dev32 = device_batched_logjoint(dev_deeptail_interval_tt_model, params32, (), cm; precision=Float32)
+    dev64 = device_batched_logjoint(dev_deeptail_interval_tt_model, Float64.(params32), (), cm)
+    @test all(isfinite, dev64)
+    @test all(isfinite, dev32)
+    @test dev_check_float32(dev32, dev64)
+    # the mass above the upper bound is a ~e^-15.5 (~1.9e-7) relative correction,
+    # which the expm1 log-difference resolves; the one-sided normalizer agrees to
+    # exactly that order
+    dev64_onesided =
+        device_batched_logjoint(dev_lighttail_tt_model, Float64.(params32), (), cm)
+    @test dev64 ≈ dev64_onesided rtol = 1e-6
+    @test !isapprox(dev64, dev64_onesided; rtol=1e-9) # the correction is real, not noise
+end
+
+@testset "dev_truncated_lighttail_logspace" begin
+    @test isapprox(
+        UncertainTea._device_std_t_log_cdf(-15.0, 1.0e5),
+        log(UncertainTea._std_t_cdf(-15.0, 1.0e5));
+        rtol=1e-12,
+    )
+
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+    cm = choicemap((:y, 15.2))
+    dev32 = device_batched_logjoint(dev_lighttail_tt_model, params32, (), cm; precision=Float32)
+    dev64 = device_batched_logjoint(dev_lighttail_tt_model, Float64.(params32), (), cm)
+    @test all(isfinite, dev64)
+    @test all(isfinite, dev32)
+    @test dev_check_float32(dev32, dev64)
+    _, g32 = device_batched_logjoint_gradient(dev_lighttail_tt_model, params32, (), cm; precision=Float32)
+    _, g64 = device_batched_logjoint_gradient(dev_lighttail_tt_model, Float64.(params32), (), cm)
+    @test all(isfinite, g64)
+    @test all(isfinite, g32)
+    # a deep-tail pdf/cdf gradient ratio carries a slightly looser Float32 error
+    @test all(isapprox(Float64(a), b; rtol=2e-3, atol=2e-3) for (a, b) in zip(vec(g32), vec(g64)))
+end
+
+# ultra-narrow same-sign interval (codex review round 8): `s` in the erfcx
+# difference sinks under the Float32 rounding noise floor, so the sqrt(eps)
+# threshold must hand over to the log-space midpoint form.
+@tea static function dev_ultranarrow_tn_model()
+    m ~ normal(0.0, 1.0)
+    {:y} ~ truncatednormal(m, 1.0, 0.5, 0.500001)
+    return m
+end
+
+@testset "dev_truncated_narrow_interval_f32" begin
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+    dev_tt = device_batched_logjoint(dev_narrow_tt_model, params32, (), choicemap((:y, 0.0)); precision=Float32)
+    ref_tt = batched_logjoint_unconstrained(dev_narrow_tt_model, Float64.(params32), (), choicemap((:y, 0.0)))
+    @test all(isfinite, dev_tt)
+    @test dev_check_float32(dev_tt, ref_tt)
+
+    dev_tn = device_batched_logjoint(dev_narrow_tn_model, params32, (), choicemap((:y, 0.50005)); precision=Float32)
+    ref_tn = batched_logjoint_unconstrained(dev_narrow_tn_model, Float64.(params32), (), choicemap((:y, 0.50005)))
+    @test all(isfinite, dev_tn)
+    @test dev_check_float32(dev_tn, ref_tn)
+
+    cm_ultra = choicemap((:y, 0.5000005))
+    dev_ultra = device_batched_logjoint(dev_ultranarrow_tn_model, params32, (), cm_ultra; precision=Float32)
+    ref_ultra = batched_logjoint_unconstrained(dev_ultranarrow_tn_model, Float64.(params32), (), cm_ultra)
+    @test all(isfinite, dev_ultra)
+    @test all(isapprox(Float64(d), r; rtol=2e-3, atol=2e-3 * max(1.0, abs(r))) for (d, r) in zip(dev_ultra, ref_ultra))
+    _, g_ultra = device_batched_logjoint_gradient(dev_ultranarrow_tn_model, params32, (), cm_ultra; precision=Float32)
+    g_ultra_ref = batched_logjoint_gradient_unconstrained(dev_ultranarrow_tn_model, Float64.(params32), (), cm_ultra)
+    @test all(isfinite, g_ultra)
+    @test all(
+        isapprox(Float64(d), r; rtol=2e-3, atol=2e-3 * max(1.0, abs(r))) for (d, r) in zip(vec(g_ultra), vec(g_ultra_ref))
+    )
+end
+
 # an argument rebound into a host-only loop bound: the emitted index deterministic
 # is pruned (no kernel expression reads it), so the rebinding audit must not fire.
 @tea static function dev_rebound_loop_bound_model(n)

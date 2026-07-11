@@ -14,11 +14,14 @@ Supported today:
 
 - **Distributions:** `normal`, `lognormal`, `exponential`, `gamma`, `laplace`,
   `bernoulli`, `poisson`, `beta`, `studentt`, `inversegamma`, `weibull`,
-  `binomial`, `geometric`, `negativebinomial`, `categorical` (device-safe,
-  `T`-generic log-densities with a pure-Julia Lanczos `loggamma`, no exceptions,
-  out-of-support -> `-Inf`). Still unsupported: the truncated families (need a
-  device-safe `erf`/t-CDF), vector latents (`mvnormal`, `dirichlet`,
-  `lkjcholesky`), and `mixture`.
+  `binomial`, `geometric`, `negativebinomial`, `categorical`,
+  `truncatednormal`, `truncatedstudentt` (device-safe, `T`-generic
+  log-densities with a pure-Julia Lanczos `loggamma`, Cody `erf`/`erfc`, and a
+  continued-fraction Student-t CDF; no exceptions, out-of-support -> `-Inf`).
+  The truncated families are observed-only (latents already fall back at
+  backend lowering) and `truncatedstudentt` requires the literal `nu` the
+  backend guarantees. Still unsupported: vector latents (`mvnormal`,
+  `dirichlet`, `lkjcholesky`) and `mixture`.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar). Vector
   transforms (`Simplex`/`VectorIdentity`, i.e. `dirichlet`/`mvnormal` latents) are
   reported as unsupported.

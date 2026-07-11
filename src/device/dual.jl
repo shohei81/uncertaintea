@@ -41,6 +41,7 @@ Base.convert(::Type{DeviceDual{T}}, x::DeviceDual) where {T<:Real} =
     DeviceDual{T}(convert(T, x.value), convert(T, x.deriv))
 Base.convert(::Type{DeviceDual{T}}, x::DeviceDual{T}) where {T<:Real} = x
 
+Base.eps(::Type{DeviceDual{T}}) where {T<:Real} = DeviceDual{T}(eps(T), zero(T))
 Base.zero(::Type{DeviceDual{T}}) where {T<:Real} = DeviceDual{T}(zero(T), zero(T))
 Base.one(::Type{DeviceDual{T}}) where {T<:Real} = DeviceDual{T}(one(T), zero(T))
 Base.zero(x::DeviceDual{T}) where {T<:Real} = zero(DeviceDual{T})
@@ -88,6 +89,9 @@ end
 @inline Base.log(a::DeviceDual{T}) where {T} = DeviceDual{T}(log(a.value), a.deriv / a.value)
 @inline Base.log1p(a::DeviceDual{T}) where {T} =
     DeviceDual{T}(log1p(a.value), a.deriv / (one(T) + a.value))
+@inline function Base.expm1(a::DeviceDual{T}) where {T}
+    DeviceDual{T}(expm1(a.value), exp(a.value) * a.deriv)
+end
 @inline function Base.sqrt(a::DeviceDual{T}) where {T}
     s = sqrt(a.value)
     DeviceDual{T}(s, a.deriv / (T(2) * s))
@@ -122,6 +126,7 @@ end
 @inline Base.isless(a::DeviceDual, b::DeviceDual) = isless(a.value, b.value)
 @inline Base.isnan(a::DeviceDual) = isnan(a.value)
 @inline Base.isfinite(a::DeviceDual) = isfinite(a.value)
+@inline Base.isinf(a::DeviceDual) = isinf(a.value)
 
 # Value/derivative accessors that also accept a bare real (a step whose contribution
 # never touched the seeded parameter stays a plain `T`).

@@ -244,6 +244,34 @@ end
     @test vp ≈ vpref rtol = 1e-12
 end
 
+@tea static function devg_truncated_model(n)
+    m ~ normal(0.0, 1.0)
+    s ~ gamma(2.0, 2.0)
+    {:h} ~ truncatednormal(m, 1.0, 0.0, Inf)
+    for i = 1:n
+        {:y => i} ~ truncatednormal(m, s, -1.0, 2.0)
+        {:t => i} ~ truncatedstudentt(5.0, m, s, -2.0, 2.0)
+    end
+    return m
+end
+
+@testset "devg_gradient_parity_truncated" begin
+    # gradients flow through the analytic-derivative duals of erf/erfc and the
+    # t-CDF (d/dz = pdf; the literal-nu channel is genuinely zero), including a
+    # one-sided Inf bound whose derivative must pin to zero rather than NaN.
+    ys = [0.4, -0.7, 1.1]
+    ts = [1.5, -0.2, 0.8]
+    cm = choicemap((:h, 0.6), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
+    v, g = device_batched_logjoint_gradient(devg_truncated_model, params, (3,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_truncated_model, params, (3,), cm)
+    vref = batched_logjoint_unconstrained(devg_truncated_model, params, (3,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_truncated_model, Float32.(params), (3,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+end
+
 @testset "devg_unsupported_throws" begin
     err = try
         device_batched_logjoint_gradient(devg_dirichlet_model, reshape([0.1, 0.2], 2, 1), ())
