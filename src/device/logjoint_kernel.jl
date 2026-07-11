@@ -53,6 +53,29 @@ end
     end
 end
 
+# Vector choice value: a latent reads D consecutive unconstrained rows
+# (VectorIdentity: no transform, log-abs-det 0), an observation consumes D
+# staged rows and advances the cursor by D.
+@inline function _device_vector_choice_value(step, params, observed, col, cursor::Int32, ::Val{D}) where {D}
+    if step.value_source > Int32(0)
+        value = ntuple(i -> @inbounds(params[step.value_source+Int32(i-1), col]), Val(D))
+        return (value, cursor)
+    end
+    value = ntuple(i -> @inbounds(observed[cursor+Int32(i-1), col]), Val(D))
+    return (value, cursor + Int32(D))
+end
+
+# Compile-time-unrolled sum of per-component normal logpdfs (the diagonal
+# mvnormal closed form); per-component promote keeps heterogeneous
+# (literal/dual) argument tuples safe, mirroring the categorical fold.
+@inline _device_mvnormal_logpdf_fold(mu::Tuple{}, sigma::Tuple{}, value::Tuple{}) = error("empty mvnormal")
+@inline _device_mvnormal_logpdf_fold(mu::Tuple{A}, sigma::Tuple{B}, value::Tuple{C}) where {A,B,C} =
+    _device_normal_logpdf(promote(mu[1], sigma[1], value[1])...)
+@inline function _device_mvnormal_logpdf_fold(mu::Tuple, sigma::Tuple, value::Tuple)
+    head = _device_normal_logpdf(promote(first(mu), first(sigma), first(value))...)
+    return head + _device_mvnormal_logpdf_fold(Base.tail(mu), Base.tail(sigma), Base.tail(value))
+end
+
 # ---- per-step scoring ----------------------------------------------------------
 
 @inline function _device_score_step(step::DeviceNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
@@ -177,6 +200,15 @@ end
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
     _device_store_binding!(slots, step.binding_slot, value, col)
     return (_device_poisson_logpdf(lambda, value) + lad, cur)
+end
+
+@inline function _device_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    mu = _device_eval_args(step.mu, slots, col)
+    sigma = _device_eval_args(step.sigma, slots, col)
+    value, cur = _device_vector_choice_value(step, params, observed, col, cursor, Val(length(step.mu)))
+    # binding deliberately NOT stored (vector bindings are unmaterialized; the
+    # lowering audit rejects any downstream read)
+    return (_device_mvnormal_logpdf_fold(mu, sigma, value), cur)
 end
 
 @inline function _device_score_step(step::DeviceTruncatedNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)

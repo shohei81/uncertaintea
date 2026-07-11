@@ -162,6 +162,25 @@ struct DevicePoissonChoiceStep{L} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# Diagonal multivariate normal (issue #12 group 3, phase 1). The dimension is
+# compile-time (the argument tuples' arity); a latent reads `D` consecutive
+# unconstrained rows starting at `value_source` (VectorIdentity transform:
+# constrained == unconstrained, log-abs-det 0), an observation consumes `D`
+# staged rows. The binding slot is carried but NEVER written -- the slots
+# matrix holds one scalar per symbol -- so the read/write audit treats it as
+# unmaterialized and honestly rejects any downstream read.
+struct DeviceMvNormalChoiceStep{M<:Tuple,S<:Tuple} <: AbstractDeviceChoiceStep
+    mu::M
+    sigma::S
+    value_source::Int32
+    binding_slot::Int32
+end
+
+# Compile-time-unrolled tuple folds multiply the fused kernel body by D (and
+# the gradient kernel again by parameter count); cap the dimension so Metal
+# shader compilation stays inside its budget (see docs/device-vector-latents.md).
+const DEVICE_MAX_VECTOR_DIMENSION = 16
+
 # Truncated families are observed-only on the backend path (latents fall back at
 # backend lowering: the bounded transform is unimplemented there), so the value
 # source is always the staged observation; the fields stay generic regardless.
@@ -612,6 +631,48 @@ function _lower_device_step!(
     return nothing
 end
 
+function _lower_device_step!(
+    out,
+    step::BackendMvNormalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    dimension = length(step.mu)
+    if dimension > DEVICE_MAX_VECTOR_DIMENSION
+        _device_issue!(
+            issues,
+            "device lowering caps vector dimensions at $DEVICE_MAX_VECTOR_DIMENSION (kernel compile-time budget), got an mvnormal of dimension $dimension",
+        )
+        return nothing
+    end
+    if isnothing(step.parameter_slot)
+        value_source = Int32(-1)
+    else
+        if in_loop
+            _device_issue!(issues, "device lowering does not support latent mvnormal choices inside a loop")
+            return nothing
+        end
+        # vector backend steps carry the slot ORDINAL (scalar steps carry the
+        # value row; see issue #36) -- index directly
+        slot = layout.slots[step.parameter_slot]
+        if !(slot.transform isa VectorIdentityTransform) || slot.dimension != dimension ||
+           slot.value_length != dimension
+            _device_issue!(issues, "device lowering could not resolve the mvnormal parameter slot")
+            return nothing
+        end
+        value_source = Int32(slot.index)
+    end
+    mu = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "mvnormal argument"), step.mu)
+    sigma = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "mvnormal argument"), step.sigma)
+    (any(isnothing, mu) || any(isnothing, sigma)) && return nothing
+    push!(out, DeviceMvNormalChoiceStep(mu, sigma, value_source, _device_slot32(step.binding_slot)))
+    return nothing
+end
+
 function _lower_device_two_arg!(
     out,
     step,
@@ -819,6 +880,12 @@ function _device_collect_expr_reads!(reads_by_loop::Dict{Int32,BitSet}, steps, l
     return nothing
 end
 
+# Vector choice steps carry their binding slot but never materialize it in the
+# scalar slots matrix; the audit must NOT count it as written, so a downstream
+# read is honestly rejected instead of reading uninitialized scratch.
+_device_step_writes_binding(step::AbstractDevicePlanStep) = true
+_device_step_writes_binding(::DeviceMvNormalChoiceStep) = false
+
 function _device_collect_written_slots!(written_by_loop::Dict{Int32,BitSet}, steps, loop_id::Int32)
     written = get!(BitSet, written_by_loop, loop_id)
     for step in steps
@@ -827,7 +894,7 @@ function _device_collect_written_slots!(written_by_loop::Dict{Int32,BitSet}, ste
             body_written = get!(BitSet, written_by_loop, step.loop_id)
             step.iterator_slot > Int32(0) && push!(body_written, Int(step.iterator_slot))
             _device_collect_written_slots!(written_by_loop, step.body, step.loop_id)
-        elseif step.binding_slot > Int32(0)
+        elseif _device_step_writes_binding(step) && step.binding_slot > Int32(0)
             push!(written, Int(step.binding_slot))
         end
     end
@@ -1085,8 +1152,10 @@ explanation of what is not representable.
 """
 function _device_steps_rebind_argument(steps, argument_slots::BitSet)
     for step in steps
-        binding = hasproperty(step, :binding_slot) ? step.binding_slot : Int32(-1)
-        binding isa Integer && Int(binding) in argument_slots && return true
+        if _device_step_writes_binding(step)
+            binding = hasproperty(step, :binding_slot) ? step.binding_slot : Int32(-1)
+            binding isa Integer && Int(binding) in argument_slots && return true
+        end
         hasproperty(step, :body) && _device_steps_rebind_argument(step.body, argument_slots) && return true
     end
     return false

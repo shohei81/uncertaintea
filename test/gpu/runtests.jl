@@ -201,6 +201,44 @@ end
     @test gpu_check_float32(vec(Float64.(g)), vec(gref))
 end
 
+# --- issue #12 group 3 phase 1: diagonal mvnormal smoke -----------------------
+
+@tea static function gpu_mvnormal_model(n)
+    state ~ mvnormal([0.0, 1.0], [1.5, 0.8])
+    s ~ gamma(2.0, 2.0)
+    {:w} ~ mvnormal([0.3, -0.2], [1.0, 2.0])
+    for i = 1:n
+        {:v => i} ~ mvnormal([0.5, -0.5], [1.0, s])
+    end
+    return s
+end
+
+@testset "device Metal GPU mvnormal smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU mvnormal smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+    vs = [[0.2, -0.1], [1.0, 0.4], [-0.3, 0.9]]
+    cm = choicemap((:w, [0.1, -0.4]), ((:v => i, vs[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6]
+    ref = batched_logjoint_unconstrained(gpu_mvnormal_model, params, (3,), cm)
+    dev = device_batched_logjoint(gpu_mvnormal_model, Float32.(params), (3,), cm; backend=backend, precision=Float32)
+    @test gpu_check_float32(dev, ref)
+    gref = batched_logjoint_gradient_unconstrained(gpu_mvnormal_model, params, (3,), cm)
+    _, g = device_batched_logjoint_gradient(
+        gpu_mvnormal_model,
+        Float32.(params),
+        (3,),
+        cm;
+        backend=backend,
+        precision=Float32,
+    )
+    @test gpu_check_float32(vec(Float64.(g)), vec(gref))
+end
+
 # --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
 # Mirrors test/uncertaintea/core/device_hmc_advi.jl on a Metal.MetalBackend at Float32.
 # RNG stays host-side, so results are statistically (not bitwise) equivalent to the

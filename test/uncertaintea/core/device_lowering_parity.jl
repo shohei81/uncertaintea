@@ -523,6 +523,60 @@ end
     )
 end
 
+# issue #12 group 3 phase 1: diagonal mvnormal. Latent (VectorIdentity, two
+# unconstrained rows) mixed with a scalar latent, plus a top-level and an
+# in-loop vector observation (the staged cursor advances by the dimension).
+@tea static function dev_mvnormal_model(n)
+    state ~ mvnormal([0.0, 1.0], [1.5, 0.8])
+    s ~ gamma(2.0, 2.0)
+    {:w} ~ mvnormal([0.3, -0.2], [1.0, 2.0])
+    for i = 1:n
+        {:v => i} ~ mvnormal([0.5, -0.5], [1.0, s])
+    end
+    return s
+end
+
+# reading a component of a vector binding is not representable (today the
+# backend already rejects the `ref` expression; if it ever lowers, the device
+# read/write audit rejects the unmaterialized binding read instead).
+@tea static function dev_mvnormal_binding_read_model()
+    state ~ mvnormal([0.0, 1.0], [1.5, 0.8])
+    {:y} ~ normal(state[1], 1.0)
+    return state
+end
+
+# above the compile-time dimension cap: honest rejection.
+@tea static function dev_mvnormal_bigdim_model()
+    big ~ mvnormal(
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    )
+    return big
+end
+
+@testset "dev_numerical_parity_mvnormal" begin
+    supported, issues = device_lowering_report(dev_mvnormal_model)
+    @test supported
+    @test isempty(issues)
+
+    vs = [[0.2, -0.1], [1.0, 0.4], [-0.3, 0.9]]
+    cm = choicemap((:w, [0.1, -0.4]), ((:v => i, vs[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6] # state (2 rows) + s (1 row)
+    dev = device_batched_logjoint(dev_mvnormal_model, params, (3,), cm)
+    ref = batched_logjoint_unconstrained(dev_mvnormal_model, params, (3,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_mvnormal_model, Float32.(params), (3,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    read_supported, read_issues = device_lowering_report(dev_mvnormal_binding_read_model)
+    @test !read_supported
+    @test !isempty(read_issues)
+
+    big_supported, big_issues = device_lowering_report(dev_mvnormal_bigdim_model)
+    @test !big_supported
+    @test any(occursin("caps vector dimensions", issue) for issue in big_issues)
+end
+
 # an argument rebound into a host-only loop bound: the emitted index deterministic
 # is pruned (no kernel expression reads it), so the rebinding audit must not fire.
 @tea static function dev_rebound_loop_bound_model(n)

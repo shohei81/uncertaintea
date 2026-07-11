@@ -102,6 +102,30 @@ function _stage_step!(
     return nothing
 end
 
+# A vector observation stages as `value_length` consecutive rows in component
+# order; the kernel-side cursor advances by the step's compile-time dimension,
+# preserving the pre-order alignment invariant with a stride.
+function _stage_step!(
+    rows,
+    step::BackendMvNormalChoicePlanStep,
+    env,
+    constraints,
+    dummy_params,
+    trip_counts,
+    loop_starts,
+    loop_counter,
+    ::Type{T},
+) where {T}
+    isnothing(step.parameter_slot) || return nothing # latent: no observed rows
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    block = Matrix{T}(undef, step.value_length, size(dummy_params, 2))
+    _batched_choice_vector_values!(block, nothing, step.value_length, dummy_params, constraints, address_parts)
+    for component_index = 1:step.value_length
+        push!(rows, block[component_index, :])
+    end
+    return nothing
+end
+
 function _stage_step!(
     rows,
     step::BackendDeterministicPlanStep,

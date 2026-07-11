@@ -20,9 +20,11 @@ Supported today:
   continued-fraction Student-t CDF; no exceptions, out-of-support -> `-Inf`).
   The truncated families are observed-only (latents already fall back at
   backend lowering) and `truncatedstudentt` requires the literal `nu` the
-  backend guarantees. Still unsupported: vector latents (`mvnormal`,
-  `dirichlet`, `lkjcholesky`) and `mixture` — the plan-layout design for
-  lifting them is docs/device-vector-latents.md.
+  backend guarantees. `mvnormal` (diagonal) is supported for latents and
+  observations up to dimension 16 (compile-time-unrolled; bindings are carried
+  but not materialized, so reads of a vector binding are rejected). Still
+  unsupported: `dirichlet`, `mvnormaldense`, `lkjcholesky`, and `mixture` —
+  the plan-layout design for lifting them is docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar). Vector
   transforms (`Simplex`/`VectorIdentity`, i.e. `dirichlet`/`mvnormal` latents) are
   reported as unsupported.
