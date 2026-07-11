@@ -25,8 +25,10 @@ Supported today:
   but not materialized, so reads of a vector binding are rejected). Still
   unsupported: `dirichlet`, `mvnormaldense`, `lkjcholesky`, and `mixture` —
   the plan-layout design for lifting them is docs/device-vector-latents.md.
-- **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar). Vector
-  transforms (`Simplex`/`VectorIdentity`, i.e. `dirichlet`/`mvnormal` latents) are
+- **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar), and
+  `VectorIdentity` through the diagonal `mvnormal` step (register-resident, no
+  slots-matrix rows). Dimension-changing vector transforms
+  (`Simplex`/`CholeskyCorr`, i.e. `dirichlet`/`lkjcholesky` latents) are
   reported as unsupported.
 - **Structure:** scalar latent priors, numeric deterministic assignments, and
   single (non-nested) unit-range loops with observed choices. Observed values are
