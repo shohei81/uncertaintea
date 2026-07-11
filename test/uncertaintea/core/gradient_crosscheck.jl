@@ -278,6 +278,19 @@
         return s
     end
 
+    # simplex before a latent MIXTURE: the mixture lowering stores a value row
+    # like every scalar-valued step (it used to keep the raw slot ordinal,
+    # which only the pre-fix rejection kept from misreading a simplex
+    # component as the mixture value). Float64 literals: mixed-precision
+    # literals shift the log-sum-exp by ~2e-9 between the batched and
+    # per-column reference paths, which is precision, not math.
+    @tea static function gxc_dirichlet_then_mixture()
+        weights ~ dirichlet([2.0, 3.0, 4.0])
+        x ~ mixture((0.5, 0.5), normal(-2.0, 0.5), normal(2.0, 0.5))
+        {:y} ~ normal(x, 0.5)
+        return x
+    end
+
     @tea static function gxc_mvnormal_obs()
         m ~ normal(0.0f0, 1.0f0)
         {:y} ~ mvnormal([m, m], [1.0f0, 0.8f0])
@@ -370,6 +383,7 @@
         :dirichlet => [
             (gxc_dirichlet_latent, (), choicemap()),
             (gxc_dirichlet_then_scalar, (), choicemap((:y, 0.4f0))),
+            (gxc_dirichlet_then_mixture, (), choicemap((:y, 1.4))),
         ],
         :mvnormal => [
             (gxc_mvnormal_latent, (), choicemap()),

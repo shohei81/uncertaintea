@@ -282,13 +282,17 @@ function _backend_lower_mixture_choice_step(
         # leave it `nothing` and fall back if a genuine latent-weight case arises.
         weight_parameter_index = nothing
     end
+    # like every scalar-valued step, store the slot's VALUE row (issue #36),
+    # not its ordinal: scoring reads the constrained matrix with this number
+    parameter_row, parameter_row_ok = _backend_scalar_parameter_row(model, step.parameter_slot, issues)
+    parameter_row_ok || return nothing
     return BackendMixtureNormalChoicePlanStep(
         step.binding_slot,
         address,
         weights,
         mus,
         sigmas,
-        step.parameter_slot,
+        parameter_row,
         weight_parameter_index,
     )
 end
