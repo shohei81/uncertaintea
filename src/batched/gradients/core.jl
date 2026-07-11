@@ -130,13 +130,17 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
     constrained = _batched_constrained_buffer!(workspace, workspace.constrained_parameter_count, size(params, 2), T)
     logabsdet = _batched_logabsdet_buffer!(workspace, size(params, 2), T)
     for slot in layout.slots
-        slot_index = slot.index
+        # scalar slots: params is indexed by the UNCONSTRAINED row, the
+        # constrained matrix by the VALUE row; the two drift apart after a
+        # dimension-changing (simplex/cholesky) predecessor (issue #36)
+        parameter_row = slot.index
+        value_row = slot.value_index
         if slot.transform isa IdentityTransform || slot.transform isa NoncenteredTransform
             # noncentered slots pass z through: the z-space plan step scores
             # N(z; 0, 1) and carries theta itself, so no Jacobian or
             # chain-rule correction applies
             for batch_index = 1:size(params, 2)
-                constrained[slot_index, batch_index] = T(params[slot_index, batch_index])
+                constrained[value_row, batch_index] = T(params[parameter_row, batch_index])
             end
         elseif slot.transform isa VectorIdentityTransform
             source_indices = parameterindices(slot)
@@ -144,16 +148,16 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
             copyto!(view(constrained, destination_indices, :), view(params, source_indices, :))
         elseif slot.transform isa LogTransform
             for batch_index = 1:size(params, 2)
-                unconstrained_value = T(params[slot_index, batch_index])
+                unconstrained_value = T(params[parameter_row, batch_index])
                 constrained_value = exp(unconstrained_value)
-                constrained[slot_index, batch_index] = constrained_value
+                constrained[value_row, batch_index] = constrained_value
                 logabsdet[batch_index] += unconstrained_value
             end
         elseif slot.transform isa LogitTransform
             for batch_index = 1:size(params, 2)
-                unconstrained_value = T(params[slot_index, batch_index])
+                unconstrained_value = T(params[parameter_row, batch_index])
                 constrained_value = to_constrained(slot.transform, unconstrained_value)
-                constrained[slot_index, batch_index] = constrained_value
+                constrained[value_row, batch_index] = constrained_value
                 logabsdet[batch_index] += logabsdetjac(slot.transform, unconstrained_value)
             end
         elseif slot.transform isa SimplexTransform
@@ -180,17 +184,19 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
         elseif slot.transform isa VectorIdentityTransform
             continue
         elseif slot.transform isa LogTransform
-            slot_index = slot.index
+            parameter_row = slot.index
+            value_row = slot.value_index
             for batch_index = 1:size(params, 2)
-                gradients[slot_index, batch_index] =
-                    gradients[slot_index, batch_index] * constrained[slot_index, batch_index] + one(T)
+                gradients[parameter_row, batch_index] =
+                    gradients[parameter_row, batch_index] * constrained[value_row, batch_index] + one(T)
             end
         elseif slot.transform isa LogitTransform
-            slot_index = slot.index
+            parameter_row = slot.index
+            value_row = slot.value_index
             for batch_index = 1:size(params, 2)
-                constrained_value = constrained[slot_index, batch_index]
-                gradients[slot_index, batch_index] =
-                    gradients[slot_index, batch_index] * constrained_value * (1 - constrained_value) +
+                constrained_value = constrained[value_row, batch_index]
+                gradients[parameter_row, batch_index] =
+                    gradients[parameter_row, batch_index] * constrained_value * (1 - constrained_value) +
                     (1 - 2 * constrained_value)
             end
         elseif slot.transform isa SimplexTransform

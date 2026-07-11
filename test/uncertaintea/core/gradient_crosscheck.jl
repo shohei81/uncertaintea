@@ -265,6 +265,19 @@
         return s
     end
 
+    # DIMENSION-CHANGING (simplex) latent followed by scalar latents: every
+    # later slot has index != value_index, exercising the value-row ->
+    # seed-row split (issue #36, previously an honest fallback). The gamma
+    # latent additionally exercises the log-transform chain rule on shifted
+    # rows.
+    @tea static function gxc_dirichlet_then_scalar()
+        weights ~ dirichlet([2.0, 3.0, 4.0])
+        s ~ normal(0.0f0, 1.0f0)
+        tau ~ gamma(2.0f0, 1.5f0)
+        {:y} ~ normal(s, tau)
+        return s
+    end
+
     @tea static function gxc_mvnormal_obs()
         m ~ normal(0.0f0, 1.0f0)
         {:y} ~ mvnormal([m, m], [1.0f0, 0.8f0])
@@ -354,7 +367,10 @@
         :negativebinomial => [(gxc_negativebinomial_obs, (), choicemap((:y, 4)))],
         :poisson => [(gxc_poisson_obs, (), choicemap((:y, 2)))],
         :categorical => [(gxc_categorical_obs, (), choicemap((:y, 2)))],
-        :dirichlet => [(gxc_dirichlet_latent, (), choicemap())],
+        :dirichlet => [
+            (gxc_dirichlet_latent, (), choicemap()),
+            (gxc_dirichlet_then_scalar, (), choicemap((:y, 0.4f0))),
+        ],
         :mvnormal => [
             (gxc_mvnormal_latent, (), choicemap()),
             (gxc_mvnormal_obs, (), choicemap((:y, Float32[0.4, -0.2]))),

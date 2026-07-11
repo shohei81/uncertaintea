@@ -73,7 +73,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 6)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 7)
     _eval_backend_numeric_expr_and_gradient!(lower_values, lower_gradients, cache, env, step.lower, 8)
@@ -181,7 +181,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     # nu is a lowering-guaranteed constant; only its value is needed (gradient zero).
     _eval_backend_numeric_expr!(nu_values, env, step.nu, 6)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 7)

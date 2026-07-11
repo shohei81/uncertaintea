@@ -135,7 +135,7 @@ function _score_backend_step_and_gradient!(
 
     _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
     for component_index = 1:step.value_length
-        _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index)
+        _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index, cache.seed_rows)
         _eval_backend_numeric_expr_and_gradient!(
             mu_values[component_index],
             mu_gradients[component_index],
@@ -449,7 +449,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     for index = 1:k
         _eval_backend_numeric_expr_and_gradient!(
             weight_values[index],
@@ -557,7 +557,7 @@ function _score_backend_step_and_gradient!(
 
     _batched_choice_vector_values!(choice_values, step.value_index, d, params, constraints, address_parts)
     for component_index = 1:d
-        _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index)
+        _fill_choice_vector_gradient!(choice_gradients[component_index], step.value_index, component_index, cache.seed_rows)
         _eval_backend_numeric_expr_and_gradient!(
             mu_values[component_index],
             mu_gradients[component_index],
