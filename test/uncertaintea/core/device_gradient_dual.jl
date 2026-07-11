@@ -272,6 +272,31 @@ end
     @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
 end
 
+@tea static function devg_mvnormal_model(n)
+    state ~ mvnormal([0.0, 1.0], [1.5, 0.8])
+    s ~ gamma(2.0, 2.0)
+    {:w} ~ mvnormal([0.3, -0.2], [1.0, 2.0])
+    for i = 1:n
+        {:v => i} ~ mvnormal([0.5, -0.5], [1.0, s])
+    end
+    return s
+end
+
+@testset "devg_gradient_parity_mvnormal" begin
+    # per-component dual seeding across the latent vector rows, dual sigma
+    # flowing into an in-loop vector observation, and the strided cursor
+    vs = [[0.2, -0.1], [1.0, 0.4], [-0.3, 0.9]]
+    cm = choicemap((:w, [0.1, -0.4]), ((:v => i, vs[i]) for i = 1:3)...)
+    params = [0.5 -0.3 1.2; 0.1 0.7 -0.2; -0.4 0.2 0.6]
+    v, g = device_batched_logjoint_gradient(devg_mvnormal_model, params, (3,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_mvnormal_model, params, (3,), cm)
+    vref = batched_logjoint_unconstrained(devg_mvnormal_model, params, (3,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_mvnormal_model, Float32.(params), (3,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+end
+
 @testset "devg_unsupported_throws" begin
     err = try
         device_batched_logjoint_gradient(devg_dirichlet_model, reshape([0.1, 0.2], 2, 1), ())

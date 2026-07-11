@@ -212,6 +212,41 @@ end
     return (_device_poisson_logpdf(lam, v) + lad, cur)
 end
 
+# Vector choice value in duals: latent component i seeds derivative 1 iff its
+# unconstrained row is the thread's differentiation target.
+@inline function _device_grad_vector_choice_value(
+    step,
+    params,
+    observed,
+    pidx,
+    b,
+    cursor::Int32,
+    ::Type{TD},
+    ::Val{D},
+) where {TD,D}
+    T = _device_dual_basetype(TD)
+    if step.value_source > Int32(0)
+        value = ntuple(Val(D)) do i
+            row = step.value_source + Int32(i - 1)
+            raw = @inbounds params[row, b]
+            DeviceDual{T}(convert(T, raw), ifelse(row == Int32(pidx), one(T), zero(T)))
+        end
+        return (value, cursor)
+    end
+    value = ntuple(Val(D)) do i
+        DeviceDual{T}(convert(T, @inbounds(observed[cursor+Int32(i-1), b])), zero(T))
+    end
+    return (value, cursor + Int32(D))
+end
+
+@inline function _device_grad_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    mu = _device_grad_eval_args(step.mu, slots, pidx, b)
+    sigma = _device_grad_eval_args(step.sigma, slots, pidx, b)
+    value, cur =
+        _device_grad_vector_choice_value(step, params, observed, pidx, b, cursor, eltype(slots), Val(length(step.mu)))
+    return (_device_mvnormal_logpdf_fold(mu, sigma, value), cur)
+end
+
 @inline function _device_grad_score_step(
     step::DeviceTruncatedNormalChoiceStep,
     slots,
