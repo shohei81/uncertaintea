@@ -21,7 +21,8 @@ Supported today:
   The truncated families are observed-only (latents already fall back at
   backend lowering) and `truncatedstudentt` requires the literal `nu` the
   backend guarantees. Still unsupported: vector latents (`mvnormal`,
-  `dirichlet`, `lkjcholesky`) and `mixture`.
+  `dirichlet`, `lkjcholesky`) and `mixture` — the plan-layout design for
+  lifting them is docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar). Vector
   transforms (`Simplex`/`VectorIdentity`, i.e. `dirichlet`/`mvnormal` latents) are
   reported as unsupported.
