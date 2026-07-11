@@ -127,10 +127,13 @@ component promotes independently inside the fold, no whole-tuple promote.
   vector bindings live in generic per-column storage the kernel does not model.
   Note every latent slot is symbol-bound by construction (the frontend only
   creates parameter slots for bound choices), so the vector steps MUST accept a
-  non-zero `binding_slot` — they simply never write it. The existing
-  read/write slot audit then does the policing for free: a vector choice's
-  binding slot is left out of the kernel-written set, so any downstream
-  expression that reads it is rejected with the audit's honest
+  non-zero `binding_slot` — they simply never write it. The read/write slot
+  audit then polices downstream reads, but NOT for free: today
+  `_device_collect_written_slots!` counts EVERY lowered step with
+  `binding_slot > 0` as written, so the implementation must teach it that
+  vector choice steps do not materialize their binding (e.g. dispatch on the
+  vector step types, or an `writes_binding(step)` trait). With that one audit
+  change, a downstream read is rejected with the audit's honest
   "not materialized on the device" message, while a latent that is only scored
   (the common case) lowers fine. Materializing vector bindings later means
   reserving `value_length` slots-matrix rows per binding (a self-contained
