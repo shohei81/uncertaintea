@@ -122,12 +122,19 @@ component promotes independently inside the fold, no whole-tuple promote.
 
 ### 4. What stays rejected (honest report messages)
 
-- **Vector `binding_slot`s** (`p = theta ~ dirichlet(...)` then reading `p`
-  elsewhere): the slots matrix holds one scalar per symbol, and CPU vector
-  bindings live in generic per-column storage the kernel does not model. Phase
-  1–3 reject a vector choice with a non-zero binding slot; lifting this later
-  means reserving `value_length` slots-matrix rows per vector binding (a
-  self-contained follow-up).
+- **Reads of a vector binding** (`theta ~ dirichlet(...)` then `theta` used in
+  a later expression): the slots matrix holds one scalar per symbol, and CPU
+  vector bindings live in generic per-column storage the kernel does not model.
+  Note every latent slot is symbol-bound by construction (the frontend only
+  creates parameter slots for bound choices), so the vector steps MUST accept a
+  non-zero `binding_slot` — they simply never write it. The existing
+  read/write slot audit then does the policing for free: a vector choice's
+  binding slot is left out of the kernel-written set, so any downstream
+  expression that reads it is rejected with the audit's honest
+  "not materialized on the device" message, while a latent that is only scored
+  (the common case) lowers fine. Materializing vector bindings later means
+  reserving `value_length` slots-matrix rows per binding (a self-contained
+  follow-up).
 - **Dimension caps.** Group 2 taught us fused-kernel compile time is a real
   budget (multiple inlined loop bodies stalled MTLCompilerService for minutes).
   Compile-time-unrolled tuple folds scale the kernel body by K per step, and
