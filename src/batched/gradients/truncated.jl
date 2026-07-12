@@ -28,17 +28,19 @@ function _accumulate_truncatednormal_gradient!(
         zx = (value - mu) * inv_sigma
         za = (lower - mu) * inv_sigma
         zb = (upper - mu) * inv_sigma
-        normalizer = exp(_log_normal_cdf_diff(za, zb))
-        phi_a = _std_normal_pdf(za)
-        phi_b = _std_normal_pdf(zb)
-        za_phi_a = isinf(za) ? zero(T) : za * phi_a
-        zb_phi_b = isinf(zb) ? zero(T) : zb * phi_b
-        inv_sz = inv_sigma / normalizer
+        # pdf/Z ratios in log space (issue #43): with a finite log Z deep in a
+        # tail, the split pdf * exp(-log Z) overflows/underflows at Float32
+        # into Inf * 0 = NaN; the fused exponent stays finite
+        log_z = _log_normal_cdf_diff(za, zb)
+        ratio_a = isinf(za) ? zero(T) : exp(-za * za / 2 - T(0.9189385332046727) - log_z)
+        ratio_b = isinf(zb) ? zero(T) : exp(-zb * zb / 2 - T(0.9189385332046727) - log_z)
+        za_ratio_a = isinf(za) ? zero(T) : za * ratio_a
+        zb_ratio_b = isinf(zb) ? zero(T) : zb * ratio_b
         dvalue = -zx * inv_sigma
-        dmu = zx * inv_sigma - (phi_a - phi_b) * inv_sz
-        dsigma = (zx * zx - one(T)) * inv_sigma - (za_phi_a - zb_phi_b) * inv_sz
-        dlower = phi_a * inv_sz
-        dupper = -phi_b * inv_sz
+        dmu = zx * inv_sigma - (ratio_a - ratio_b) * inv_sigma
+        dsigma = (zx * zx - one(T)) * inv_sigma - (za_ratio_a - zb_ratio_b) * inv_sigma
+        dlower = ratio_a * inv_sigma
+        dupper = -ratio_b * inv_sigma
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] +=
                 dvalue * value_gradients[parameter_index, batch_index] +
@@ -133,22 +135,24 @@ function _accumulate_truncatedstudentt_gradient!(
         zx = (value - mu) * inv_sigma
         za = (lower - mu) * inv_sigma
         zb = (upper - mu) * inv_sigma
-        # exp(-log Z) instead of 1/(cdf difference): the plain difference
-        # cancels to zero for light tails (issue #43) and would poison every
-        # normalizer-gradient term with Inf
-        inv_normalizer = exp(-_t_log_normalizer(nu, za, zb))
-        p_a = _std_t_pdf(za, nu)
-        p_b = _std_t_pdf(zb, nu)
-        za_p_a = isinf(za) ? zero(T) : za * p_a
-        zb_p_b = isinf(zb) ? zero(T) : zb * p_b
-        inv_sz = inv_sigma * inv_normalizer
+        # each normalizer term is the ratio pdf/Z formed IN LOG SPACE
+        # (issue #43): the plain cdf difference cancels to zero for light
+        # tails, and even with a finite log Z the split exp(-log Z) * pdf
+        # overflows/underflows at Float32 into Inf * 0 = NaN
+        log_z = _t_log_normalizer(nu, za, zb)
+        ratio_a = isinf(za) ? zero(T) : exp(_std_t_log_pdf(za, nu) - log_z)
+        ratio_b = isinf(zb) ? zero(T) : exp(_std_t_log_pdf(zb, nu) - log_z)
+        # guard the z * ratio products too: an infinite bound has ratio 0, and
+        # Inf * 0 would reintroduce the NaN the ratios just eliminated
+        za_ratio_a = isinf(za) ? zero(T) : za * ratio_a
+        zb_ratio_b = isinf(zb) ? zero(T) : zb * ratio_b
         # k = d(base logpdf)/dz for the Student-t kernel.
         k = -(nu + one(T)) * zx / (nu + zx * zx)
         dvalue = k * inv_sigma
-        dmu = -k * inv_sigma + (p_b - p_a) * inv_sz
-        dsigma = -inv_sigma - k * zx * inv_sigma + (zb_p_b - za_p_a) * inv_sz
-        dlower = p_a * inv_sz
-        dupper = -p_b * inv_sz
+        dmu = -k * inv_sigma + (ratio_b - ratio_a) * inv_sigma
+        dsigma = -inv_sigma - k * zx * inv_sigma + (zb_ratio_b - za_ratio_a) * inv_sigma
+        dlower = ratio_a * inv_sigma
+        dupper = -ratio_b * inv_sigma
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] +=
                 dvalue * value_gradients[parameter_index, batch_index] +

@@ -233,10 +233,16 @@ function _std_t_log_cdf(z, nu)
     zz = float(z)
     isinf(zz) && return zz > zero(zz) ? zero(zz) : oftype(zz, -Inf)
     zz == zero(zz) && return -log(oftype(zz, 2))
-    x = nu / (nu + zz * zz)
-    regularized = beta_inc(nu / 2, one(nu) / 2, x)[1]
-    zz < zero(zz) && return log(regularized) - log(oftype(zz, 2))
-    return log1p(-regularized / 2)
+    # compute in at least Float64: a Float32 tail underflows the VALUE-space
+    # incomplete beta (beta_inc -> 0.0f0) long before its log leaves the
+    # Float32 range, so widen, take the log, and narrow the result
+    W = promote_type(typeof(zz), Float64)
+    zw = W(zz)
+    nuw = W(nu)
+    x = nuw / (nuw + zw * zw)
+    regularized = beta_inc(nuw / 2, one(nuw) / 2, x)[1]
+    zw < zero(zw) && return oftype(zz, log(regularized) - log(W(2)))
+    return oftype(zz, log1p(-regularized / 2))
 end
 
 # log(T_cdf(zb) - T_cdf(za)): one-sided normalizers use the symmetry
@@ -271,14 +277,23 @@ function _t_log_normalizer(nu, za, zb)
 end
 
 # Standard (unit-scale, zero-location) Student-t log-density; `_std_t_pdf`
-# exponentiates it, and the truncated normalizer's midpoint fallback uses it
-# directly to stay finite where the plain density underflows.
+# exponentiates it, and the truncated normalizer (midpoint fallback and the
+# gradient's pdf/Z hazard ratios) uses it directly. Computed in at least
+# Float64: at Float32 the loggamma((nu+1)/2) - loggamma(nu/2) difference loses
+# ~0.05 to rounding for large nu, and the truncated gradient's cancellation
+# structure (-k + pdf/Z, two nearly equal hazards) amplifies that into
+# multiple-hundred-percent gradient errors.
 function _std_t_log_pdf(z, nu)
     zz = float(z)
-    nu_ = oftype(zz, nu)
-    return loggamma((nu_ + one(nu_)) / 2) - loggamma(nu_ / 2) -
-           (log(nu_) + log(oftype(zz, pi))) / 2 -
-           (nu_ + one(nu_)) * log1p((zz * zz) / nu_) / 2
+    W = promote_type(typeof(zz), Float64)
+    zw = W(zz)
+    nuw = W(nu)
+    return oftype(
+        zz,
+        loggamma((nuw + one(nuw)) / 2) - loggamma(nuw / 2) -
+        (log(nuw) + log(W(pi))) / 2 -
+        (nuw + one(nuw)) * log1p((zw * zw) / nuw) / 2,
+    )
 end
 
 # Standard (unit-scale, zero-location) Student-t density with `nu` degrees of

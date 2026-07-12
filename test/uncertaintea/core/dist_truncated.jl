@@ -220,4 +220,33 @@ end
     @test isfinite(lp_interval)
     @test lp_interval ≈ lp rtol = 1e-6
     @test !isapprox(lp_interval, lp; rtol=1e-9)
+
+    # Float32 (codex review): the value-space incomplete beta underflows at
+    # Float32 long before its log does (the log-cdf widens to Float64
+    # internally), and the gradient's pdf/Z hazard ratios must form in log
+    # space -- exp(-log Z) alone overflows Float32 into Inf * 0 = NaN
+    lp32 = UncertainTea.logpdf(truncatedstudentt(1.0f5, 0.0f0, 1.0f0, 15.0f0, Inf32), 15.2f0)
+    @test isfinite(lp32)
+    # the residual ~0.03 offset is the BASE studentt logpdf's Float32 loggamma
+    # difference at large nu (a pre-existing, separate precision issue); the
+    # normalizer itself is Float64-widened and exact
+    @test Float64(lp32) ≈ lp atol = 0.05
+
+    @tea static function trunc_t_f32_tail_model(offset)
+        mu ~ normal(0.0f0, 1.0f0)
+        {:y} ~ truncatedstudentt(1.0f5, mu, 1.0f0, 14.0f0, Inf)
+        return mu
+    end
+    cm32 = choicemap((:y, 14.2f0))
+    params32 = reshape(Float32[0.01, -0.02], 1, 2)
+    values32 = batched_logjoint_unconstrained(trunc_t_f32_tail_model, params32, (0.0f0,), cm32)
+    gradients32 = batched_logjoint_gradient_unconstrained(trunc_t_f32_tail_model, params32, (0.0f0,), cm32)
+    @test all(isfinite, values32)
+    @test all(isfinite, gradients32)
+    gradients64 =
+        batched_logjoint_gradient_unconstrained(trunc_t_f32_tail_model, Float64.(params32), (0.0,), cm32)
+    # the -k + pdf/Z cancellation amplifies rounding; ~1e-3 relative is the
+    # achievable Float32 quality here (was NaN, then ~400% before the
+    # Float64-widened log-pdf)
+    @test all(isapprox(Float64(a), b; rtol=5e-3, atol=5e-3) for (a, b) in zip(vec(gradients32), vec(gradients64)))
 end
