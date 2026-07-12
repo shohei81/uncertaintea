@@ -336,6 +336,26 @@ end
     return (_device_truncatedstudentt_logpdf(n, m, s, lo, up, v) + lad, cur)
 end
 
+@inline function _device_grad_score_step(
+    step::DeviceMixtureNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
+    weights = _device_grad_eval_args(step.weights, slots, pidx, b)
+    mus = _device_grad_eval_args(step.mus, slots, pidx, b)
+    sigmas = _device_grad_eval_args(step.sigmas, slots, pidx, b)
+    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+    # the log-sum-exp promotes per component internally
+    return (_device_mixture_normal_logpdf(weights, mus, sigmas, value) + lad, cur)
+end
+
 @inline function _device_grad_score_step(step::DeviceDeterministicStep, slots, params, observed, tc, ls, pidx, b, cursor)
     @inbounds slots[step.binding_slot, pidx, b] = _device_grad_eval(step.expr, slots, pidx, b)
     return (zero(eltype(slots)), cursor)

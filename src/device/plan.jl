@@ -155,6 +155,19 @@ struct DeviceCategoricalChoiceStep{PS<:Tuple} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# Finite mixture of normals (issue #50): the VALUE is a scalar (Identity latent
+# or observed), so this follows the group-1 scalar conventions -- the binding
+# IS materialized, no audit special-case -- with per-component expression
+# tuples and a log-sum-exp fold.
+struct DeviceMixtureNormalChoiceStep{W<:Tuple,M<:Tuple,S<:Tuple} <: AbstractDeviceChoiceStep
+    weights::W
+    mus::M
+    sigmas::S
+    value_source::Int32
+    transform::Int32
+    binding_slot::Int32
+end
+
 struct DevicePoissonChoiceStep{L} <: AbstractDeviceChoiceStep
     lambda::L
     value_source::Int32
@@ -778,6 +791,37 @@ function _lower_device_step!(
     # scale_tril stays a host-side generic slot; staging packs its lower
     # triangle into the observation buffer, so nothing lowers here
     push!(out, DeviceMvNormalDenseChoiceStep(mu, value_source, _device_slot32(step.binding_slot)))
+    return nothing
+end
+
+function _lower_device_step!(
+    out,
+    step::BackendMixtureNormalChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    components = length(step.weights)
+    if components > DEVICE_MAX_VECTOR_DIMENSION
+        _device_issue!(
+            issues,
+            "device lowering caps mixture components at $DEVICE_MAX_VECTOR_DIMENSION (kernel compile-time budget), got $components",
+        )
+        return nothing
+    end
+    src = _device_choice_value_source(step, layout, in_loop, issues, "mixture")
+    weights = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "mixture weight"), step.weights)
+    mus = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "mixture argument"), step.mus)
+    sigmas = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "mixture argument"), step.sigmas)
+    (isnothing(src) || any(isnothing, weights) || any(isnothing, mus) || any(isnothing, sigmas)) && return nothing
+    value_source, tcode = src
+    push!(
+        out,
+        DeviceMixtureNormalChoiceStep(weights, mus, sigmas, value_source, tcode, _device_slot32(step.binding_slot)),
+    )
     return nothing
 end
 

@@ -311,6 +311,44 @@ end
     @test gpu_check_float32(vec(Float64.(g)), vec(gref))
 end
 
+# --- issue #50: mixture-of-normals smoke ---------------------------------------
+
+@tea static function gpu_mixture_model(n)
+    x ~ mixture((0.5, 0.5), normal(-2.0, 0.5), normal(2.0, 0.5))
+    s ~ gamma(2.0, 2.0)
+    {:z} ~ normal(x * 2.0, 0.3)
+    for i = 1:n
+        {:y => i} ~ mixture((0.3, 0.7), normal(x, s), normal(2.0, 0.5))
+    end
+    return x
+end
+
+@testset "device Metal GPU mixture smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU mixture smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+    ys = [1.4, -1.8, 2.2]
+    cm = choicemap((:z, 3.5), ((:y => i, ys[i]) for i = 1:3)...)
+    params = [1.8 -2.1; 0.1 0.6]
+    ref = batched_logjoint_unconstrained(gpu_mixture_model, params, (3,), cm)
+    dev = device_batched_logjoint(gpu_mixture_model, Float32.(params), (3,), cm; backend=backend, precision=Float32)
+    @test gpu_check_float32(dev, ref)
+    gref = batched_logjoint_gradient_unconstrained(gpu_mixture_model, params, (3,), cm)
+    _, g = device_batched_logjoint_gradient(
+        gpu_mixture_model,
+        Float32.(params),
+        (3,),
+        cm;
+        backend=backend,
+        precision=Float32,
+    )
+    @test gpu_check_float32(vec(Float64.(g)), vec(gref))
+end
+
 # --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
 # Mirrors test/uncertaintea/core/device_hmc_advi.jl on a Metal.MetalBackend at Float32.
 # RNG stays host-side, so results are statistically (not bitwise) equivalent to the

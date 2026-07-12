@@ -660,6 +660,45 @@ end
     @test dev_batch ≈ ref_batch rtol = 1e-12
 end
 
+# issue #50: mixture of normals. The VALUE is scalar (Identity latent), so the
+# binding is materialized and may feed downstream expressions; the observed form
+# carries a latent-flowing component mean through the log-sum-exp.
+@tea static function dev_mixture_device_model(n)
+    x ~ mixture((0.5, 0.5), normal(-2.0, 0.5), normal(2.0, 0.5))
+    s ~ gamma(2.0, 2.0)
+    {:z} ~ normal(x * 2.0, 0.3)
+    for i = 1:n
+        {:y => i} ~ mixture((0.3, 0.7), normal(x, s), normal(2.0, 0.5))
+    end
+    return x
+end
+
+# latent-simplex mixture weights stay a backend fallback (generic-slot weights),
+# so the device path must keep reporting them unsupported.
+@tea static function dev_mixture_latent_weights_model()
+    w ~ dirichlet([2.0, 2.0])
+    x ~ mixture(w, normal(-1.0, 1.0), normal(1.0, 1.0))
+    return x
+end
+
+@testset "dev_numerical_parity_mixture" begin
+    supported, issues = device_lowering_report(dev_mixture_device_model)
+    @test supported
+    @test isempty(issues)
+
+    ys = [1.4, -1.8, 2.2]
+    cm = choicemap((:z, 3.5), ((:y => i, ys[i]) for i = 1:3)...)
+    params = [1.8 -2.1; 0.1 0.6] # x + s
+    dev = device_batched_logjoint(dev_mixture_device_model, params, (3,), cm)
+    ref = batched_logjoint_unconstrained(dev_mixture_device_model, params, (3,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_mixture_device_model, Float32.(params), (3,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    weights_supported, _ = device_lowering_report(dev_mixture_latent_weights_model)
+    @test !weights_supported
+end
+
 # an argument rebound into a host-only loop bound: the emitted index deterministic
 # is pruned (no kernel expression reads it), so the rebinding audit must not fire.
 @tea static function dev_rebound_loop_bound_model(n)

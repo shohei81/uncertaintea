@@ -664,6 +664,36 @@ end
     return ifelse(in_support, accumulator, oftype(accumulator, -Inf))
 end
 
+# ---- finite mixture of normals -----------------------------------------------
+
+# Per-component log(w) + normal logpdf. log(abs(w)) keeps the eagerly-evaluated
+# branch GPU-safe; a nonpositive weight degrades its component to -Inf (the CPU
+# reference throws on negative weights, scores log(0) = -Inf on zero).
+@inline function _device_mixture_term(w, mu, sigma, x)
+    ww, m, s, v = promote(w, mu, sigma, x)
+    term = log(abs(ww)) + _device_normal_logpdf(m, s, v)
+    return ifelse(ww > zero(ww), term, oftype(term, -Inf))
+end
+
+@inline _device_mixture_terms(weights::Tuple{A}, mus::Tuple{B}, sigmas::Tuple{C}, x) where {A,B,C} =
+    (_device_mixture_term(weights[1], mus[1], sigmas[1], x),)
+@inline _device_mixture_terms(weights::Tuple, mus::Tuple, sigmas::Tuple, x) = (
+    _device_mixture_term(first(weights), first(mus), first(sigmas), x),
+    _device_mixture_terms(Base.tail(weights), Base.tail(mus), Base.tail(sigmas), x)...,
+)
+
+@inline _device_exp_shift_sum(t::Tuple{A}, shift) where {A} = exp(t[1] - shift)
+@inline _device_exp_shift_sum(t::Tuple, shift) = exp(first(t) - shift) + _device_exp_shift_sum(Base.tail(t), shift)
+
+# Max-shifted log-sum-exp over compile-time component tuples, mirroring the CPU
+# `_backend_mixture_normal_logpdf` (all components -Inf -> -Inf).
+@inline function _device_mixture_normal_logpdf(weights::Tuple, mus::Tuple, sigmas::Tuple, x)
+    terms = _device_mixture_terms(weights, mus, sigmas, x)
+    shift = _device_tuple_max(terms)
+    result = shift + log(_device_exp_shift_sum(terms, shift))
+    return ifelse(isfinite(shift), result, oftype(result, -Inf))
+end
+
 # ---- dense multivariate normal ------------------------------------------------
 
 # Forward substitution solving L z = x - mu over a COLUMN-MAJOR PACKED lower
