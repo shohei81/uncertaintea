@@ -254,6 +254,15 @@ end
     return (_device_truncatedstudentt_logpdf(nu, mu, sigma, lower, upper, value) + lad, cur)
 end
 
+@inline function _device_score_step(step::DeviceMixtureNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    weights = _device_eval_args(step.weights, slots, col)
+    mus = _device_eval_args(step.mus, slots, col)
+    sigmas = _device_eval_args(step.sigmas, slots, col)
+    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    _device_store_binding!(slots, step.binding_slot, value, col)
+    return (_device_mixture_normal_logpdf(weights, mus, sigmas, value) + lad, cur)
+end
+
 @inline function _device_score_step(step::DeviceDeterministicStep, slots, params, observed, tc, ls, col, cursor)
     @inbounds slots[step.binding_slot, col] = _device_eval(step.expr, slots, col)
     return (zero(eltype(slots)), cursor)

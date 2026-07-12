@@ -26,8 +26,11 @@ Supported today:
   unconstrained rows through a register-resident shifted softmax; the dense
   scale_tril factor rides the observation buffer as packed rows; vector
   bindings are carried but not materialized, so reads of one are rejected).
-  Still unsupported: `lkjcholesky` and `mixture` — the plan-layout design
-  covering them is docs/device-vector-latents.md.
+  `mixture` (of normals, scalar value, up to 16 components) lowers through a
+  max-shifted log-sum-exp; latent-simplex weights stay a backend fallback.
+  Still unsupported: `lkjcholesky` (blocked on backend-native support, issue
+  #49) — the plan-layout design for vector latents is
+  docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar), and
   `VectorIdentity`/`Simplex` through the diagonal `mvnormal`/`dirichlet` steps
   (register-resident, no slots-matrix rows). `CholeskyCorr` (`lkjcholesky`

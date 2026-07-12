@@ -355,6 +355,31 @@ end
     @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
 end
 
+@tea static function devg_mixture_device_model(n)
+    x ~ mixture((0.5, 0.5), normal(-2.0, 0.5), normal(2.0, 0.5))
+    s ~ gamma(2.0, 2.0)
+    {:z} ~ normal(x * 2.0, 0.3)
+    for i = 1:n
+        {:y => i} ~ mixture((0.3, 0.7), normal(x, s), normal(2.0, 0.5))
+    end
+    return x
+end
+
+@testset "devg_gradient_parity_mixture" begin
+    # duals flow through the max-shifted log-sum-exp (responsibility weighting)
+    # and through the materialized scalar binding into a downstream observation
+    ys = [1.4, -1.8, 2.2]
+    cm = choicemap((:z, 3.5), ((:y => i, ys[i]) for i = 1:3)...)
+    params = [1.8 -2.1; 0.1 0.6]
+    v, g = device_batched_logjoint_gradient(devg_mixture_device_model, params, (3,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_mixture_device_model, params, (3,), cm)
+    vref = batched_logjoint_unconstrained(devg_mixture_device_model, params, (3,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_mixture_device_model, Float32.(params), (3,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+end
+
 @testset "devg_unsupported_throws" begin
     err = try
         device_batched_logjoint_gradient(devg_lkj_model, reshape([0.1], 1, 1), ())
