@@ -202,6 +202,17 @@ end
     return (_device_poisson_logpdf(lambda, value) + lad, cur)
 end
 
+@inline function _device_score_step(step::DeviceDirichletChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    alpha = _device_eval_args(step.alpha, slots, col)
+    if step.value_source > Int32(0)
+        z = ntuple(i -> @inbounds(params[step.value_source+Int32(i-1), col]), Val(length(step.alpha) - 1))
+        value, lad = _device_simplex_constrain(z)
+        return (_device_dirichlet_logpdf(alpha, value) + lad, cursor)
+    end
+    value = ntuple(i -> @inbounds(observed[cursor+Int32(i-1), col]), Val(length(step.alpha)))
+    return (_device_dirichlet_logpdf(alpha, value), cursor + Int32(length(step.alpha)))
+end
+
 @inline function _device_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
     mu = _device_eval_args(step.mu, slots, col)
     sigma = _device_eval_args(step.sigma, slots, col)

@@ -176,6 +176,17 @@ struct DeviceMvNormalChoiceStep{M<:Tuple,S<:Tuple} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# Dirichlet (issue #12 group 3, phase 2): the first dimension-changing vector
+# step. A latent reads K-1 consecutive unconstrained rows starting at
+# `value_source` and constrains them through the register-resident shifted
+# softmax (log-abs-det included); an observation consumes K staged rows. The
+# binding slot is carried but never written (see DeviceMvNormalChoiceStep).
+struct DeviceDirichletChoiceStep{A<:Tuple} <: AbstractDeviceChoiceStep
+    alpha::A
+    value_source::Int32
+    binding_slot::Int32
+end
+
 # Compile-time-unrolled tuple folds multiply the fused kernel body by D (and
 # the gradient kernel again by parameter count); cap the dimension so Metal
 # shader compilation stays inside its budget (see docs/device-vector-latents.md).
@@ -673,6 +684,46 @@ function _lower_device_step!(
     return nothing
 end
 
+function _lower_device_step!(
+    out,
+    step::BackendDirichletChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    dimension = length(step.alpha)
+    if dimension > DEVICE_MAX_VECTOR_DIMENSION
+        _device_issue!(
+            issues,
+            "device lowering caps vector dimensions at $DEVICE_MAX_VECTOR_DIMENSION (kernel compile-time budget), got a dirichlet of dimension $dimension",
+        )
+        return nothing
+    end
+    if isnothing(step.parameter_slot)
+        value_source = Int32(-1)
+    else
+        if in_loop
+            _device_issue!(issues, "device lowering does not support latent dirichlet choices inside a loop")
+            return nothing
+        end
+        # vector backend steps carry the slot ORDINAL (see the mvnormal step)
+        slot = layout.slots[step.parameter_slot]
+        if !(slot.transform isa SimplexTransform) || slot.value_length != dimension ||
+           slot.dimension != dimension - 1
+            _device_issue!(issues, "device lowering could not resolve the dirichlet parameter slot")
+            return nothing
+        end
+        value_source = Int32(slot.index)
+    end
+    alpha = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "dirichlet argument"), step.alpha)
+    any(isnothing, alpha) && return nothing
+    push!(out, DeviceDirichletChoiceStep(alpha, value_source, _device_slot32(step.binding_slot)))
+    return nothing
+end
+
 function _lower_device_two_arg!(
     out,
     step,
@@ -885,6 +936,7 @@ end
 # read is honestly rejected instead of reading uninitialized scratch.
 _device_step_writes_binding(step::AbstractDevicePlanStep) = true
 _device_step_writes_binding(::DeviceMvNormalChoiceStep) = false
+_device_step_writes_binding(::DeviceDirichletChoiceStep) = false
 
 function _device_collect_written_slots!(written_by_loop::Dict{Int32,BitSet}, steps, loop_id::Int32)
     written = get!(BitSet, written_by_loop, loop_id)

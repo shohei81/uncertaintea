@@ -20,16 +20,17 @@ Supported today:
   continued-fraction Student-t CDF; no exceptions, out-of-support -> `-Inf`).
   The truncated families are observed-only (latents already fall back at
   backend lowering) and `truncatedstudentt` requires the literal `nu` the
-  backend guarantees. `mvnormal` (diagonal) is supported for latents and
-  observations up to dimension 16 (compile-time-unrolled; bindings are carried
-  but not materialized, so reads of a vector binding are rejected). Still
-  unsupported: `dirichlet`, `mvnormaldense`, `lkjcholesky`, and `mixture` —
-  the plan-layout design for lifting them is docs/device-vector-latents.md.
+  backend guarantees. `mvnormal` (diagonal) and `dirichlet` are supported for
+  latents and observations up to dimension 16 (compile-time-unrolled; a
+  dirichlet latent constrains K-1 unconstrained rows through a
+  register-resident shifted softmax; vector bindings are carried but not
+  materialized, so reads of one are rejected). Still unsupported:
+  `mvnormaldense`, `lkjcholesky`, and `mixture` — the plan-layout design for
+  lifting them is docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar), and
-  `VectorIdentity` through the diagonal `mvnormal` step (register-resident, no
-  slots-matrix rows). Dimension-changing vector transforms
-  (`Simplex`/`CholeskyCorr`, i.e. `dirichlet`/`lkjcholesky` latents) are
-  reported as unsupported.
+  `VectorIdentity`/`Simplex` through the diagonal `mvnormal`/`dirichlet` steps
+  (register-resident, no slots-matrix rows). `CholeskyCorr` (`lkjcholesky`
+  latents) is reported as unsupported.
 - **Structure:** scalar latent priors, numeric deterministic assignments, and
   single (non-nested) unit-range loops with observed choices. Observed values are
   resolved on the host into a dense `observed[row, col]` matrix during one-time
