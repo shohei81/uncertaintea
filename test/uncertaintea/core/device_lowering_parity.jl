@@ -620,6 +620,13 @@ end
     cm_off = choicemap((:w, [0.2, 0.3, 0.9]))
     @test all(==(-Inf), device_batched_logjoint(dev_dirichlet_obs_model, params_obs, (), cm_off))
     @test all(==(-Inf), batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_off))
+
+    # a NEGATIVE component must reject through the support check, not blow up in
+    # the eagerly-evaluated log (codex review: log(negative) throws a DomainError
+    # on the CPU KernelAbstractions backend where the reference returns -Inf)
+    cm_neg = choicemap((:w, [-0.2, 0.7, 0.5]))
+    @test all(==(-Inf), device_batched_logjoint(dev_dirichlet_obs_model, params_obs, (), cm_neg))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_neg))
 end
 
 # an argument rebound into a host-only loop bound: the emitted index deterministic

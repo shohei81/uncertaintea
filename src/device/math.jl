@@ -639,10 +639,14 @@ end
 # CPU `_backend_dirichlet_logpdf` acceptance (all components positive, sum
 # within sqrt(eps)*K*16 of one); a constrained latent satisfies it by
 # construction, observations may not.
+# log(abs(v)): a negative observed component never SELECTS this branch (the
+# in_support ifelse rejects it), but the fold is evaluated eagerly and log()
+# throws a DomainError on negative arguments (CPU KernelAbstractions backend;
+# GPU too) instead of the reference's -Inf.
 @inline _device_dirichlet_fold(alpha::Tuple{A}, value::Tuple{B}) where {A,B} =
-    (alpha[1] - 1) * log(value[1])
+    (alpha[1] - 1) * log(abs(value[1]))
 @inline _device_dirichlet_fold(alpha::Tuple, value::Tuple) =
-    (first(alpha) - 1) * log(first(value)) + _device_dirichlet_fold(Base.tail(alpha), Base.tail(value))
+    (first(alpha) - 1) * log(abs(first(value))) + _device_dirichlet_fold(Base.tail(alpha), Base.tail(value))
 @inline _device_dirichlet_loggamma_sum(t::Tuple{A}) where {A} = _device_loggamma(t[1])
 @inline _device_dirichlet_loggamma_sum(t::Tuple) =
     _device_loggamma(first(t)) + _device_dirichlet_loggamma_sum(Base.tail(t))
