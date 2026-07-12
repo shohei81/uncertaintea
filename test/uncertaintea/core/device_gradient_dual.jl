@@ -42,10 +42,10 @@ end
     return p
 end
 
-# dirichlet -> simplex (vector) transform: intentionally NOT device-lowerable.
-@tea static function devg_dirichlet_model()
-    theta ~ dirichlet([1.0, 1.0, 1.0])
-    return theta
+# lkjcholesky latent: still not device-lowerable (no backend support to mirror).
+@tea static function devg_lkj_model()
+    Omega ~ lkjcholesky(2, 2.0)
+    return Omega
 end
 
 # issue #12 group 1 mirrors of device_lowering_parity.jl.
@@ -335,7 +335,7 @@ end
 
 @testset "devg_unsupported_throws" begin
     err = try
-        device_batched_logjoint_gradient(devg_dirichlet_model, reshape([0.1, 0.2], 2, 1), ())
+        device_batched_logjoint_gradient(devg_lkj_model, reshape([0.1], 1, 1), ())
         nothing
     catch e
         e

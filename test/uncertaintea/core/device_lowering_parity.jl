@@ -38,10 +38,10 @@ end
     return p
 end
 
-# dirichlet latent -> simplex (vector) transform: intentionally NOT supported.
-@tea static function dev_dirichlet_model()
-    theta ~ dirichlet([1.0, 1.0, 1.0])
-    return theta
+# lkjcholesky latent: still unsupported (no backend lowering exists to mirror).
+@tea static function dev_lkj_model()
+    Omega ~ lkjcholesky(2, 2.0)
+    return Omega
 end
 
 # issue #12 group 1 (continuous): studentt (identity latent), inversegamma and
@@ -89,10 +89,10 @@ end
     supported_bern, _ = device_lowering_report(dev_bernoulli_model)
     @test supported_bern
 
-    dir_supported, dir_issues = device_lowering_report(dev_dirichlet_model)
-    @test !dir_supported
-    @test !isempty(dir_issues)
-    @test any(occursin("dirichlet", lowercase(issue)) for issue in dir_issues)
+    lkj_supported, lkj_issues = device_lowering_report(dev_lkj_model)
+    @test !lkj_supported
+    @test !isempty(lkj_issues)
+    @test any(occursin("lkjcholesky", lowercase(issue)) for issue in lkj_issues)
 end
 
 @testset "dev_plan_isbits" begin
@@ -715,7 +715,7 @@ end
 @testset "dev_unsupported_fallback" begin
     # A device-unsupported model must raise a clear error pointing at the report.
     err = try
-        device_batched_logjoint(dev_dirichlet_model, reshape([0.1, 0.2], 2, 1), ())
+        device_batched_logjoint(dev_lkj_model, reshape([0.1], 1, 1), ())
         nothing
     catch e
         e
