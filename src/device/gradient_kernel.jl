@@ -259,6 +259,30 @@ end
     return (_device_dirichlet_logpdf(alpha, value), cursor + Int32(length(step.alpha)))
 end
 
+@inline function _device_grad_score_step(
+    step::DeviceMvNormalDenseChoiceStep,
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
+    T = _device_dual_basetype(eltype(slots))
+    mu = _device_grad_eval_args(step.mu, slots, pidx, b)
+    # the factor is constant data (zero derivative), matching the CPU contract
+    scale_packed = ntuple(
+        i -> DeviceDual{T}(convert(T, @inbounds(observed[cursor+Int32(i-1), b])), zero(T)),
+        Val((length(step.mu) * (length(step.mu) + 1)) ÷ 2),
+    )
+    cur = cursor + Int32((length(step.mu) * (length(step.mu) + 1)) ÷ 2)
+    value, cur2 =
+        _device_grad_vector_choice_value(step, params, observed, pidx, b, cur, eltype(slots), Val(length(step.mu)))
+    return (_device_mvnormaldense_logpdf(scale_packed, mu, value), cur2)
+end
+
 @inline function _device_grad_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
     mu = _device_grad_eval_args(step.mu, slots, pidx, b)
     sigma = _device_grad_eval_args(step.sigma, slots, pidx, b)

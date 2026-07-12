@@ -629,6 +629,37 @@ end
     @test all(==(-Inf), batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_neg))
 end
 
+# issue #12 group 3 phase 3: mvnormaldense. The constant scale_tril factor
+# rides the observation buffer as d(d+1)/2 packed rows ahead of any value rows.
+@tea static function dev_mvdense_model(L)
+    state ~ mvnormaldense([0.0, 1.0], L)
+    m ~ normal(0.0, 1.0)
+    {:y} ~ mvnormaldense([m, m], L)
+    return m
+end
+
+@testset "dev_numerical_parity_mvnormaldense" begin
+    supported, issues = device_lowering_report(dev_mvdense_model)
+    @test supported
+    @test isempty(issues)
+
+    L = [1.2 0.0; 0.4 0.9]
+    cm = choicemap((:y, [0.4, -0.2]))
+    params = [0.5 -0.3; 0.1 0.7; -0.4 0.2] # state (2 rows) + m
+    dev = device_batched_logjoint(dev_mvdense_model, params, (L,), cm)
+    ref = batched_logjoint_unconstrained(dev_mvdense_model, params, (L,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_mvdense_model, Float32.(params), (L,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    # per-batch factors stage per column through the shared observation buffer
+    batch_args = [(L,), ([1.5 0.0; -0.2 0.7],)]
+    params2 = params[:, 1:2]
+    dev_batch = device_batched_logjoint(dev_mvdense_model, params2, batch_args, cm)
+    ref_batch = batched_logjoint_unconstrained(dev_mvdense_model, params2, batch_args, cm)
+    @test dev_batch ≈ ref_batch rtol = 1e-12
+end
+
 # an argument rebound into a host-only loop bound: the emitted index deterministic
 # is pruned (no kernel expression reads it), so the rebinding audit must not fire.
 @tea static function dev_rebound_loop_bound_model(n)

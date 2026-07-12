@@ -187,10 +187,26 @@ struct DeviceDirichletChoiceStep{A<:Tuple} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# Dense multivariate normal (issue #12 group 3, phase 3). The constant
+# scale_tril factor rides the observation buffer: staging packs its lower
+# triangle (column-major) into d(d+1)/2 cursor rows ahead of any observed
+# value rows, so the kernel needs no extra buffer or signature change and
+# per-batch factors work for free. mu is a compile-time expr tuple; the value
+# follows the mvnormal latent/observed conventions.
+struct DeviceMvNormalDenseChoiceStep{M<:Tuple} <: AbstractDeviceChoiceStep
+    mu::M
+    value_source::Int32
+    binding_slot::Int32
+end
+
 # Compile-time-unrolled tuple folds multiply the fused kernel body by D (and
 # the gradient kernel again by parameter count); cap the dimension so Metal
 # shader compilation stays inside its budget (see docs/device-vector-latents.md).
 const DEVICE_MAX_VECTOR_DIMENSION = 16
+
+# The dense forward substitution unrolls d(d+1)/2 fused multiply-adds per step
+# (doubled again in the gradient kernel), so its cap is tighter.
+const DEVICE_MAX_DENSE_DIMENSION = 8
 
 # Truncated families are observed-only on the backend path (latents fall back at
 # backend lowering: the bounded transform is unimplemented there), so the value
@@ -724,6 +740,47 @@ function _lower_device_step!(
     return nothing
 end
 
+function _lower_device_step!(
+    out,
+    step::BackendMvNormalDenseChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    dimension = length(step.mu)
+    if dimension > DEVICE_MAX_DENSE_DIMENSION
+        _device_issue!(
+            issues,
+            "device lowering caps mvnormaldense at dimension $DEVICE_MAX_DENSE_DIMENSION (the unrolled forward substitution is quadratic in the kernel body), got dimension $dimension",
+        )
+        return nothing
+    end
+    if isnothing(step.parameter_slot)
+        value_source = Int32(-1)
+    else
+        if in_loop
+            _device_issue!(issues, "device lowering does not support latent mvnormaldense choices inside a loop")
+            return nothing
+        end
+        slot = layout.slots[step.parameter_slot] # vector steps carry the slot ORDINAL
+        if !(slot.transform isa VectorIdentityTransform) || slot.dimension != dimension ||
+           slot.value_length != dimension
+            _device_issue!(issues, "device lowering could not resolve the mvnormaldense parameter slot")
+            return nothing
+        end
+        value_source = Int32(slot.index)
+    end
+    mu = map(expr -> _lower_device_expr(expr, backend.generic_slots, T, issues, "mvnormaldense argument"), step.mu)
+    any(isnothing, mu) && return nothing
+    # scale_tril stays a host-side generic slot; staging packs its lower
+    # triangle into the observation buffer, so nothing lowers here
+    push!(out, DeviceMvNormalDenseChoiceStep(mu, value_source, _device_slot32(step.binding_slot)))
+    return nothing
+end
+
 function _lower_device_two_arg!(
     out,
     step,
@@ -937,6 +994,7 @@ end
 _device_step_writes_binding(step::AbstractDevicePlanStep) = true
 _device_step_writes_binding(::DeviceMvNormalChoiceStep) = false
 _device_step_writes_binding(::DeviceDirichletChoiceStep) = false
+_device_step_writes_binding(::DeviceMvNormalDenseChoiceStep) = false
 
 function _device_collect_written_slots!(written_by_loop::Dict{Int32,BitSet}, steps, loop_id::Int32)
     written = get!(BitSet, written_by_loop, loop_id)
