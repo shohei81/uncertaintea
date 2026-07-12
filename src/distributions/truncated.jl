@@ -131,5 +131,5 @@ function logpdf(dist::TruncatedStudentTDist, x)
     base = logpdf(studentt(nu, mu, sigma), xx)
     za = (lower - mu) / sigma
     zb = (upper - mu) / sigma
-    return base - log(_std_t_cdf(zb, nu) - _std_t_cdf(za, nu))
+    return base - _t_log_normalizer(nu, za, zb)
 end

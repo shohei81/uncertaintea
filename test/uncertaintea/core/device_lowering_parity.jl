@@ -431,10 +431,8 @@ end
 
 # one-sided light-tail truncatedstudentt (codex review round 6): the plain tail
 # CDF underflows before its log, so the one-sided normalizer computes in log
-# space. NOTE: the CPU batched reference itself collapses to +Inf here (its
-# `1 - cdf` cancels at Float64 -- a pre-existing CPU limitation), so the Float32
-# device result is checked against the Float64 DEVICE result; the Float64 device
-# log-CDF itself matches log(_std_t_cdf(-15, 1e5)) to machine precision.
+# space. Since issue #43 the CPU reference computes its normalizer the same way
+# and stays finite here, so both precisions compare against it directly.
 @tea static function dev_lighttail_tt_model()
     m ~ normal(0.0, 1.0)
     {:y} ~ truncatedstudentt(1.0e5, m, 1.0, 15.0, Inf)
@@ -443,7 +441,7 @@ end
 
 # finite interval wholly in a deep light tail (codex review round 7): both plain
 # CDFs underflow, so the finite-bounds normalizer must difference LOG CDFs via
-# expm1 (the CPU reference collapses to +Inf here too).
+# expm1 (the CPU reference does the same since issue #43).
 @tea static function dev_deeptail_interval_tt_model()
     m ~ normal(0.0, 1.0)
     {:y} ~ truncatedstudentt(1.0e5, m, 1.0, 15.0, 16.0)
@@ -454,39 +452,44 @@ end
     params32 = reshape(Float32[0.01, -0.02], 1, 2)
     cm = choicemap((:y, 15.2))
     dev32 = device_batched_logjoint(dev_deeptail_interval_tt_model, params32, (), cm; precision=Float32)
+    ref = batched_logjoint_unconstrained(dev_deeptail_interval_tt_model, Float64.(params32), (), cm)
     dev64 = device_batched_logjoint(dev_deeptail_interval_tt_model, Float64.(params32), (), cm)
-    @test all(isfinite, dev64)
-    @test all(isfinite, dev32)
-    @test dev_check_float32(dev32, dev64)
+    @test all(isfinite, ref) # issue #43: the CPU reference stays finite now
+    @test dev64 ≈ ref rtol = 1e-10
+    @test dev_check_float32(dev32, ref)
     # the mass above the upper bound is a ~e^-15.5 (~1.9e-7) relative correction,
     # which the expm1 log-difference resolves; the one-sided normalizer agrees to
     # exactly that order
-    dev64_onesided =
-        device_batched_logjoint(dev_lighttail_tt_model, Float64.(params32), (), cm)
-    @test dev64 ≈ dev64_onesided rtol = 1e-6
-    @test !isapprox(dev64, dev64_onesided; rtol=1e-9) # the correction is real, not noise
+    ref_onesided = batched_logjoint_unconstrained(dev_lighttail_tt_model, Float64.(params32), (), cm)
+    @test ref ≈ ref_onesided rtol = 1e-6
+    @test !isapprox(ref, ref_onesided; rtol=1e-9) # the correction is real, not noise
 end
 
 @testset "dev_truncated_lighttail_logspace" begin
     @test isapprox(
         UncertainTea._device_std_t_log_cdf(-15.0, 1.0e5),
-        log(UncertainTea._std_t_cdf(-15.0, 1.0e5));
+        UncertainTea._std_t_log_cdf(-15.0, 1.0e5);
         rtol=1e-12,
     )
 
     params32 = reshape(Float32[0.01, -0.02], 1, 2)
     cm = choicemap((:y, 15.2))
     dev32 = device_batched_logjoint(dev_lighttail_tt_model, params32, (), cm; precision=Float32)
+    ref = batched_logjoint_unconstrained(dev_lighttail_tt_model, Float64.(params32), (), cm)
     dev64 = device_batched_logjoint(dev_lighttail_tt_model, Float64.(params32), (), cm)
-    @test all(isfinite, dev64)
-    @test all(isfinite, dev32)
-    @test dev_check_float32(dev32, dev64)
+    @test all(isfinite, ref) # issue #43: the CPU reference stays finite now
+    @test dev64 ≈ ref rtol = 1e-10
+    @test dev_check_float32(dev32, ref)
     _, g32 = device_batched_logjoint_gradient(dev_lighttail_tt_model, params32, (), cm; precision=Float32)
+    gref = batched_logjoint_gradient_unconstrained(dev_lighttail_tt_model, Float64.(params32), (), cm)
     _, g64 = device_batched_logjoint_gradient(dev_lighttail_tt_model, Float64.(params32), (), cm)
-    @test all(isfinite, g64)
-    @test all(isfinite, g32)
+    @test all(isfinite, gref)
+    # the deep-tail pdf/cdf ratio amplifies the implementation gap between the
+    # device special functions (Lanczos loggamma, continued-fraction beta) and
+    # the CPU SpecialFunctions to a few 1e-9 relative
+    @test g64 ≈ gref rtol = 1e-8
     # a deep-tail pdf/cdf gradient ratio carries a slightly looser Float32 error
-    @test all(isapprox(Float64(a), b; rtol=2e-3, atol=2e-3) for (a, b) in zip(vec(g32), vec(g64)))
+    @test all(isapprox(Float64(a), b; rtol=2e-3, atol=2e-3) for (a, b) in zip(vec(g32), vec(gref)))
 end
 
 # ultra-narrow same-sign interval (codex review round 8): `s` in the erfcx

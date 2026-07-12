@@ -191,3 +191,33 @@ end
     @test trunc_report_t.supported == false
     @test any(issue -> occursin("truncatedstudentt", issue), trunc_report_t.issues)
 end
+
+# --- issue #43: light-tail truncated Student-t normalizers stay finite ----
+# The plain normalizer computed 1 - cdf(za) and cancelled to zero at Float64
+# for light tails (large nu, far cutoff), scoring +Inf; the log-space
+# normalizer (_t_log_normalizer, the CPU port of the device implementation)
+# keeps every path finite and mutually consistent.
+@testset "trunc_t_lighttail_normalizer" begin
+    # one-sided: log Z = log S(15) for an effectively-normal tail
+    @test isfinite(UncertainTea._t_log_normalizer(1.0e5, 15.0, Inf))
+    @test UncertainTea._t_log_normalizer(1.0e5, 15.0, Inf) ≈
+          UncertainTea._std_t_log_cdf(-15.0, 1.0e5) rtol = 1e-12
+    # healthy domain agrees with the plain difference
+    @test UncertainTea._t_log_normalizer(5.0, -2.0, 2.0) ≈
+          log(UncertainTea._std_t_cdf(2.0, 5.0) - UncertainTea._std_t_cdf(-2.0, 5.0)) rtol = 1e-12
+
+    lighttail = truncatedstudentt(1.0e5, 0.0, 1.0, 15.0, Inf)
+    lp = UncertainTea.logpdf(lighttail, 15.2)
+    @test isfinite(lp)
+    # nu = 1e5 tracks the truncated normal to O(z^4/nu) ~ 5e-3 this deep in the
+    # tail (the genuine tail correction, not a numerical error)
+    @test lp ≈ UncertainTea.logpdf(truncatednormal(0.0, 1.0, 15.0, Inf), 15.2) atol = 1e-2
+
+    # deep-tail finite interval: both plain CDFs underflow; the expm1 difference
+    # resolves the ~e^-15.5 mass above the upper bound
+    interval = truncatedstudentt(1.0e5, 0.0, 1.0, 15.0, 16.0)
+    lp_interval = UncertainTea.logpdf(interval, 15.2)
+    @test isfinite(lp_interval)
+    @test lp_interval ≈ lp rtol = 1e-6
+    @test !isapprox(lp_interval, lp; rtol=1e-9)
+end

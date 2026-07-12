@@ -224,18 +224,70 @@ function _std_t_cdf(z, nu)
     return zz > zero(zz) ? one(zz) - regularized / 2 : regularized / 2
 end
 
+# log(T_cdf(z; nu)) computed WITHOUT the `1 - regularized/2` cancellation: the
+# regularized incomplete beta is small in the lower tail and arrives with
+# relative accuracy, so its log stays finite where the plain CDF rounds to 0
+# (or its complement rounds to 1); the upper side goes through log1p. This is
+# the CPU port of the device `_device_std_t_log_cdf` (issue #43).
+function _std_t_log_cdf(z, nu)
+    zz = float(z)
+    isinf(zz) && return zz > zero(zz) ? zero(zz) : oftype(zz, -Inf)
+    zz == zero(zz) && return -log(oftype(zz, 2))
+    x = nu / (nu + zz * zz)
+    regularized = beta_inc(nu / 2, one(nu) / 2, x)[1]
+    zz < zero(zz) && return log(regularized) - log(oftype(zz, 2))
+    return log1p(-regularized / 2)
+end
+
+# log(T_cdf(zb) - T_cdf(za)): one-sided normalizers use the symmetry
+# S(z) = cdf(-z) so a tail probability is computed directly rather than as
+# 1 - cdf (which cancels at Float64 for light tails, e.g. nu = 1e5 with a 15
+# sigma cutoff -- issue #43); finite intervals difference LOG CDFs through
+# expm1, with the log-space midpoint form taking over once the difference
+# sinks under sqrt(eps) (its own error is O(s^2) exactly there). Mirrors the
+# device `_device_t_log_normalizer`.
+function _t_log_normalizer(nu, za, zb)
+    zaf, zbf = promote(float(za), float(zb))
+    lower_infinite = isinf(zaf) && zaf < zero(zaf)
+    upper_infinite = isinf(zbf) && zbf > zero(zbf)
+    if lower_infinite && upper_infinite
+        return zero(zaf)
+    elseif lower_infinite
+        return _std_t_log_cdf(zbf, nu)
+    elseif upper_infinite
+        return _std_t_log_cdf(-zaf, nu)
+    end
+    if zaf > zero(zaf) # right tail: S(za) - S(zb) = cdf(-za) - cdf(-zb)
+        log_big = _std_t_log_cdf(-zaf, nu)
+        log_small = _std_t_log_cdf(-zbf, nu)
+    else # left tail and straddling: cdf(zb) - cdf(za)
+        log_big = _std_t_log_cdf(zbf, nu)
+        log_small = _std_t_log_cdf(zaf, nu)
+    end
+    s = log_small - log_big
+    s < -sqrt(eps(float(one(s)))) && return log_big + log(-expm1(s))
+    midpoint = (zaf + zbf) / 2
+    return _std_t_log_pdf(midpoint, nu) + log(zbf - zaf)
+end
+
+# Standard (unit-scale, zero-location) Student-t log-density; `_std_t_pdf`
+# exponentiates it, and the truncated normalizer's midpoint fallback uses it
+# directly to stay finite where the plain density underflows.
+function _std_t_log_pdf(z, nu)
+    zz = float(z)
+    nu_ = oftype(zz, nu)
+    return loggamma((nu_ + one(nu_)) / 2) - loggamma(nu_ / 2) -
+           (log(nu_) + log(oftype(zz, pi))) / 2 -
+           (nu_ + one(nu_)) * log1p((zz * zz) / nu_) / 2
+end
+
 # Standard (unit-scale, zero-location) Student-t density with `nu` degrees of
 # freedom, guarded so an infinite standardized argument (an unbounded truncation
 # side) yields a zero density.
 function _std_t_pdf(z, nu)
     zz = float(z)
     isinf(zz) && return zero(zz)
-    nu_ = oftype(zz, nu)
-    return exp(
-        loggamma((nu_ + one(nu_)) / 2) - loggamma(nu_ / 2) -
-        (log(nu_) + log(oftype(zz, pi))) / 2 -
-        (nu_ + one(nu_)) * log1p((zz * zz) / nu_) / 2,
-    )
+    return exp(_std_t_log_pdf(zz, nu))
 end
 
 # Peel a degrees-of-freedom argument down to a plain value. `TruncatedStudentTDist`
@@ -272,6 +324,21 @@ function _std_t_cdf(z::ForwardDiff.Dual{T}, nu::Real) where {T}
     nu_value = _constant_nu_value(nu)
     value = _std_t_cdf(zv, nu_value)
     derivative = _std_t_pdf(zv, nu_value)
+    return ForwardDiff.Dual{T}(value, derivative * ForwardDiff.partials(z))
+end
+
+# The log-CDF analogue: d/dz log T_cdf(z) = exp(log pdf - log cdf), computed in
+# log space so the ratio stays finite where the plain cdf underflows (the same
+# rule the device dual path uses).
+function _std_t_log_cdf(z::ForwardDiff.Dual{T}, nu::Real) where {T}
+    zv = ForwardDiff.value(z)
+    if isinf(zv)
+        value = zv > zero(zv) ? zero(zv) : oftype(zv, -Inf)
+        return ForwardDiff.Dual{T}(value, zero(ForwardDiff.partials(z)))
+    end
+    nu_value = _constant_nu_value(nu)
+    value = _std_t_log_cdf(zv, nu_value)
+    derivative = exp(_std_t_log_pdf(zv, nu_value) - value)
     return ForwardDiff.Dual{T}(value, derivative * ForwardDiff.partials(z))
 end
 

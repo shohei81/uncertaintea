@@ -133,12 +133,15 @@ function _accumulate_truncatedstudentt_gradient!(
         zx = (value - mu) * inv_sigma
         za = (lower - mu) * inv_sigma
         zb = (upper - mu) * inv_sigma
-        normalizer = _std_t_cdf(zb, nu) - _std_t_cdf(za, nu)
+        # exp(-log Z) instead of 1/(cdf difference): the plain difference
+        # cancels to zero for light tails (issue #43) and would poison every
+        # normalizer-gradient term with Inf
+        inv_normalizer = exp(-_t_log_normalizer(nu, za, zb))
         p_a = _std_t_pdf(za, nu)
         p_b = _std_t_pdf(zb, nu)
         za_p_a = isinf(za) ? zero(T) : za * p_a
         zb_p_b = isinf(zb) ? zero(T) : zb * p_b
-        inv_sz = inv_sigma / normalizer
+        inv_sz = inv_sigma * inv_normalizer
         # k = d(base logpdf)/dz for the Student-t kernel.
         k = -(nu + one(T)) * zx / (nu + zx * zx)
         dvalue = k * inv_sigma
