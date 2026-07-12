@@ -253,3 +253,22 @@
     @test isnothing(studentt_dof_batch_cache.flat_cache)
     @test isempty(studentt_dof_batch_cache.column_caches)
 end
+
+# --- issue #53: the Float32 large-nu normalizing constant ------------------
+# loggamma((nu+1)/2) - loggamma(nu/2) differences two ~nu*log(nu)-sized values;
+# at Float32 with nu = 1e5 that lost ~0.03 absolute. The constant is now
+# computed in (at least) Float64 and narrowed, leaving only representation
+# rounding, on both the compiled and the backend-native paths.
+@testset "studentt_f32_large_nu_constant" begin
+    reference = UncertainTea.logpdf(studentt(1.0e5, 0.0, 1.0), 15.2)
+    lp32 = UncertainTea.logpdf(studentt(1.0f5, 0.0f0, 1.0f0), 15.2f0)
+    @test abs(Float64(lp32) - reference) < 1e-3
+    backend32 = UncertainTea._backend_studentt_logpdf(1.0f5, 0.0f0, 1.0f0, 15.2f0)
+    @test abs(Float64(backend32) - reference) < 1e-3
+    # Float64 results are unchanged bit-for-bit relative to the plain formula
+    plain =
+        UncertainTea.loggamma(3.0) - UncertainTea.loggamma(2.5) -
+        (log(5.0) + log(pi)) / 2 - log(1.2) -
+        6.0 * log1p(((0.9 - 0.3) / 1.2)^2 / 5.0) / 2
+    @test UncertainTea.logpdf(studentt(5.0, 0.3, 1.2), 0.9) == plain
+end

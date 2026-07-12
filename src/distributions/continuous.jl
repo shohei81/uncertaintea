@@ -276,6 +276,18 @@ function _t_log_normalizer(nu, za, zb)
     return _std_t_log_pdf(midpoint, nu) + log(zbf - zaf)
 end
 
+# The nu-only Student-t normalizing constant
+# loggamma((nu+1)/2) - loggamma(nu/2) - (log(nu) + log(pi))/2, computed in at
+# least Float64: at Float32 the two ~nu*log(nu)-sized loggammas lose their
+# O(log nu) difference to rounding (~0.03 absolute at nu = 1e5 -- issue #53).
+# The z-dependent terms have no such cancellation and stay at input precision.
+function _studentt_log_constant(nu)
+    nuf = float(nu)
+    W = promote_type(typeof(nuf), Float64)
+    nuw = W(nuf)
+    return oftype(nuf, loggamma((nuw + one(nuw)) / 2) - loggamma(nuw / 2) - (log(nuw) + log(W(pi))) / 2)
+end
+
 # Standard (unit-scale, zero-location) Student-t log-density; `_std_t_pdf`
 # exponentiates it, and the truncated normalizer (midpoint fallback and the
 # gradient's pdf/Z hazard ratios) uses it directly. Computed in at least
@@ -418,7 +430,6 @@ end
 function logpdf(dist::StudentTDist, x)
     xx, nu, mu, sigma = promote(x, dist.nu, dist.mu, dist.sigma)
     z = (xx - mu) / sigma
-    return loggamma((nu + one(nu)) / 2) - loggamma(nu / 2) -
-           (log(nu) + log(pi)) / 2 - log(sigma) -
+    return _studentt_log_constant(nu) - log(sigma) -
            (nu + one(nu)) * log1p((z * z) / nu) / 2
 end
