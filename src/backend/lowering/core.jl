@@ -255,22 +255,14 @@ function _backend_lower_address(model::TeaModel, layout::EnvironmentLayout, addr
     return BackendAddressSpec(tuple(parts...))
 end
 
-# Scalar family steps read the batched constrained matrix and seed gradient
-# rows with the number stored in their `parameter_slot` field. That number
-# must be the slot's VALUE row, not its ordinal (issue #36); the two agree
-# for the gradient seed only while every preceding slot keeps parameter and
-# value dimensions equal, so dimension-changing predecessors are rejected.
+# Scalar family steps store their slot's VALUE row (issue #36): that is what
+# the batched constrained-matrix readers index with. Gradient seeding, which
+# needs the UNCONSTRAINED row, resolves it through the gradient cache's
+# value-row -> seed-row map, so dimension-changing predecessors
+# (simplex/cholesky) no longer force a fallback.
 function _backend_scalar_parameter_row(model::TeaModel, parameter_slot, issues::Vector{String})
     isnothing(parameter_slot) && return nothing, true
     slot = parameterlayout(model).slots[parameter_slot]
-    if slot.index != slot.value_index
-        _backend_issue!(
-            issues,
-            "scalar latents after a dimension-changing vector latent (simplex/cholesky) are not " *
-            "supported in backend lowering yet (issue #36)",
-        )
-        return nothing, false
-    end
     return slot.value_index, true
 end
 

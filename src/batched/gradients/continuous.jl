@@ -276,7 +276,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 5)
     _accumulate_normal_gradient!(
@@ -314,7 +314,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(z_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(z_gradients, step.parameter_slot)
+    _fill_choice_gradient!(z_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 5)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 6)
     for batch_index in eachindex(totals)
@@ -358,7 +358,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 5)
     _accumulate_lognormal_gradient!(
@@ -392,7 +392,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(rate_values, rate_gradients, cache, env, step.rate, 3)
     _accumulate_exponential_gradient!(totals, gradients, value_values, value_gradients, rate_values, rate_gradients)
     isnothing(step.binding_slot) ||
@@ -418,7 +418,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(shape_values, shape_gradients, cache, env, step.shape, 4)
     _eval_backend_numeric_expr_and_gradient!(rate_values, rate_gradients, cache, env, step.rate, 5)
     _accumulate_gamma_gradient!(
@@ -454,7 +454,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(shape_values, shape_gradients, cache, env, step.shape, 4)
     _eval_backend_numeric_expr_and_gradient!(scale_values, scale_gradients, cache, env, step.scale, 5)
     _accumulate_inversegamma_gradient!(
@@ -490,7 +490,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(shape_values, shape_gradients, cache, env, step.shape, 4)
     _eval_backend_numeric_expr_and_gradient!(scale_values, scale_gradients, cache, env, step.scale, 5)
     _accumulate_weibull_gradient!(
@@ -526,7 +526,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(alpha_values, alpha_gradients, cache, env, step.alpha, 4)
     _eval_backend_numeric_expr_and_gradient!(beta_values, beta_gradients, cache, env, step.beta, 5)
     _accumulate_beta_gradient!(
@@ -564,7 +564,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(nu_values, nu_gradients, cache, env, step.nu, 5)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 6)
     _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, step.sigma, 7)
@@ -632,7 +632,7 @@ function _score_backend_step_and_gradient!(
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
 
     _batched_choice_numeric_values!(value_values, step.parameter_slot, params, constraints, address_parts)
-    _fill_choice_gradient!(value_gradients, step.parameter_slot)
+    _fill_choice_gradient!(value_gradients, step.parameter_slot, cache.seed_rows)
     _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, step.mu, 4)
     _eval_backend_numeric_expr_and_gradient!(scale_values, scale_gradients, cache, env, step.scale, 5)
     _accumulate_laplace_gradient!(

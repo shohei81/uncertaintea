@@ -17,6 +17,7 @@ function _batched_backend_gradient_cache(
         Matrix{element_type}[],
         batch_args,
         batch_constraints,
+        _backend_gradient_seed_rows(parameterlayout(model)),
     )
     totals = _batched_totals_buffer!(workspace, size(params, 2), element_type)
     try

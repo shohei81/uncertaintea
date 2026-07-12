@@ -77,6 +77,26 @@ struct BatchedBackendGradientCache{W,S,G,A,C}
     gradient_scratch::G
     args::A
     constraints::C
+    # constrained VALUE row -> unconstrained gradient-seed row (issue #36): a
+    # scalar step's `parameter_slot` is its slot's value row (correct for
+    # reading the constrained matrix), but gradient buffers are indexed by
+    # UNCONSTRAINED rows, and the two drift apart after any dimension-changing
+    # (simplex/cholesky) slot. Entries with no unconstrained counterpart (the
+    # extra simplex/cholesky value rows) hold 0.
+    seed_rows::Vector{Int}
+end
+
+function _backend_gradient_seed_rows(layout::ParameterLayout)
+    seed_rows = zeros(Int, layout.value_count)
+    for slot in layout.slots
+        # only dimension-preserving slots map 1:1; the dimension-changing
+        # transforms handle their own seeding through explicit parameter rows
+        slot.dimension == slot.value_length || continue
+        for component = 0:(slot.value_length-1)
+            seed_rows[slot.value_index+component] = slot.index + component
+        end
+    end
+    return seed_rows
 end
 
 struct BatchedLogjointGradientCache{C,B,F,G<:AbstractMatrix}

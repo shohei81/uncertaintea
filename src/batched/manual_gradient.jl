@@ -258,14 +258,24 @@ function _store_slot_gradient!(
     return slot_gradients
 end
 
+# The step's `parameter_slot` is the slot's constrained VALUE row (what the
+# constrained-matrix readers need); gradient buffers are indexed by
+# UNCONSTRAINED rows, so the derivative seed routes through the cache's
+# value-row -> seed-row map (issue #36). A zero map entry means the value row
+# has no unconstrained counterpart (an extra simplex/cholesky value row);
+# scalar and dimension-preserving vector steps can never hold such a row, so
+# hitting one is a convention violation, not a model shape to fall back on.
 function _fill_choice_gradient!(
     destination::AbstractMatrix{T},
     parameter_slot::Union{Nothing,Int},
+    seed_rows::Vector{Int},
 ) where {T<:AbstractFloat}
     fill!(destination, zero(T))
     isnothing(parameter_slot) && return destination
+    seed_row = seed_rows[parameter_slot]
+    seed_row > 0 || error("no unconstrained seed row for value row $parameter_slot (issue #36 convention violation)")
     for batch_index in axes(destination, 2)
-        destination[parameter_slot, batch_index] = one(T)
+        destination[seed_row, batch_index] = one(T)
     end
     return destination
 end
@@ -274,12 +284,15 @@ function _fill_choice_vector_gradient!(
     destination::AbstractMatrix{T},
     value_index::Union{Nothing,Int},
     component_index::Int,
+    seed_rows::Vector{Int},
 ) where {T<:AbstractFloat}
     fill!(destination, zero(T))
     isnothing(value_index) && return destination
-    parameter_index = value_index + component_index - 1
+    value_row = value_index + component_index - 1
+    seed_row = seed_rows[value_row]
+    seed_row > 0 || error("no unconstrained seed row for value row $value_row (issue #36 convention violation)")
     for batch_index in axes(destination, 2)
-        destination[parameter_index, batch_index] = one(T)
+        destination[seed_row, batch_index] = one(T)
     end
     return destination
 end
