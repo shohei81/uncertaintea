@@ -239,14 +239,12 @@ function _accumulate_studentt_gradient!(
         dvalue = -((nu + 1) * z) / (sigma * denominator)
         dmu = -dvalue
         dsigma = nu * (z * z - one(T)) / (sigma * denominator)
+        # the digamma-difference part goes through the Float64-widened helper
+        # (issue #53): at Float32 the ~1/nu difference of ~log(nu)-sized
+        # digammas would disagree with the widened value being differentiated
         dnu =
-            T(0.5) * (
-                digamma((nu + 1) / 2) -
-                digamma(nu / 2) -
-                1 / nu -
-                log1p((z * z) / nu) +
-                ((nu + 1) * z * z) / (nu * denominator)
-            )
+            _studentt_log_constant_dnu(nu) +
+            T(0.5) * (-log1p((z * z) / nu) + ((nu + 1) * z * z) / (nu * denominator))
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] +=
                 dvalue * value_gradients[parameter_index, batch_index] +

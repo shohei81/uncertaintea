@@ -288,6 +288,17 @@ function _studentt_log_constant(nu)
     return oftype(nuf, loggamma((nuw + one(nuw)) / 2) - loggamma(nuw / 2) - (log(nuw) + log(W(pi))) / 2)
 end
 
+# Its nu-derivative, (digamma((nu+1)/2) - digamma(nu/2) - 1/nu) / 2, widened
+# the same way: the digamma difference is ~1/nu against ~log(nu)-sized terms,
+# so the Float32 analytic gradient would otherwise disagree with the
+# Float64-widened value the ForwardDiff reference differentiates.
+function _studentt_log_constant_dnu(nu)
+    nuf = float(nu)
+    W = promote_type(typeof(nuf), Float64)
+    nuw = W(nuf)
+    return oftype(nuf, (digamma((nuw + one(nuw)) / 2) - digamma(nuw / 2) - one(nuw) / nuw) / 2)
+end
+
 # Standard (unit-scale, zero-location) Student-t log-density; `_std_t_pdf`
 # exponentiates it, and the truncated normalizer (midpoint fallback and the
 # gradient's pdf/Z hazard ratios) uses it directly. Computed in at least

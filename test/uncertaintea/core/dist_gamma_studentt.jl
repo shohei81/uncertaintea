@@ -271,4 +271,29 @@ end
         (log(5.0) + log(pi)) / 2 - log(1.2) -
         6.0 * log1p(((0.9 - 0.3) / 1.2)^2 / 5.0) / 2
     @test UncertainTea.logpdf(studentt(5.0, 0.3, 1.2), 0.9) == plain
+
+    # the analytic dnu term must use the same widened computation the
+    # ForwardDiff reference differentiates (codex review): with a
+    # parameter-dependent large nu at Float32, the Float32 digamma difference
+    # would otherwise diverge materially from the Float64-widened value path
+    @tea static function studentt_f32_latent_nu_model()
+        t ~ normal(10.0f0, 1.0f0)
+        {:y} ~ studentt(2.0f0 + exp(t), 0.0f0, 1.0f0)
+        return t
+    end
+    latent_nu_cm = choicemap((:y, 0.7f0))
+    latent_nu_params = reshape(Float32[10.0, 11.0], 1, 2) # nu ~ 2 + e^10
+    latent_nu_g32 =
+        batched_logjoint_gradient_unconstrained(studentt_f32_latent_nu_model, latent_nu_params, (), latent_nu_cm)
+    latent_nu_fd = hcat(
+        [
+            UncertainTea.ForwardDiff.gradient(
+                t -> logjoint_unconstrained(studentt_f32_latent_nu_model, t, (), latent_nu_cm),
+                Float64.(latent_nu_params[:, index]),
+            ) for index = 1:2
+        ]...,
+    )
+    @test all(
+        isapprox(Float64(a), b; rtol=2e-3, atol=1e-4) for (a, b) in zip(vec(latent_nu_g32), vec(latent_nu_fd))
+    )
 end
