@@ -610,6 +610,60 @@ end
     return ifelse(in_support, base - log_z, _device_neginf(T))
 end
 
+# ---- simplex (dirichlet) ----------------------------------------------------------
+
+# Compile-time tuple folds (dual-safe: comparisons select on the value channel,
+# arithmetic promotes per element).
+@inline _device_tuple_max(t::Tuple{A}) where {A} = t[1]
+@inline _device_tuple_max(t::Tuple) = max(first(t), _device_tuple_max(Base.tail(t)))
+@inline _device_tuple_sum(t::Tuple{A}) where {A} = t[1]
+@inline _device_tuple_sum(t::Tuple) = first(t) + _device_tuple_sum(Base.tail(t))
+@inline _device_tuple_log_sum(t::Tuple{A}) where {A} = log(t[1])
+@inline _device_tuple_log_sum(t::Tuple) = log(first(t)) + _device_tuple_log_sum(Base.tail(t))
+
+# Shifted-softmax simplex constrain, mirroring the CPU `_to_constrained_simplex!`
+# exactly: K-1 unconstrained logits plus an implicit K-th logit of 0, max-shifted
+# for stability. Returns the K-tuple and the log-abs-det `sum(log.(p))` over all
+# K constrained entries (`_simplex_logabsdet`).
+@inline function _device_simplex_constrain(z::NTuple{Km1,T}) where {Km1,T}
+    shift = max(zero(T), _device_tuple_max(z))
+    exponentials = ntuple(i -> exp(z[i] - shift), Val(Km1))
+    implicit_last = exp(-shift)
+    total = implicit_last + _device_tuple_sum(exponentials)
+    constrained = (ntuple(i -> exponentials[i] / total, Val(Km1))..., implicit_last / total)
+    return (constrained, _device_tuple_log_sum(constrained))
+end
+
+# Dirichlet logpdf over compile-time tuples; per-component promotion keeps
+# heterogeneous (literal/dual) alpha tuples safe. The support check mirrors the
+# CPU `_backend_dirichlet_logpdf` acceptance (all components positive, sum
+# within sqrt(eps)*K*16 of one); a constrained latent satisfies it by
+# construction, observations may not.
+# log(abs(v)): a negative observed component never SELECTS this branch (the
+# in_support ifelse rejects it), but the fold is evaluated eagerly and log()
+# throws a DomainError on negative arguments (CPU KernelAbstractions backend;
+# GPU too) instead of the reference's -Inf.
+@inline _device_dirichlet_fold(alpha::Tuple{A}, value::Tuple{B}) where {A,B} =
+    (alpha[1] - 1) * log(abs(value[1]))
+@inline _device_dirichlet_fold(alpha::Tuple, value::Tuple) =
+    (first(alpha) - 1) * log(abs(first(value))) + _device_dirichlet_fold(Base.tail(alpha), Base.tail(value))
+@inline _device_dirichlet_loggamma_sum(t::Tuple{A}) where {A} = _device_loggamma(t[1])
+@inline _device_dirichlet_loggamma_sum(t::Tuple) =
+    _device_loggamma(first(t)) + _device_dirichlet_loggamma_sum(Base.tail(t))
+@inline _device_tuple_all_positive(t::Tuple{A}) where {A} = t[1] > zero(t[1])
+@inline _device_tuple_all_positive(t::Tuple) = (first(t) > zero(first(t))) & _device_tuple_all_positive(Base.tail(t))
+
+@inline function _device_dirichlet_logpdf(alpha::Tuple, value::Tuple)
+    total_alpha = _device_tuple_sum(alpha)
+    accumulator =
+        _device_loggamma(total_alpha) - _device_dirichlet_loggamma_sum(alpha) +
+        _device_dirichlet_fold(alpha, value)
+    total_value = _device_tuple_sum(value)
+    tolerance = sqrt(eps(typeof(total_value))) * length(value) * 16
+    in_support = _device_tuple_all_positive(value) & (abs(total_value - one(total_value)) <= tolerance)
+    return ifelse(in_support, accumulator, oftype(accumulator, -Inf))
+end
+
 # Parameter transform codes shared by lowering, kernel, and staging.
 const DEVICE_TRANSFORM_IDENTITY = Int32(0)
 const DEVICE_TRANSFORM_LOG = Int32(1)

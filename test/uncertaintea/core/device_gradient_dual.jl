@@ -42,10 +42,10 @@ end
     return p
 end
 
-# dirichlet -> simplex (vector) transform: intentionally NOT device-lowerable.
-@tea static function devg_dirichlet_model()
-    theta ~ dirichlet([1.0, 1.0, 1.0])
-    return theta
+# lkjcholesky latent: still not device-lowerable (no backend support to mirror).
+@tea static function devg_lkj_model()
+    Omega ~ lkjcholesky(2, 2.0)
+    return Omega
 end
 
 # issue #12 group 1 mirrors of device_lowering_parity.jl.
@@ -297,9 +297,45 @@ end
     @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
 end
 
+@tea static function devg_dirichlet_group3_model(n)
+    theta ~ dirichlet([2.0, 3.0, 4.0])
+    s ~ gamma(2.0, 2.0)
+    for i = 1:n
+        {:y => i} ~ normal(0.5, s)
+    end
+    return s
+end
+
+@tea static function devg_dirichlet_obs_model()
+    a ~ gamma(2.0, 1.0)
+    {:w} ~ dirichlet([a, 2.0, 3.0])
+    return a
+end
+
+@testset "devg_gradient_parity_dirichlet" begin
+    # duals flow through the register softmax (simplex Jacobian + log-abs-det
+    # derivative) and through a latent-flowing concentration on the observed side
+    ys = [0.4, -0.7, 1.1]
+    cm = choicemap((:y => i, ys[i]) for i = 1:3)
+    params = [0.3 -0.5; -0.2 0.4; 0.1 0.6]
+    v, g = device_batched_logjoint_gradient(devg_dirichlet_group3_model, params, (3,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_dirichlet_group3_model, params, (3,), cm)
+    vref = batched_logjoint_unconstrained(devg_dirichlet_group3_model, params, (3,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_dirichlet_group3_model, Float32.(params), (3,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+
+    cm_obs = choicemap((:w, [0.2, 0.3, 0.5]))
+    params_obs = reshape([0.1, -0.4], 1, 2)
+    v2, g2 = device_batched_logjoint_gradient(devg_dirichlet_obs_model, params_obs, (), cm_obs)
+    g2ref = batched_logjoint_gradient_unconstrained(devg_dirichlet_obs_model, params_obs, (), cm_obs)
+    @test g2 ≈ g2ref rtol = 1e-10
+end
+
 @testset "devg_unsupported_throws" begin
     err = try
-        device_batched_logjoint_gradient(devg_dirichlet_model, reshape([0.1, 0.2], 2, 1), ())
+        device_batched_logjoint_gradient(devg_lkj_model, reshape([0.1], 1, 1), ())
         nothing
     catch e
         e

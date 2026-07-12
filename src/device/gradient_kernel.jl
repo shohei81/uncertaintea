@@ -239,6 +239,26 @@ end
     return (value, cursor + Int32(D))
 end
 
+@inline function _device_grad_score_step(step::DeviceDirichletChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+    T = _device_dual_basetype(eltype(slots))
+    alpha = _device_grad_eval_args(step.alpha, slots, pidx, b)
+    if step.value_source > Int32(0)
+        z = ntuple(Val(length(step.alpha) - 1)) do i
+            row = step.value_source + Int32(i - 1)
+            raw = @inbounds params[row, b]
+            DeviceDual{T}(convert(T, raw), ifelse(row == Int32(pidx), one(T), zero(T)))
+        end
+        # duals flow through the register softmax, reproducing the CPU analytic
+        # simplex Jacobian and log-abs-det derivative
+        value, lad = _device_simplex_constrain(z)
+        return (_device_dirichlet_logpdf(alpha, value) + lad, cursor)
+    end
+    value = ntuple(Val(length(step.alpha))) do i
+        DeviceDual{T}(convert(T, @inbounds(observed[cursor+Int32(i-1), b])), zero(T))
+    end
+    return (_device_dirichlet_logpdf(alpha, value), cursor + Int32(length(step.alpha)))
+end
+
 @inline function _device_grad_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
     mu = _device_grad_eval_args(step.mu, slots, pidx, b)
     sigma = _device_grad_eval_args(step.sigma, slots, pidx, b)

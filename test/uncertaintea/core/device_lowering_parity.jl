@@ -38,10 +38,10 @@ end
     return p
 end
 
-# dirichlet latent -> simplex (vector) transform: intentionally NOT supported.
-@tea static function dev_dirichlet_model()
-    theta ~ dirichlet([1.0, 1.0, 1.0])
-    return theta
+# lkjcholesky latent: still unsupported (no backend lowering exists to mirror).
+@tea static function dev_lkj_model()
+    Omega ~ lkjcholesky(2, 2.0)
+    return Omega
 end
 
 # issue #12 group 1 (continuous): studentt (identity latent), inversegamma and
@@ -89,10 +89,10 @@ end
     supported_bern, _ = device_lowering_report(dev_bernoulli_model)
     @test supported_bern
 
-    dir_supported, dir_issues = device_lowering_report(dev_dirichlet_model)
-    @test !dir_supported
-    @test !isempty(dir_issues)
-    @test any(occursin("dirichlet", lowercase(issue)) for issue in dir_issues)
+    lkj_supported, lkj_issues = device_lowering_report(dev_lkj_model)
+    @test !lkj_supported
+    @test !isempty(lkj_issues)
+    @test any(occursin("lkjcholesky", lowercase(issue)) for issue in lkj_issues)
 end
 
 @testset "dev_plan_isbits" begin
@@ -577,6 +577,58 @@ end
     @test any(occursin("caps vector dimensions", issue) for issue in big_issues)
 end
 
+# issue #12 group 3 phase 2: dirichlet — the first dimension-changing stride
+# (a K-simplex latent reads K-1 unconstrained rows; K staged rows observed).
+# The scalar latent AFTER the simplex exercises the issue #36 placement freedom.
+@tea static function dev_dirichlet_group3_model(n)
+    theta ~ dirichlet([2.0, 3.0, 4.0])
+    s ~ gamma(2.0, 2.0)
+    for i = 1:n
+        {:y => i} ~ normal(0.5, s)
+    end
+    return s
+end
+
+# observed dirichlet with a latent-flowing concentration.
+@tea static function dev_dirichlet_obs_model()
+    a ~ gamma(2.0, 1.0)
+    {:w} ~ dirichlet([a, 2.0, 3.0])
+    return a
+end
+
+@testset "dev_numerical_parity_dirichlet" begin
+    supported, issues = device_lowering_report(dev_dirichlet_group3_model)
+    @test supported
+    @test isempty(issues)
+
+    ys = [0.4, -0.7, 1.1]
+    cm = choicemap((:y => i, ys[i]) for i = 1:3)
+    params = [0.3 -0.5; -0.2 0.4; 0.1 0.6] # theta (2 unconstrained rows) + s
+    dev = device_batched_logjoint(dev_dirichlet_group3_model, params, (3,), cm)
+    ref = batched_logjoint_unconstrained(dev_dirichlet_group3_model, params, (3,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_dirichlet_group3_model, Float32.(params), (3,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    cm_obs = choicemap((:w, [0.2, 0.3, 0.5]))
+    params_obs = reshape([0.1, -0.4], 1, 2)
+    dev_obs = device_batched_logjoint(dev_dirichlet_obs_model, params_obs, (), cm_obs)
+    ref_obs = batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_obs)
+    @test dev_obs ≈ ref_obs rtol = 1e-12
+
+    # an observation off the simplex lands on -Inf on both paths
+    cm_off = choicemap((:w, [0.2, 0.3, 0.9]))
+    @test all(==(-Inf), device_batched_logjoint(dev_dirichlet_obs_model, params_obs, (), cm_off))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_off))
+
+    # a NEGATIVE component must reject through the support check, not blow up in
+    # the eagerly-evaluated log (codex review: log(negative) throws a DomainError
+    # on the CPU KernelAbstractions backend where the reference returns -Inf)
+    cm_neg = choicemap((:w, [-0.2, 0.7, 0.5]))
+    @test all(==(-Inf), device_batched_logjoint(dev_dirichlet_obs_model, params_obs, (), cm_neg))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_neg))
+end
+
 # an argument rebound into a host-only loop bound: the emitted index deterministic
 # is pruned (no kernel expression reads it), so the rebinding audit must not fire.
 @tea static function dev_rebound_loop_bound_model(n)
@@ -670,7 +722,7 @@ end
 @testset "dev_unsupported_fallback" begin
     # A device-unsupported model must raise a clear error pointing at the report.
     err = try
-        device_batched_logjoint(dev_dirichlet_model, reshape([0.1, 0.2], 2, 1), ())
+        device_batched_logjoint(dev_lkj_model, reshape([0.1], 1, 1), ())
         nothing
     catch e
         e

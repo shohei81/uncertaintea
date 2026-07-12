@@ -107,7 +107,7 @@ end
 # preserving the pre-order alignment invariant with a stride.
 function _stage_step!(
     rows,
-    step::BackendMvNormalChoicePlanStep,
+    step::Union{BackendMvNormalChoicePlanStep,BackendDirichletChoicePlanStep},
     env,
     constraints,
     dummy_params,

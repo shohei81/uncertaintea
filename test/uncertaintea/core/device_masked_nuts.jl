@@ -49,10 +49,10 @@ end
     return mu
 end
 
-# dirichlet latent -> simplex transform: intentionally NOT device-lowerable.
-@tea static function dnuts_dirichlet_model()
-    theta ~ dirichlet([1.0, 1.0, 1.0])
-    return theta
+# lkjcholesky latent: still not device-lowerable (no backend support to mirror).
+@tea static function dnuts_lkj_model()
+    Omega ~ lkjcholesky(2, 2.0)
+    return Omega
 end
 
 @testset "dnuts_device_masked_conjugate" begin
@@ -116,7 +116,7 @@ end
     )
     # A non-lowerable model raises (pointing at device_lowering_report).
     @test_throws ArgumentError batched_nuts(
-        dnuts_dirichlet_model, (), choicemap();
+        dnuts_lkj_model, (), choicemap();
         num_chains=2, num_samples=1, tree_strategy=:masked, backend=CPU(),
     )
 end

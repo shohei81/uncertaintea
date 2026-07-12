@@ -27,10 +27,10 @@ end
     return mu
 end
 
-# dirichlet latent -> simplex transform: intentionally NOT device-lowerable.
-@tea static function devh_dirichlet_model()
-    theta ~ dirichlet([1.0, 1.0, 1.0])
-    return theta
+# lkjcholesky latent: still not device-lowerable (no backend support to mirror).
+@tea static function devh_lkj_model()
+    Omega ~ lkjcholesky(2, 2.0)
+    return Omega
 end
 
 @testset "devh_hmc_conjugate" begin
@@ -146,18 +146,18 @@ end
         per_chain_adaptation=true,
         backend=backend,
     )
-    # Unsupported (dirichlet/simplex latent) model raises the lowering ArgumentError.
-    dirichlet_error = try
-        batched_hmc(devh_dirichlet_model, (), choicemap(); num_chains=2, num_samples=10, backend=backend)
+    # An unsupported (lkjcholesky latent) model raises the lowering ArgumentError.
+    lkj_error = try
+        batched_hmc(devh_lkj_model, (), choicemap(); num_chains=2, num_samples=10, backend=backend)
         nothing
     catch err
         err
     end
-    @test dirichlet_error isa ArgumentError
-    @test occursin("device_lowering_report", sprint(showerror, dirichlet_error))
+    @test lkj_error isa ArgumentError
+    @test occursin("device_lowering_report", sprint(showerror, lkj_error))
 
     advi_error = try
-        batched_advi(devh_dirichlet_model, (), choicemap(); num_steps=10, backend=backend)
+        batched_advi(devh_lkj_model, (), choicemap(); num_steps=10, backend=backend)
         nothing
     catch err
         err
