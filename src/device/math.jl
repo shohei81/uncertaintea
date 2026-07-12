@@ -664,6 +664,46 @@ end
     return ifelse(in_support, accumulator, oftype(accumulator, -Inf))
 end
 
+# ---- dense multivariate normal ------------------------------------------------
+
+# Forward substitution solving L z = x - mu over a COLUMN-MAJOR PACKED lower
+# triangle (the CPU `_packed_lower_index` order), fully unrolled at compile
+# time from the dimension in the type. Returns (log_det, quadratic, diag_ok);
+# `log(abs(...))` keeps the unselected branch GPU-safe and `diag_ok` lets the
+# caller degrade a non-positive diagonal to -Inf (the CPU reference would
+# throw a DomainError there; the device contract is exception-free).
+@generated function _device_mvnormaldense_solve(scale_packed::NTuple{P,TL}, mu::Tuple, x::NTuple{D,TX}) where {P,TL,D,TX}
+    packed_index(row, col) = (col - 1) * D - ((col - 1) * (col - 2)) ÷ 2 + (row - col + 1)
+    z_symbols = [Symbol(:z_, i) for i = 1:D]
+    body = Expr[]
+    push!(body, :(diagonal = scale_packed[$(packed_index(1, 1))]))
+    push!(body, :(diag_ok = diagonal > zero(diagonal)))
+    push!(body, :(log_det = log(abs(diagonal))))
+    push!(body, :($(z_symbols[1]) = (x[1] - mu[1]) / diagonal))
+    push!(body, :(quadratic = $(z_symbols[1]) * $(z_symbols[1])))
+    for row = 2:D
+        residual = :(x[$row] - mu[$row])
+        for col = 1:(row-1)
+            residual = :($residual - scale_packed[$(packed_index(row, col))] * $(z_symbols[col]))
+        end
+        push!(body, :(diagonal = scale_packed[$(packed_index(row, row))]))
+        push!(body, :(diag_ok &= diagonal > zero(diagonal)))
+        push!(body, :($(z_symbols[row]) = ($residual) / diagonal))
+        push!(body, :(log_det += log(abs(diagonal))))
+        push!(body, :(quadratic += $(z_symbols[row]) * $(z_symbols[row])))
+    end
+    return quote
+        $(body...)
+        (log_det, quadratic, diag_ok)
+    end
+end
+
+@inline function _device_mvnormaldense_logpdf(scale_packed::NTuple{P,TL}, mu::Tuple, x::NTuple{D,TX}) where {P,TL,D,TX}
+    log_det, quadratic, diag_ok = _device_mvnormaldense_solve(scale_packed, mu, x)
+    base = -log_det - quadratic / 2 - D * TX(0.9189385332046727) # 0.5*log(2*pi) per dimension
+    return ifelse(diag_ok, base, oftype(base, -Inf))
+end
+
 # Parameter transform codes shared by lowering, kernel, and staging.
 const DEVICE_TRANSFORM_IDENTITY = Int32(0)
 const DEVICE_TRANSFORM_LOG = Int32(1)

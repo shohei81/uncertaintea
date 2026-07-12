@@ -21,12 +21,13 @@ Supported today:
   The truncated families are observed-only (latents already fall back at
   backend lowering) and `truncatedstudentt` requires the literal `nu` the
   backend guarantees. `mvnormal` (diagonal) and `dirichlet` are supported for
-  latents and observations up to dimension 16 (compile-time-unrolled; a
-  dirichlet latent constrains K-1 unconstrained rows through a
-  register-resident shifted softmax; vector bindings are carried but not
-  materialized, so reads of one are rejected). Still unsupported:
-  `mvnormaldense`, `lkjcholesky`, and `mixture` — the plan-layout design for
-  lifting them is docs/device-vector-latents.md.
+  latents and observations up to dimension 16, and `mvnormaldense` up to
+  dimension 8 (compile-time-unrolled; a dirichlet latent constrains K-1
+  unconstrained rows through a register-resident shifted softmax; the dense
+  scale_tril factor rides the observation buffer as packed rows; vector
+  bindings are carried but not materialized, so reads of one are rejected).
+  Still unsupported: `lkjcholesky` and `mixture` — the plan-layout design
+  covering them is docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar), and
   `VectorIdentity`/`Simplex` through the diagonal `mvnormal`/`dirichlet` steps
   (register-resident, no slots-matrix rows). `CholeskyCorr` (`lkjcholesky`

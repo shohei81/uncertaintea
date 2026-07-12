@@ -213,6 +213,17 @@ end
     return (_device_dirichlet_logpdf(alpha, value), cursor + Int32(length(step.alpha)))
 end
 
+@inline function _device_score_step(step::DeviceMvNormalDenseChoiceStep, slots, params, observed, tc, ls, col, cursor)
+    mu = _device_eval_args(step.mu, slots, col)
+    scale_packed = ntuple(
+        i -> @inbounds(observed[cursor+Int32(i-1), col]),
+        Val((length(step.mu) * (length(step.mu) + 1)) ÷ 2),
+    )
+    cur = cursor + Int32((length(step.mu) * (length(step.mu) + 1)) ÷ 2)
+    value, cur2 = _device_vector_choice_value(step, params, observed, col, cur, Val(length(step.mu)))
+    return (_device_mvnormaldense_logpdf(scale_packed, mu, value), cur2)
+end
+
 @inline function _device_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
     mu = _device_eval_args(step.mu, slots, col)
     sigma = _device_eval_args(step.sigma, slots, col)

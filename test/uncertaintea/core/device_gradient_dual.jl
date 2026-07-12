@@ -333,6 +333,28 @@ end
     @test g2 ≈ g2ref rtol = 1e-10
 end
 
+@tea static function devg_mvdense_model(L)
+    state ~ mvnormaldense([0.0, 1.0], L)
+    m ~ normal(0.0, 1.0)
+    {:y} ~ mvnormaldense([m, m], L)
+    return m
+end
+
+@testset "devg_gradient_parity_mvnormaldense" begin
+    # duals flow through the unrolled forward substitution; the packed factor
+    # rows are constant duals (zero derivative), matching the CPU contract
+    L = [1.2 0.0; 0.4 0.9]
+    cm = choicemap((:y, [0.4, -0.2]))
+    params = [0.5 -0.3; 0.1 0.7; -0.4 0.2]
+    v, g = device_batched_logjoint_gradient(devg_mvdense_model, params, (L,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_mvdense_model, params, (L,), cm)
+    vref = batched_logjoint_unconstrained(devg_mvdense_model, params, (L,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_mvdense_model, Float32.(params), (L,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+end
+
 @testset "devg_unsupported_throws" begin
     err = try
         device_batched_logjoint_gradient(devg_lkj_model, reshape([0.1], 1, 1), ())
