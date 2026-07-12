@@ -95,7 +95,7 @@ function _backend_truncatedstudentt_logpdf(nu, mu, sigma, lower, upper, x)
     base = _backend_studentt_logpdf(nu_, mu_, sigma_, xx)
     za = (lower_ - mu_) / sigma_
     zb = (upper_ - mu_) / sigma_
-    return base - log(_std_t_cdf(zb, nu_) - _std_t_cdf(za, nu_))
+    return base - _t_log_normalizer(nu_, za, zb)
 end
 
 function _score_backend_step!(
