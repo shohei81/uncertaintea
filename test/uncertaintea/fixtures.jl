@@ -118,15 +118,15 @@ end
     return mu
 end
 
-@tea static function step(prev)
+@tea static function chain_step(prev)
     z ~ normal(prev, 1.0f0)
     return z
 end
 
 @tea static function chain_model(T)
-    z = ({:z => 1} ~ step(0.0f0))
+    z = ({:z => 1} ~ chain_step(0.0f0))
     for t = 2:T
-        z = ({:z => t} ~ step(z))
+        z = ({:z => t} ~ chain_step(z))
     end
     return z
 end

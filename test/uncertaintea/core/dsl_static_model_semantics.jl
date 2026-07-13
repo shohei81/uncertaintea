@@ -91,14 +91,14 @@
     @test logjoint(iid_model, params2, (length(ys),), repeated) ≈
           assess(iid_model, (length(ys),), full_repeated) atol=1e-6
 
-    step_spec = modelspec(step)
-    step_plan = executionplan(step)
-    step_trace, _ = generate(step, (2.0f0,), choicemap(); rng=MersenneTwister(4))
+    step_spec = modelspec(chain_step)
+    step_plan = executionplan(chain_step)
+    step_trace, _ = generate(chain_step, (2.0f0,), choicemap(); rng=MersenneTwister(4))
     @test parametercount(step_spec.parameter_layout) == 1
     @test step_spec.parameter_layout.slots[1].binding == :z
     @test step_spec.parameter_layout.slots[1].transform isa IdentityTransform
     @test step_plan.steps[1].parameter_slot == 1
-    @test logjoint(step, parameter_vector(step_trace), (2.0f0,), choicemap()) ≈
+    @test logjoint(chain_step, parameter_vector(step_trace), (2.0f0,), choicemap()) ≈
           UncertainTea.logpdf(normal(2.0f0, 1.0f0), step_trace[:z]) atol=1e-6
 
     trace3, _ = generate(chain_model, (3,), choicemap(); rng=MersenneTwister(3))
@@ -111,7 +111,7 @@
     @test isstaticaddress(spec3.choices[1].address)
     @test isaddresstemplate(spec3.choices[2].address)
     @test spec3.choices[1].rhs isa GenerativeCallSpec
-    @test spec3.choices[1].rhs.callee === step
+    @test spec3.choices[1].rhs.callee === chain_step
     @test spec3.choices[2].rhs isa GenerativeCallSpec
     @test !isrepeatedchoice(spec3.choices[1])
     @test isrepeatedchoice(spec3.choices[2])
@@ -148,7 +148,7 @@
     ) atol=1e-6
 
     @tea static function observed_step()
-        z = ({:state} ~ step(1.5f0))
+        z = ({:state} ~ chain_step(1.5f0))
         {:y} ~ normal(z, 1.0f0)
         return z
     end
