@@ -145,9 +145,9 @@ component promotes independently inside the fold, no whole-tuple promote.
   the 2D gradient kernel multiplies that again. Lowering rejects vector steps
   above a conservative cap (start at `K ≤ 16`; revisit against measured Metal
   compile times) with a message naming the cap.
-- **`lkjcholesky`** (no backend support to mirror — needs its own backend
-  lowering/scoring/gradient work first) and **`mixture`** weights-as-latents
-  (already backend-rejected). Note the mixture VALUE is scalar: lowering
+- **`lkjcholesky`** (backend lowering/scoring/gradients landed with issue #49;
+  only the device mirror of the packed cholesky step is still pending) and
+  **`mixture`** weights-as-latents (already backend-rejected). Note the mixture VALUE is scalar: lowering
   `BackendMixtureNormalChoicePlanStep` to the device is a group-1-shaped
   addition (a weights/mus/sigmas tuple step with a log-sum-exp fold), *not* a
   vector-latent problem — it can ship independently any time.
@@ -198,7 +198,8 @@ MTLCompilerService is a finding, not an inconvenience).
 
 ## Non-goals
 
-- `lkjcholesky` device support (blocked on backend support; file separately).
+- `lkjcholesky` device support (the backend prerequisite landed with issue
+  #49; the device mirror remains a separate follow-up).
 - Vector `binding_slot` materialization in the kernel slots matrix.
 - Dynamic (runtime-sized) vector dimensions — everything here rides on the
   static sizes the frontend already requires for slot creation.
