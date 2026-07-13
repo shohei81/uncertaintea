@@ -449,4 +449,42 @@
             end
         end
     end
+
+    # A latent vector binding consumed by a gradient-bearing expression must
+    # NOT sit on the analytic tier: the binding is stored as a generic vector
+    # with no per-row gradients, so the analytic path would silently treat the
+    # latent as constant data in the likelihood (issue #49 review). The
+    # support gate rejects these models to the per-column fallback, whose
+    # gradients must still match finite differences.
+    @tea static function gxc_lkjcholesky_bound_consumed()
+        L ~ lkjcholesky(2, 2.0)
+        {:y} ~ normal.(L, 1.0)
+        return L
+    end
+
+    @tea static function gxc_dirichlet_bound_consumed()
+        w ~ dirichlet([2.0, 3.0, 4.0])
+        {:y} ~ normal.(w, 1.0)
+        return w
+    end
+
+    @testset "gxc_latent_vector_binding_fallback" begin
+        for (gxc_fb_index, (gxc_fb_model, gxc_fb_constraints)) in enumerate([
+            (gxc_lkjcholesky_bound_consumed, choicemap((:y, Float32[0.9, 0.3, 0.8]))),
+            (gxc_dirichlet_bound_consumed, choicemap((:y, Float32[0.3, 0.3, 0.4]))),
+        ])
+            @test backend_report(gxc_fb_model).supported == true
+            gxc_fb_rng = MersenneTwister(9000 + gxc_fb_index)
+            gxc_fb_trace, _ = generate(gxc_fb_model, (), gxc_fb_constraints; rng=gxc_fb_rng)
+            gxc_fb_base = transform_to_unconstrained(gxc_fb_trace)
+            gxc_fb_points = gxc_fb_base .+ 0.4 .* randn(gxc_fb_rng, length(gxc_fb_base), 3)
+            gxc_fb_cache = BatchedLogjointGradientCache(gxc_fb_model, gxc_fb_points, (), gxc_fb_constraints)
+            @test isnothing(gxc_fb_cache.backend_cache)
+            gxc_fb_gradient = batched_logjoint_gradient_unconstrained(gxc_fb_cache, gxc_fb_points)
+            for i = 1:size(gxc_fb_points, 2)
+                @test gxc_fb_gradient[:, i] ≈
+                      gxc_fd_gradient(gxc_fb_model, gxc_fb_points[:, i], (), gxc_fb_constraints) atol = 5e-6
+            end
+        end
+    end
 end

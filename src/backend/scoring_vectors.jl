@@ -144,6 +144,10 @@ function _score_backend_step!(
         eta = eta_values[batch_index]
         eta > 0 || throw(ArgumentError("lkjcholesky requires a concentration eta > 0"))
         accumulator = _lkj_log_normalizing_constant(d, eta)
+        # support tolerance scales with the working precision (dirichlet does
+        # the same via sqrt(eps(total))): rows constructed by the Float32
+        # transform are only unit vectors to Float32 rounding, so the compiled
+        # path's Float64 tolerance would spuriously reject valid f32 latents
         tolerance = sqrt(eps(typeof(accumulator))) * d * 16
         valid = true
         for row = 1:d

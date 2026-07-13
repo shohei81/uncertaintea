@@ -217,8 +217,57 @@ _backend_gradient_supported_step(step::BackendLKJCholeskyChoicePlanStep, numeric
 _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep, numeric_slots::BitVector) =
     _backend_gradient_supported_step(step)
 
+# Latent vector bindings (mvnormal/dirichlet/lkjcholesky/mvnormaldense) are
+# stored as generic per-column vectors with no per-row gradients, so any
+# gradient-bearing expression that reads one (a broadcast argument, an
+# mvnormaldense scale_tril, ...) would silently treat the latent as constant
+# data. Mark those binding slots so the support gate below can reject the
+# model to the per-column fallback instead.
+function _mark_backend_latent_vector_bindings!(tainted::BitVector, steps)
+    for step in steps
+        if step isa BackendLoopPlanStep
+            _mark_backend_latent_vector_bindings!(tainted, step.body)
+        elseif step isa Union{
+            BackendMvNormalChoicePlanStep,
+            BackendMvNormalDenseChoicePlanStep,
+            BackendDirichletChoicePlanStep,
+            BackendLKJCholeskyChoicePlanStep,
+        }
+            isnothing(step.parameter_slot) || isnothing(step.binding_slot) || (tainted[step.binding_slot] = true)
+        end
+    end
+    return tainted
+end
+
+function _backend_step_reads_tainted_slot(step, tainted::BitVector)
+    step isa BackendLoopPlanStep &&
+        return any(inner -> _backend_step_reads_tainted_slot(inner, tainted), step.body)
+    referenced_numeric = falses(length(tainted))
+    referenced_index = falses(length(tainted))
+    referenced_generic = falses(length(tainted))
+    _collect_backend_slot_kinds!(step, referenced_numeric, referenced_index, referenced_generic)
+    # the broadcast step's slot-kind collection intentionally leaves its
+    # mu/sigma slots unmarked (they may be scalar-numeric or generic vectors),
+    # so its reads have to be collected explicitly here
+    if step isa BackendBroadcastNormalChoicePlanStep
+        _mark_backend_generic_expr_slots!(step.mu, referenced_numeric, referenced_index, referenced_generic)
+        _mark_backend_generic_expr_slots!(step.sigma, referenced_numeric, referenced_index, referenced_generic)
+    end
+    # a step's own binding mark is a write, not a read
+    if step isa BackendChoicePlanStep && !isnothing(step.binding_slot)
+        referenced_numeric[step.binding_slot] = false
+        referenced_index[step.binding_slot] = false
+        referenced_generic[step.binding_slot] = false
+    end
+    return any((referenced_numeric .| referenced_index .| referenced_generic) .& tainted)
+end
+
 function _backend_gradient_supported(plan::BackendExecutionPlan)
-    return all(step -> _backend_gradient_supported_step(step, plan.numeric_slots), plan.steps)
+    all(step -> _backend_gradient_supported_step(step, plan.numeric_slots), plan.steps) || return false
+    tainted = falses(length(plan.numeric_slots))
+    _mark_backend_latent_vector_bindings!(tainted, plan.steps)
+    any(tainted) || return true
+    return !any(step -> _backend_step_reads_tainted_slot(step, tainted), plan.steps)
 end
 
 function _batched_backend_gradient_scratch!(cache::BatchedBackendGradientCache, depth::Int)

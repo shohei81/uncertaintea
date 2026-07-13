@@ -115,6 +115,8 @@ function _accumulate_lkjcholesky_gradient!(
     eta_values::AbstractVector,
     eta_gradients::AbstractMatrix,
 ) where {T<:AbstractFloat}
+    # precision-scaled support tolerance: see the batched scorer in
+    # scoring_vectors.jl (Float32-constructed rows are unit only to f32 rounding)
     tolerance = sqrt(eps(T)) * d * 16
     for batch_index in eachindex(totals)
         eta = eta_values[batch_index]
