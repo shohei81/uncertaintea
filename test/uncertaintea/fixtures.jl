@@ -1,6 +1,6 @@
-# Shared fixtures: models and values used by more than one test file
-# (dsl_static_models_and_backend.jl and sampling.jl). core.jl includes this
-# file first, before the core suite. To run any core test file standalone:
+# Shared fixtures: models and values used by more than one test file.
+# core.jl includes this file first, before the core suite. To run any core
+# test file standalone:
 #
 #   using Test, Random, UncertainTea
 #   include("test/uncertaintea/fixtures.jl")
@@ -93,3 +93,124 @@ positive_batch_constraints = [
 # instead. If the pins drift on a future stable (the CI julia "1" jobs start
 # failing), re-pin the values there and raise this bound.
 adaptation_pins_exact = VERSION >= v"1.12"
+
+@tea static function shifted_iid_model(n)
+    mu ~ normal(0.0f0, 1.0f0)
+    for i = 1:n
+        {:y => i + 1} ~ normal(mu, 1.0f0)
+    end
+    return mu
+end
+
+@tea static function offset_iid_model(n, offset)
+    mu ~ normal(0.0f0, 1.0f0)
+    for i = 1:n
+        {:y => i + offset} ~ normal(mu, 1.0f0)
+    end
+    return mu
+end
+
+@tea static function indexed_scale_model(n)
+    mu ~ normal(0.0f0, 1.0f0)
+    for i = 1:n
+        {:y => i} ~ normal(mu, exp(mu + i / 10))
+    end
+    return mu
+end
+
+@tea static function step(prev)
+    z ~ normal(prev, 1.0f0)
+    return z
+end
+
+@tea static function chain_model(T)
+    z = ({:z => 1} ~ step(0.0f0))
+    for t = 2:T
+        z = ({:z => t} ~ step(z))
+    end
+    return z
+end
+
+@tea static function deterministic_scale()
+    mu ~ normal(0.0f0, 1.0f0)
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    sigma = exp(log_sigma)
+    {:y} ~ normal(mu, sigma)
+    return (; mu, sigma)
+end
+
+deterministic_trace, _ = generate(deterministic_scale, (), choicemap((:y, 0.4f0)); rng=MersenneTwister(12))
+deterministic_params = parameter_vector(deterministic_trace)
+
+@tea static function abs_scale_model()
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(0.0f0, exp(abs(log_sigma)))
+    return log_sigma
+end
+
+abs_scale_trace, _ = generate(abs_scale_model, (), choicemap((:y, 0.6f0)); rng=MersenneTwister(16))
+abs_scale_params = parameter_vector(abs_scale_trace)
+
+@tea static function power_scale_model()
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(0.0f0, exp(log_sigma) ^ 2)
+    return log_sigma
+end
+
+power_scale_trace, _ = generate(power_scale_model, (), choicemap((:y, 0.4f0)); rng=MersenneTwister(17))
+power_scale_params = parameter_vector(power_scale_trace)
+
+@tea static function min_scale_model()
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(0.0f0, exp(min(log_sigma, 0.15f0)))
+    return log_sigma
+end
+
+min_scale_trace, _ = generate(min_scale_model, (), choicemap((:y, 0.5f0)); rng=MersenneTwister(18))
+min_scale_params = parameter_vector(min_scale_trace)
+
+@tea static function max_scale_model()
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(0.0f0, exp(max(log_sigma, -0.25f0)))
+    return log_sigma
+end
+
+max_scale_trace, _ = generate(max_scale_model, (), choicemap((:y, 0.5f0)); rng=MersenneTwister(19))
+max_scale_params = parameter_vector(max_scale_trace)
+
+@tea static function mod_scale_model()
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(0.0f0, exp(log_sigma % 0.5f0))
+    return log_sigma
+end
+
+@tea static function clamp_scale_model()
+    log_sigma ~ normal(0.0f0, 1.0f0)
+    {:y} ~ normal(0.0f0, exp(clamp(log_sigma, -0.2f0, 0.3f0)))
+    return log_sigma
+end
+
+clamp_scale_trace, _ = generate(clamp_scale_model, (), choicemap((:y, 0.5f0)); rng=MersenneTwister(21))
+clamp_scale_params = parameter_vector(clamp_scale_trace)
+
+@tea static function observed_coin()
+    {:y} ~ bernoulli(0.25f0)
+    return nothing
+end
+
+gaussian_batch_logjoint = batched_logjoint(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+gaussian_batch_gradient =
+    batched_logjoint_gradient_unconstrained(gaussian_mean, gaussian_batch_params, (), gaussian_batch_constraints)
+
+gaussian_shared_batch_logjoint = batched_logjoint_unconstrained(
+    gaussian_mean,
+    gaussian_batch_params,
+    (),
+    choicemap((:y, 0.4)),
+)
+gaussian_shared_batch_gradient = batched_logjoint_gradient_unconstrained(
+    gaussian_mean,
+    gaussian_batch_params,
+    (),
+    choicemap((:y, 0.4)),
+)
