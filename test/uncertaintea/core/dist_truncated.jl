@@ -227,10 +227,9 @@ end
     # space -- exp(-log Z) alone overflows Float32 into Inf * 0 = NaN
     lp32 = UncertainTea.logpdf(truncatedstudentt(1.0f5, 0.0f0, 1.0f0, 15.0f0, Inf32), 15.2f0)
     @test isfinite(lp32)
-    # the residual ~0.03 offset is the BASE studentt logpdf's Float32 loggamma
-    # difference at large nu (a pre-existing, separate precision issue); the
-    # normalizer itself is Float64-widened and exact
-    @test Float64(lp32) ≈ lp atol = 0.05
+    # with the base density's normalizing constant Float64-widened too
+    # (issue #53), the Float32 result sits at representation-rounding distance
+    @test Float64(lp32) ≈ lp atol = 1e-4
 
     @tea static function trunc_t_f32_tail_model(offset)
         mu ~ normal(0.0f0, 1.0f0)

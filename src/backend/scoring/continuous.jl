@@ -34,8 +34,7 @@ function _backend_studentt_logpdf(nu, mu, sigma, x)
     nu_ > zero(nu_) || throw(ArgumentError("studentt requires nu > 0"))
     sigma_ > zero(sigma_) || throw(ArgumentError("studentt requires sigma > 0"))
     z = (xx - mu_) / sigma_
-    return loggamma((nu_ + one(nu_)) / 2) - loggamma(nu_ / 2) -
-           (log(nu_) + log(pi)) / 2 - log(sigma_) -
+    return _studentt_log_constant(nu_) - log(sigma_) -
            (nu_ + one(nu_)) * log1p((z * z) / nu_) / 2
 end
 

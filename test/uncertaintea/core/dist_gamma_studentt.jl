@@ -253,3 +253,47 @@
     @test isnothing(studentt_dof_batch_cache.flat_cache)
     @test isempty(studentt_dof_batch_cache.column_caches)
 end
+
+# --- issue #53: the Float32 large-nu normalizing constant ------------------
+# loggamma((nu+1)/2) - loggamma(nu/2) differences two ~nu*log(nu)-sized values;
+# at Float32 with nu = 1e5 that lost ~0.03 absolute. The constant is now
+# computed in (at least) Float64 and narrowed, leaving only representation
+# rounding, on both the compiled and the backend-native paths.
+@testset "studentt_f32_large_nu_constant" begin
+    reference = UncertainTea.logpdf(studentt(1.0e5, 0.0, 1.0), 15.2)
+    lp32 = UncertainTea.logpdf(studentt(1.0f5, 0.0f0, 1.0f0), 15.2f0)
+    @test abs(Float64(lp32) - reference) < 1e-3
+    backend32 = UncertainTea._backend_studentt_logpdf(1.0f5, 0.0f0, 1.0f0, 15.2f0)
+    @test abs(Float64(backend32) - reference) < 1e-3
+    # Float64 results are unchanged bit-for-bit relative to the plain formula
+    plain =
+        UncertainTea.loggamma(3.0) - UncertainTea.loggamma(2.5) -
+        (log(5.0) + log(pi)) / 2 - log(1.2) -
+        6.0 * log1p(((0.9 - 0.3) / 1.2)^2 / 5.0) / 2
+    @test UncertainTea.logpdf(studentt(5.0, 0.3, 1.2), 0.9) == plain
+
+    # the analytic dnu term must use the same widened computation the
+    # ForwardDiff reference differentiates (codex review): with a
+    # parameter-dependent large nu at Float32, the Float32 digamma difference
+    # would otherwise diverge materially from the Float64-widened value path
+    @tea static function studentt_f32_latent_nu_model()
+        t ~ normal(10.0f0, 1.0f0)
+        {:y} ~ studentt(2.0f0 + exp(t), 0.0f0, 1.0f0)
+        return t
+    end
+    latent_nu_cm = choicemap((:y, 0.7f0))
+    latent_nu_params = reshape(Float32[10.0, 11.0], 1, 2) # nu ~ 2 + e^10
+    latent_nu_g32 =
+        batched_logjoint_gradient_unconstrained(studentt_f32_latent_nu_model, latent_nu_params, (), latent_nu_cm)
+    latent_nu_fd = hcat(
+        [
+            UncertainTea.ForwardDiff.gradient(
+                t -> logjoint_unconstrained(studentt_f32_latent_nu_model, t, (), latent_nu_cm),
+                Float64.(latent_nu_params[:, index]),
+            ) for index = 1:2
+        ]...,
+    )
+    @test all(
+        isapprox(Float64(a), b; rtol=2e-3, atol=1e-4) for (a, b) in zip(vec(latent_nu_g32), vec(latent_nu_fd))
+    )
+end
