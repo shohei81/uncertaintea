@@ -27,7 +27,7 @@ end
     return mu
 end
 
-# lkjcholesky latent: still not device-lowerable (no backend support to mirror).
+# lkjcholesky latent: backend-supported (issue #49) but still not device-lowerable.
 @tea static function devh_lkj_model()
     Omega ~ lkjcholesky(2, 2.0)
     return Omega

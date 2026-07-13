@@ -150,6 +150,10 @@ function _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep)
     return all(_backend_gradient_supported_expr, step.alpha)
 end
 
+function _backend_gradient_supported_step(step::BackendLKJCholeskyChoicePlanStep)
+    return _backend_gradient_supported_expr(step.eta)
+end
+
 function _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep)
     return isnothing(step.binding_slot) &&
            _backend_gradient_supported_expr(step.mu) &&
@@ -207,6 +211,8 @@ _backend_gradient_supported_step(step::BackendMixtureNormalChoicePlanStep, numer
 _backend_gradient_supported_step(step::BackendMvNormalDenseChoicePlanStep, numeric_slots::BitVector) =
     _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendDirichletChoicePlanStep, numeric_slots::BitVector) =
+    _backend_gradient_supported_step(step)
+_backend_gradient_supported_step(step::BackendLKJCholeskyChoicePlanStep, numeric_slots::BitVector) =
     _backend_gradient_supported_step(step)
 _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep, numeric_slots::BitVector) =
     _backend_gradient_supported_step(step)

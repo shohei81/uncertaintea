@@ -28,13 +28,14 @@ Supported today:
   bindings are carried but not materialized, so reads of one are rejected).
   `mixture` (of normals, scalar value, up to 16 components) lowers through a
   max-shifted log-sum-exp; latent-simplex weights stay a backend fallback.
-  Still unsupported: `lkjcholesky` (blocked on backend-native support, issue
-  #49) — the plan-layout design for vector latents is
-  docs/device-vector-latents.md.
+  Still unsupported on the device: `lkjcholesky` (backend-native
+  lowering/scoring/gradients landed with issue #49; the device mirror of the
+  packed cholesky step is a follow-up) — the plan-layout design for vector
+  latents is docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar), and
   `VectorIdentity`/`Simplex` through the diagonal `mvnormal`/`dirichlet` steps
   (register-resident, no slots-matrix rows). `CholeskyCorr` (`lkjcholesky`
-  latents) is reported as unsupported.
+  latents) is CPU-backend-native but reported as device-unsupported.
 - **Structure:** scalar latent priors, numeric deterministic assignments, and
   single (non-nested) unit-range loops with observed choices. Observed values are
   resolved on the host into a dense `observed[row, col]` matrix during one-time

@@ -289,6 +289,7 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
     end
     step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
     step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, step, issues)
+    step.rhs.family === :lkjcholesky && return _backend_lower_lkjcholesky_choice_step(model, layout, step, issues)
     step.rhs.family === :truncatednormal && return _backend_lower_truncatednormal_choice_step(model, layout, step, issues)
     step.rhs.family === :truncatedstudentt && return _backend_lower_truncatedstudentt_choice_step(model, layout, step, issues)
     step.rhs.family === :mixture && return _backend_lower_mixture_choice_step(model, layout, step, issues)
@@ -742,6 +743,7 @@ function _backend_loop_observed_choice(step::BackendLoopPlanStep)
     choice isa BackendChoicePlanStep || return nothing
     choice isa BackendMvNormalChoicePlanStep && return nothing
     choice isa BackendMvNormalDenseChoicePlanStep && return nothing
+    choice isa BackendLKJCholeskyChoicePlanStep && return nothing
     choice isa BackendTruncatedNormalChoicePlanStep && return nothing
     choice isa BackendTruncatedStudentTChoicePlanStep && return nothing
     choice isa BackendMixtureNormalChoicePlanStep && return nothing

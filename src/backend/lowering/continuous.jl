@@ -22,6 +22,7 @@ const GPU_BACKEND_SUPPORTED_DISTRIBUTIONS = Symbol[
     :truncatedstudentt,
     :mixture,
     :mvnormaldense,
+    :lkjcholesky,
 ]
 
 struct BackendNormalChoicePlanStep{M<:AbstractBackendExpr,S<:AbstractBackendExpr,AD<:BackendAddressSpec} <:

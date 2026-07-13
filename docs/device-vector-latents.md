@@ -45,9 +45,10 @@ Facts the design leans on (verified against main):
   log-abs-det `Σᵢ log pᵢ` over all K entries) and the `VectorIdentityTransform`
   pass-through (log-abs-det 0). Both are branch-and-arithmetic only —
   device-safe as they stand.
-- `lkjcholesky` has **no backend lowering, scoring, or gradient at all** (it is
-  not in `GPU_BACKEND_SUPPORTED_DISTRIBUTIONS`); the device cannot get ahead of
-  the backend, so it is out of scope here (see Non-goals).
+- `lkjcholesky` had **no backend lowering, scoring, or gradient at all** when
+  this was designed; the device cannot get ahead of the backend, so it was out
+  of scope here (see Non-goals). Backend-native support has since landed
+  (issue #49); the device mirror remains open.
 
 ## Design
 

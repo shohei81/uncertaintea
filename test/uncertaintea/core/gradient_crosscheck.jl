@@ -291,6 +291,34 @@
         return x
     end
 
+    # Float64 eta literals throughout the lkjcholesky entries: the compiled
+    # reference computes the normalizing constant in the literal's precision,
+    # so an f32 literal shifts it by ~1e-8 against the batched Float64 path.
+    @tea static function gxc_lkjcholesky_latent()
+        L ~ lkjcholesky(3, 2.0)
+        return L
+    end
+
+    # dimension-changing (cholesky) latent followed by scalar latents: 3
+    # unconstrained rows vs 6 value rows shift every later slot, exercising
+    # the value-row -> seed-row split like the dirichlet variant. The gamma
+    # latent adds the log-transform chain rule on shifted rows.
+    @tea static function gxc_lkjcholesky_then_scalar()
+        L ~ lkjcholesky(2, 1.5)
+        s ~ normal(0.0f0, 1.0f0)
+        tau ~ gamma(2.0f0, 1.5f0)
+        {:y} ~ normal(s, tau)
+        return s
+    end
+
+    # latent-dependent concentration: d(logpdf)/deta (digamma normalizer plus
+    # the 2 log L[i,i] density term) chained through the eta expression
+    @tea static function gxc_lkjcholesky_latent_eta()
+        x ~ normal(0.5f0, 0.3f0)
+        L ~ lkjcholesky(3, exp(x))
+        return L
+    end
+
     @tea static function gxc_mvnormal_obs()
         m ~ normal(0.0f0, 1.0f0)
         {:y} ~ mvnormal([m, m], [1.0f0, 0.8f0])
@@ -401,6 +429,11 @@
         ],
         :mvnormaldense => [
             (gxc_mvnormaldense_obs, (gxc_dense_factor,), choicemap((:y, Float32[0.4, -0.2]))),
+        ],
+        :lkjcholesky => [
+            (gxc_lkjcholesky_latent, (), choicemap()),
+            (gxc_lkjcholesky_then_scalar, (), choicemap((:y, 0.4f0))),
+            (gxc_lkjcholesky_latent_eta, (), choicemap()),
         ],
     )
 
