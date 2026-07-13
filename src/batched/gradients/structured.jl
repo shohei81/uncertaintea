@@ -1,4 +1,4 @@
-# Hand-derived analytic batched logjoint gradients: structured families (mvnormal, mvnormaldense, dirichlet, mixture, broadcast/iid vector machinery).
+# Hand-derived analytic batched logjoint gradients: structured families (mvnormal, mvnormaldense, dirichlet, lkjcholesky, mixture, broadcast/iid vector machinery).
 
 function _accumulate_mvnormal_gradient!(
     totals::AbstractVector{T},
@@ -95,6 +95,78 @@ function _accumulate_dirichlet_gradient!(
             constrained_value = value_values[component_index][batch_index]
             gradients[unconstrained_row, batch_index] +=
                 constrained_value * (choice_gradients[component_index] - weighted_choice_gradient)
+        end
+    end
+    return totals, gradients
+end
+
+# The LKJ density over the packed factor is sum_i (d - i + 2 eta - 2) log L[i,i]
+# with L[i,i] = prod_{k<i} sqrt(1 - w_ik^2) under the tanh/stick construction, so
+# d(logpdf)/dz_ij = -(d - i + 2 eta - 2) * w_ij with w_ij = L[i,j] / sqrt(1 -
+# sum_{k<j} L[i,k]^2) recovered from the constrained values (w = tanh(z)). The
+# transform's own log-abs-det gradient is added by the CholeskyCorrTransform
+# post-pass in gradients/core.jl, mirroring the dirichlet split.
+function _accumulate_lkjcholesky_gradient!(
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    d::Int,
+    parameter_index::Union{Nothing,Int},
+    value_values::AbstractVector{<:AbstractVector},
+    eta_values::AbstractVector,
+    eta_gradients::AbstractMatrix,
+) where {T<:AbstractFloat}
+    # precision-scaled support tolerance: see the batched scorer in
+    # scoring_vectors.jl (Float32-constructed rows are unit only to f32 rounding)
+    tolerance = sqrt(eps(T)) * d * 16
+    for batch_index in eachindex(totals)
+        eta = eta_values[batch_index]
+        eta > 0 || throw(ArgumentError("lkjcholesky requires a concentration eta > 0"))
+        accumulator = T(_lkj_log_normalizing_constant(d, eta))
+        eta_derivative = T(_lkj_log_normalizing_constant_deta(d, eta))
+        valid = true
+        for row = 1:d
+            diagonal = value_values[_packed_lower_index(d, row, row)][batch_index]
+            diagonal > 0 || begin
+                valid = false
+                break
+            end
+            sum_sqs = zero(T)
+            for col = 1:row
+                entry = value_values[_packed_lower_index(d, row, col)][batch_index]
+                sum_sqs += entry * entry
+            end
+            sum_sqs <= 1 + tolerance || begin
+                valid = false
+                break
+            end
+            if row >= 2
+                log_diagonal = log(diagonal)
+                accumulator += (d - row + 2 * eta - 2) * log_diagonal
+                eta_derivative += 2 * log_diagonal
+            end
+        end
+        if !valid
+            totals[batch_index] += -T(Inf)
+            continue
+        end
+
+        totals[batch_index] += accumulator
+        for parameter_row in axes(gradients, 1)
+            gradients[parameter_row, batch_index] += eta_derivative * eta_gradients[parameter_row, batch_index]
+        end
+        isnothing(parameter_index) && continue
+        position = 0
+        for row = 2:d
+            remaining = one(T)
+            for col = 1:(row-1)
+                entry = value_values[_packed_lower_index(d, row, col)][batch_index]
+                if remaining > 0
+                    w = entry / sqrt(remaining)
+                    gradients[parameter_index+position, batch_index] -= (d - row + 2 * eta - 2) * w
+                end
+                position += 1
+                remaining -= entry * entry
+            end
         end
     end
     return totals, gradients
@@ -368,6 +440,38 @@ function _score_backend_step_and_gradient!(
 
     isnothing(step.binding_slot) ||
         _assign_backend_choice_vector_value!(env, cache.slot_gradients, step.binding_slot, choice_values, alpha_gradients)
+    return totals, gradients
+end
+
+function _score_backend_step_and_gradient!(
+    step::BackendLKJCholeskyChoicePlanStep,
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+    params::AbstractMatrix{T},
+    constraints,
+) where {T<:AbstractFloat}
+    choice_values = [_batched_numeric_scratch!(env, index) for index = 1:step.value_length]
+    eta_values = _batched_numeric_scratch!(env, step.value_length + 1)
+    eta_gradients = _batched_backend_gradient_scratch!(cache, step.value_length + 1)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
+    _eval_backend_numeric_expr_and_gradient!(eta_values, eta_gradients, cache, env, step.eta, step.value_length + 2)
+
+    _accumulate_lkjcholesky_gradient!(
+        totals,
+        gradients,
+        step.d,
+        step.parameter_index,
+        choice_values,
+        eta_values,
+        eta_gradients,
+    )
+
+    isnothing(step.binding_slot) ||
+        _assign_backend_choice_vector_value!(env, cache.slot_gradients, step.binding_slot, choice_values, Matrix{T}[])
     return totals, gradients
 end
 

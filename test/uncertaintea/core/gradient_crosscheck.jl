@@ -291,6 +291,34 @@
         return x
     end
 
+    # Float64 eta literals throughout the lkjcholesky entries: the compiled
+    # reference computes the normalizing constant in the literal's precision,
+    # so an f32 literal shifts it by ~1e-8 against the batched Float64 path.
+    @tea static function gxc_lkjcholesky_latent()
+        L ~ lkjcholesky(3, 2.0)
+        return L
+    end
+
+    # dimension-changing (cholesky) latent followed by scalar latents: 3
+    # unconstrained rows vs 6 value rows shift every later slot, exercising
+    # the value-row -> seed-row split like the dirichlet variant. The gamma
+    # latent adds the log-transform chain rule on shifted rows.
+    @tea static function gxc_lkjcholesky_then_scalar()
+        L ~ lkjcholesky(2, 1.5)
+        s ~ normal(0.0f0, 1.0f0)
+        tau ~ gamma(2.0f0, 1.5f0)
+        {:y} ~ normal(s, tau)
+        return s
+    end
+
+    # latent-dependent concentration: d(logpdf)/deta (digamma normalizer plus
+    # the 2 log L[i,i] density term) chained through the eta expression
+    @tea static function gxc_lkjcholesky_latent_eta()
+        x ~ normal(0.5f0, 0.3f0)
+        L ~ lkjcholesky(3, exp(x))
+        return L
+    end
+
     @tea static function gxc_mvnormal_obs()
         m ~ normal(0.0f0, 1.0f0)
         {:y} ~ mvnormal([m, m], [1.0f0, 0.8f0])
@@ -402,6 +430,11 @@
         :mvnormaldense => [
             (gxc_mvnormaldense_obs, (gxc_dense_factor,), choicemap((:y, Float32[0.4, -0.2]))),
         ],
+        :lkjcholesky => [
+            (gxc_lkjcholesky_latent, (), choicemap()),
+            (gxc_lkjcholesky_then_scalar, (), choicemap((:y, 0.4f0))),
+            (gxc_lkjcholesky_latent_eta, (), choicemap()),
+        ],
     )
 
     for (gxc_index, gxc_family) in enumerate(UncertainTea.GPU_BACKEND_SUPPORTED_DISTRIBUTIONS)
@@ -413,6 +446,44 @@
             for (gxc_entry_index, (gxc_model, gxc_args, gxc_constraints)) in
                 enumerate(gxc_models[gxc_family])
                 gxc_check(gxc_model, gxc_args, gxc_constraints, 1000 * gxc_index + gxc_entry_index)
+            end
+        end
+    end
+
+    # A latent vector binding consumed by a gradient-bearing expression must
+    # NOT sit on the analytic tier: the binding is stored as a generic vector
+    # with no per-row gradients, so the analytic path would silently treat the
+    # latent as constant data in the likelihood (issue #49 review). The
+    # support gate rejects these models to the per-column fallback, whose
+    # gradients must still match finite differences.
+    @tea static function gxc_lkjcholesky_bound_consumed()
+        L ~ lkjcholesky(2, 2.0)
+        {:y} ~ normal.(L, 1.0)
+        return L
+    end
+
+    @tea static function gxc_dirichlet_bound_consumed()
+        w ~ dirichlet([2.0, 3.0, 4.0])
+        {:y} ~ normal.(w, 1.0)
+        return w
+    end
+
+    @testset "gxc_latent_vector_binding_fallback" begin
+        for (gxc_fb_index, (gxc_fb_model, gxc_fb_constraints)) in enumerate([
+            (gxc_lkjcholesky_bound_consumed, choicemap((:y, Float32[0.9, 0.3, 0.8]))),
+            (gxc_dirichlet_bound_consumed, choicemap((:y, Float32[0.3, 0.3, 0.4]))),
+        ])
+            @test backend_report(gxc_fb_model).supported == true
+            gxc_fb_rng = MersenneTwister(9000 + gxc_fb_index)
+            gxc_fb_trace, _ = generate(gxc_fb_model, (), gxc_fb_constraints; rng=gxc_fb_rng)
+            gxc_fb_base = transform_to_unconstrained(gxc_fb_trace)
+            gxc_fb_points = gxc_fb_base .+ 0.4 .* randn(gxc_fb_rng, length(gxc_fb_base), 3)
+            gxc_fb_cache = BatchedLogjointGradientCache(gxc_fb_model, gxc_fb_points, (), gxc_fb_constraints)
+            @test isnothing(gxc_fb_cache.backend_cache)
+            gxc_fb_gradient = batched_logjoint_gradient_unconstrained(gxc_fb_cache, gxc_fb_points)
+            for i = 1:size(gxc_fb_points, 2)
+                @test gxc_fb_gradient[:, i] ≈
+                      gxc_fd_gradient(gxc_fb_model, gxc_fb_points[:, i], (), gxc_fb_constraints) atol = 5e-6
             end
         end
     end

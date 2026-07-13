@@ -235,14 +235,51 @@ end
           UncertainTea.logpdf(UncertainTea.lkjcholesky(2, 1.5), lkj_eta_packed) atol = 1e-12
 end
 
-# --- backend honestly reports the family as unsupported ----------------------
+# --- backend-native lowering and batched scoring (issue #49) -----------------
+@tea static function lkj_obs_model()
+    {:c} ~ lkjcholesky(2, 1.5)
+end
+
 @testset "lkj_backend_report" begin
     lkj_report = backend_report(lkj_prior2_model)
-    @test lkj_report.supported == false
-    @test any(
-        issue -> occursin("unsupported distribution family `lkjcholesky`", issue),
-        lkj_report.issues,
+    @test lkj_report.supported == true
+    @test isempty(lkj_report.issues)
+    @test :lkjcholesky in lkj_report.supported_families
+    lkj_backend_plan = backend_execution_plan(lkj_prior2_model)
+    @test lkj_backend_plan.steps[1] isa UncertainTea.BackendLKJCholeskyChoicePlanStep
+    @test lkj_backend_plan.steps[1].d == 2
+    @test lkj_backend_plan.steps[1].value_length == 3
+
+    # batched scoring of a latent slot matches the per-column CPU reference
+    lkj_batch_unconstrained = reshape([-0.5, 0.0, 0.7], 1, 3)
+    lkj_batch_values = batched_logjoint_unconstrained(
+        lkj_prior2_model,
+        lkj_batch_unconstrained,
+        (),
+        choicemap(),
     )
+    @test lkj_batch_values ≈ [
+        logjoint_unconstrained(lkj_prior2_model, lkj_batch_unconstrained[:, index], (), choicemap()) for index = 1:3
+    ] atol = 1e-12
+
+    # observed packed values score the compiled density, including the -Inf
+    # support rejections (non-positive diagonal, row norm above one)
+    lkj_obs_good = [1.0, 0.4, sqrt(1 - 0.16)]
+    lkj_obs_bad_diagonal = [1.0, 0.4, -sqrt(1 - 0.16)]
+    lkj_obs_bad_norm = [1.0, 0.9, 0.9]
+    lkj_obs_values = UncertainTea.batched_logjoint(
+        lkj_obs_model,
+        zeros(0, 3),
+        (),
+        [
+            choicemap((:c, lkj_obs_good)),
+            choicemap((:c, lkj_obs_bad_diagonal)),
+            choicemap((:c, lkj_obs_bad_norm)),
+        ],
+    )
+    @test lkj_obs_values[1] ≈ UncertainTea.logpdf(UncertainTea.lkjcholesky(2, 1.5), lkj_obs_good) atol = 1e-12
+    @test lkj_obs_values[2] == -Inf
+    @test lkj_obs_values[3] == -Inf
 end
 
 # --- scale_cholesky: diag(scales) * unpack(L), AD-friendly -------------------

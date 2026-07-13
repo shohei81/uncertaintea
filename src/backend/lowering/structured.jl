@@ -1,4 +1,4 @@
-# Lowering of static models to the backend expression IR: structured families (mvnormal, mvnormaldense, dirichlet, mixture, broadcast/iid vector machinery).
+# Lowering of static models to the backend expression IR: structured families (mvnormal, mvnormaldense, dirichlet, lkjcholesky, mixture, broadcast/iid vector machinery).
 
 struct BackendMvNormalChoicePlanStep{M<:Tuple,S<:Tuple,AD<:BackendAddressSpec} <: BackendChoicePlanStep
     binding_slot::Union{Nothing,Int}
@@ -14,6 +14,22 @@ struct BackendDirichletChoicePlanStep{A<:Tuple,AD<:BackendAddressSpec} <: Backen
     binding_slot::Union{Nothing,Int}
     address::AD
     alpha::A
+    parameter_slot::Union{Nothing,Int}
+    parameter_index::Union{Nothing,Int}
+    value_index::Union{Nothing,Int}
+    value_length::Int
+end
+
+# LKJ prior over a packed correlation Cholesky factor. `d` is the macro-time
+# literal dimension; `eta` stays a free numeric expression so latent-dependent
+# concentrations remain differentiable. Like dirichlet, the step carries both
+# the unconstrained gradient-seed row (`parameter_index`) and the constrained
+# value row (`value_index`) because the packed value has d extra diagonal rows.
+struct BackendLKJCholeskyChoicePlanStep{E<:AbstractBackendExpr,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int}
+    address::AD
+    d::Int
+    eta::E
     parameter_slot::Union{Nothing,Int}
     parameter_index::Union{Nothing,Int}
     value_index::Union{Nothing,Int}
@@ -237,6 +253,50 @@ function _backend_lower_dirichlet_choice_step(
     )
 end
 
+function _backend_lower_lkjcholesky_choice_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
+    d = _lkjcholesky_static_size(step.rhs.arguments)
+    isnothing(d) && begin
+        _backend_issue!(issues, "lkjcholesky requires a literal integer dimension d >= 2 in backend lowering")
+        return nothing
+    end
+    address = _backend_lower_address(model, layout, step.address, issues)
+    isnothing(address) && return nothing
+    eta = _backend_lower_expr(model, layout, step.rhs.arguments[2], issues, "lkjcholesky concentration")
+    isnothing(eta) && return nothing
+    value_length = (d * (d + 1)) ÷ 2
+
+    parameter_index = nothing
+    value_index = nothing
+    if !isnothing(step.parameter_slot)
+        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot.transform isa CholeskyCorrTransform || begin
+            _backend_issue!(issues, "lkjcholesky backend lowering expects a cholesky correlation transform")
+            return nothing
+        end
+        slot.value_length == value_length || begin
+            _backend_issue!(issues, "lkjcholesky backend lowering requires a parameter slot with matching packed length")
+            return nothing
+        end
+        parameter_index = slot.index
+        value_index = slot.value_index
+    end
+    return BackendLKJCholeskyChoicePlanStep(
+        step.binding_slot,
+        address,
+        d,
+        eta,
+        step.parameter_slot,
+        parameter_index,
+        value_index,
+        value_length,
+    )
+end
+
 # Lower one `mixture` component constructor call into `(family, mu_expr, sigma_expr)`.
 # Only `normal(mu, sigma)` components are supported for backend lowering.
 function _backend_lower_mixture_component(model::TeaModel, layout::EnvironmentLayout, component, issues::Vector{String})
@@ -410,6 +470,18 @@ function _collect_backend_slot_kinds!(
     for expr in step.alpha
         _mark_backend_numeric_expr_slots!(expr, numeric_slots, index_slots, generic_slots)
     end
+    isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
+    return nothing
+end
+
+function _collect_backend_slot_kinds!(
+    step::BackendLKJCholeskyChoicePlanStep,
+    numeric_slots::BitVector,
+    index_slots::BitVector,
+    generic_slots::BitVector,
+)
+    _mark_backend_choice_address_slots!(step.address, numeric_slots, index_slots, generic_slots)
+    _mark_backend_numeric_expr_slots!(step.eta, numeric_slots, index_slots, generic_slots)
     isnothing(step.binding_slot) || _mark_backend_generic_slot!(numeric_slots, index_slots, generic_slots, step.binding_slot)
     return nothing
 end

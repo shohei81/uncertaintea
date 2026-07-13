@@ -169,6 +169,15 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
                 _to_constrained_simplex!(constrained_view, slot.transform, unconstrained_view)
                 logabsdet[batch_index] += _simplex_logabsdet(constrained_view)
             end
+        elseif slot.transform isa CholeskyCorrTransform
+            source_indices = parameterindices(slot)
+            destination_indices = parametervalueindices(slot)
+            for batch_index = 1:size(params, 2)
+                constrained_view = view(constrained, destination_indices, batch_index)
+                unconstrained_view = view(params, source_indices, batch_index)
+                logabsdet[batch_index] +=
+                    _to_constrained_cholesky_corr!(constrained_view, slot.transform, unconstrained_view)
+            end
         else
             throw(BatchedBackendFallback("batched backend gradient does not support transform $(typeof(slot.transform))"))
         end
@@ -207,6 +216,21 @@ function _batched_backend_logjoint_and_gradient_unconstrained!(
                 for (local_index, parameter_index) in enumerate(source_indices)
                     gradients[parameter_index, batch_index] +=
                         1 - slot.value_length * constrained_view[local_index]
+                end
+            end
+        elseif slot.transform isa CholeskyCorrTransform
+            # log-abs-det = sum_ij [log(1 - w_ij^2) + 0.5 sum_{k<j} log(1 - w_ik^2)]
+            # in w = tanh(z) terms, so each below-diagonal coordinate carries the
+            # weight 1 + (i - 1 - j)/2 and d/dz log(1 - tanh(z)^2) = -2 tanh(z).
+            source_indices = parameterindices(slot)
+            d = slot.transform.size
+            for batch_index = 1:size(params, 2)
+                position = 0
+                for row = 2:d, col = 1:(row-1)
+                    position += 1
+                    parameter_index = source_indices[position]
+                    gradients[parameter_index, batch_index] -=
+                        (row - col + 1) * tanh(T(params[parameter_index, batch_index]))
                 end
             end
         end

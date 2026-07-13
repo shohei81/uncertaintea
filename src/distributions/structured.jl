@@ -244,6 +244,18 @@ function _lkj_log_normalizing_constant(d::Int, eta)
     return -log_c
 end
 
+# d/deta of `_lkj_log_normalizing_constant`: each cvine Beta factor contributes
+# (d - k) * (2 log 2 + d logB(a_k, a_k)/da_k) with d logB/da = 2 (psi(a) - psi(2a)).
+function _lkj_log_normalizing_constant_deta(d::Int, eta)
+    eta_f = float(eta)
+    dlog_c = zero(eta_f)
+    for k = 1:(d-1)
+        a = eta_f + (d - 1 - k) / 2
+        dlog_c += (d - k) * (2 * log(oftype(eta_f, 2)) + 2 * (digamma(a) - digamma(2 * a)))
+    end
+    return -dlog_c
+end
+
 # Un-pack a column-major packed correlation Cholesky factor and scale row i by
 # `scales[i]`, producing the dense d x d lower-triangular `scale_tril` for
 # `mvnormaldense` (covariance = diag(scales) * Omega * diag(scales)). Plain

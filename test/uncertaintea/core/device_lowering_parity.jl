@@ -38,7 +38,8 @@ end
     return p
 end
 
-# lkjcholesky latent: still unsupported (no backend lowering exists to mirror).
+# lkjcholesky latent: backend-supported (issue #49) but device step lowering
+# still rejects it, so the device report stays honest-unsupported.
 @tea static function dev_lkj_model()
     Omega ~ lkjcholesky(2, 2.0)
     return Omega

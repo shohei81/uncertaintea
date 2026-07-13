@@ -89,6 +89,93 @@ function _score_backend_step!(
     return totals
 end
 
+# Mirror of the compiled `logpdf(::LKJCholeskyDist, x)` over the packed
+# column-major lower triangle: an out-of-support value scores -Inf, while an
+# invalid concentration throws (parameter error, like dirichlet's alpha check).
+function _backend_lkjcholesky_logpdf(d::Int, eta, x)
+    eta > 0 || throw(ArgumentError("lkjcholesky requires a concentration eta > 0"))
+    accumulator = _lkj_log_normalizing_constant(d, eta) + zero(float(x[firstindex(x)]))
+    tolerance = sqrt(eps(typeof(accumulator))) * d * 16
+    for row = 1:d
+        diagonal = x[_packed_lower_index(d, row, row)]
+        diagonal > zero(diagonal) || return oftype(accumulator, -Inf)
+        sum_sqs = zero(float(diagonal))
+        for col = 1:row
+            entry = x[_packed_lower_index(d, row, col)]
+            sum_sqs += entry * entry
+        end
+        sum_sqs <= 1 + tolerance || return oftype(accumulator, -Inf)
+        if row >= 2
+            accumulator += (d - row + 2 * eta - 2) * log(diagonal)
+        end
+    end
+    return accumulator
+end
+
+function _score_backend_step!(
+    step::BackendLKJCholeskyChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    value = _backend_choice_vector_value(step.value_index, step.value_length, params, constraints, address)
+    eta = _eval_backend_numeric_expr(env, step.eta)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return _backend_lkjcholesky_logpdf(step.d, eta, value)
+end
+
+function _score_backend_step!(
+    step::BackendLKJCholeskyChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    choice_values = [_batched_numeric_scratch!(env, index) for index = 1:step.value_length]
+    eta_values = _batched_numeric_scratch!(env, step.value_length + 1)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+
+    _batched_choice_vector_values!(choice_values, step.value_index, step.value_length, params, constraints, address_parts)
+    _eval_backend_numeric_expr!(eta_values, env, step.eta, step.value_length + 2)
+
+    d = step.d
+    for batch_index = 1:env.batch_size
+        eta = eta_values[batch_index]
+        eta > 0 || throw(ArgumentError("lkjcholesky requires a concentration eta > 0"))
+        accumulator = _lkj_log_normalizing_constant(d, eta)
+        # support tolerance scales with the working precision (dirichlet does
+        # the same via sqrt(eps(total))): rows constructed by the Float32
+        # transform are only unit vectors to Float32 rounding, so the compiled
+        # path's Float64 tolerance would spuriously reject valid f32 latents
+        tolerance = sqrt(eps(typeof(accumulator))) * d * 16
+        valid = true
+        for row = 1:d
+            diagonal = choice_values[_packed_lower_index(d, row, row)][batch_index]
+            diagonal > 0 || begin
+                valid = false
+                break
+            end
+            sum_sqs = zero(float(diagonal))
+            for col = 1:row
+                entry = choice_values[_packed_lower_index(d, row, col)][batch_index]
+                sum_sqs += entry * entry
+            end
+            sum_sqs <= 1 + tolerance || begin
+                valid = false
+                break
+            end
+            if row >= 2
+                accumulator += (d - row + 2 * eta - 2) * log(diagonal)
+            end
+        end
+        totals[batch_index] += valid ? accumulator : oftype(accumulator, -Inf)
+    end
+
+    isnothing(step.binding_slot) || _assign_backend_choice_vector_value!(env, step.binding_slot, choice_values)
+    return totals
+end
+
 # --- broadcast (vectorized) normal observation -------------------------------
 
 # Scalar (single-column) element-aware evaluation of a broadcast argument. A vector
