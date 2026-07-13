@@ -119,19 +119,32 @@ the mixture step logsumexps a single self-contained density. So this is
 new IR:
 
 ```julia
-struct BackendMarginalizeChoicePlanStep{P<:Tuple,S<:Tuple,AD} <: BackendPlanStep
-    binding_slot::Int                # the enumerated latent's binding
+struct BackendMarginalizeChoicePlanStep{P<:Tuple,S<:Tuple,AD<:BackendAddressSpec} <: BackendChoicePlanStep
+    binding_slot::Union{Nothing,Int} # the enumerated latent's binding
     address::AD
+    parameter_slot::Union{Nothing,Int}   # always nothing (no slot) — kept for the choice-step field convention
     probabilities::P                 # K numeric exprs (bernoulli: (1-p, p))
     body::S                          # the lowered plan SUFFIX
 end
 ```
 
+Subtyping `BackendChoicePlanStep` (there is no `BackendPlanStep` root —
+the hierarchy is `AbstractBackendPlanStep` / `BackendChoicePlanStep`) is
+deliberate: the device's generic choice fallback dispatches on
+`BackendChoicePlanStep`, so the new step stays device-honest-unsupported
+with no extra method, exactly like the lkjcholesky step (#49/#57).
+
 - Lowering: on a `marginalize=:enumerate` choice, lower the remaining
   steps recursively into `body` and stop the outer loop — the plan's tail
   becomes the step's continuation, so nested marginalized latents nest as
-  nested steps. The binding slot is marked *numeric* (the support values
-  are numbers feeding arithmetic; `false/true` lower as `0/1`).
+  nested steps. Slot kinds follow the value's type on the CPU path:
+  a `bernoulli` binding is marked *numeric* (`false/true` lower as `0/1`
+  feeding arithmetic), but a `categorical` binding must stay an *index*
+  slot — the branch value is an `Int` on the CPU path and existing index
+  evaluators (loop bounds, `binomial` trials, address parts) require
+  `Integer`, while index slots can still feed numeric expressions.
+  Storing categories in `numeric_values` as floats would break integer
+  consumers like `{:y} ~ binomial(z, p)`.
 - Scalar and batched scoring: for each `v`, bind, `_score_backend_steps`
   the body into a per-branch total, restore; combine per column with the
   max-shifted logsumexp. K per-branch batched totals need K scratch
