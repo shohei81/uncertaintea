@@ -125,5 +125,38 @@ end
             z ~ iid(bernoulli(0.5f0), 3; marginalize=:enumerate)
             return z
         end
+        # a tuple probability container would strip to categorical((...)),
+        # which the runtime constructor rejects — vector literals only
+        @test_throws LoadError @eval @tea static function denum_tuple_probs_model()
+            z ~ categorical((0.2f0, 0.8f0); marginalize=:enumerate)
+            return z
+        end
+        # generative (submodel) calls never supported keywords: the spec would
+        # drop them while the runtime body still passes them to the callee, so
+        # even the no-op values are macro-time errors
+        @test_throws LoadError @eval @tea static function denum_submodel_kw_model()
+            z = ({:sub} ~ denum_bernoulli_model(; marginalize=:none))
+            return z
+        end
+        @test_throws LoadError @eval @tea static function denum_submodel_reparam_model()
+            z = ({:sub} ~ denum_bernoulli_model(; reparam=:centered))
+            return z
+        end
+    end
+
+    @testset "denum_inlined_loop_rejection" begin
+        # a child model with an enumerated latent called from a parent loop
+        # would bypass the macro-time loop-scope check via inlining; the plan
+        # build re-validates after inlining (definition-time ArgumentError)
+        @eval @tea static function denum_enum_child()
+            z ~ bernoulli(0.5f0; marginalize=:enumerate)
+            return z
+        end
+        @test_throws ArgumentError @eval @tea static function denum_loop_parent(n)
+            for i = 1:n
+                z = ({:child => i} ~ denum_enum_child())
+            end
+            return n
+        end
     end
 end

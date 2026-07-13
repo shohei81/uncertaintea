@@ -295,13 +295,12 @@ function _split_rhs_keywords(rhs::Expr)
             ),
         )
         if callee === :categorical
-            (
-                length(positional) == 1 &&
-                positional[1] isa Expr &&
-                positional[1].head in (:vect, :tuple)
-            ) || throw(
+            # vector literals only: the runtime categorical constructor does
+            # not accept a single tuple argument, and the support size must be
+            # known at macro time
+            (length(positional) == 1 && positional[1] isa Expr && positional[1].head == :vect) || throw(
                 ArgumentError(
-                    "marginalize=:enumerate requires a literal probability vector/tuple for " *
+                    "marginalize=:enumerate requires a literal probability vector for " *
                     "categorical (the support size must be known at macro time), got `$rhs`",
                 ),
             )
@@ -408,6 +407,15 @@ function _rhs_spec_expr(rhs)
             return :($(_qualify(:DistributionSpec))($(QuoteNode(callee)), $arguments, $(registration.builder)))
         end
 
+        # generative (submodel) calls never supported keywords: the spec drops
+        # them but the runtime body would still pass them to the callee, so
+        # even the no-op values reparam=:centered / marginalize=:none must be
+        # rejected here rather than diverge into a runtime MethodError
+        any(arg -> arg isa Expr && arg.head in (:kw, :parameters), rhs.args) && throw(
+            ArgumentError(
+                "keyword arguments are not supported on generative (submodel) calls in `~`, got `$rhs`",
+            ),
+        )
         return :($(_qualify(:GenerativeCallSpec))($callee, $arguments))
     end
 
