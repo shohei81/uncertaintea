@@ -24,10 +24,15 @@ struct DistributionSpec <: AbstractChoiceRhsSpec
     # :centered (default) or :noncentered -- the staged reparameterization of
     # docs/noncentered-reparam.md (issue #19).
     reparam::Symbol
+    # :none (default) or :enumerate -- marginalize a finite-support discrete
+    # latent out of the logjoint (docs/discrete-enumeration.md, issue #13).
+    marginalize::Symbol
 end
 
-DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing, :centered)
-DistributionSpec(family::Symbol, arguments, builder) = DistributionSpec(family, arguments, builder, :centered)
+DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing, :centered, :none)
+DistributionSpec(family::Symbol, arguments, builder) = DistributionSpec(family, arguments, builder, :centered, :none)
+DistributionSpec(family::Symbol, arguments, builder, reparam::Symbol) =
+    DistributionSpec(family, arguments, builder, reparam, :none)
 
 struct GenerativeCallSpec <: AbstractChoiceRhsSpec
     callee::Any
@@ -408,6 +413,7 @@ function _substitute_rhs(rhs::DistributionSpec, substitutions::Dict{Symbol,Any})
         Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments],
         rhs.builder,
         rhs.reparam,
+        rhs.marginalize,
     )
 end
 

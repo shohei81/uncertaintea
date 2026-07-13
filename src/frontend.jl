@@ -200,15 +200,15 @@ function _resolve_auto_reparam(family::Symbol, positional)
     return (location isa Number && scale isa Number) ? :centered : :noncentered
 end
 
-# The flag is only meaningful on the top-level distribution of a `~`; nested
+# The flags are only meaningful on the top-level distribution of a `~`; nested
 # occurrences (e.g. inside a mixture component) would otherwise diverge
 # between the runtime body (keyword stripped) and the static spec.
 function _reject_nested_reparam(expr)
     expr isa Expr || return nothing
-    if expr.head == :kw && expr.args[1] === :reparam
+    if expr.head == :kw && expr.args[1] in (:reparam, :marginalize)
         throw(
             ArgumentError(
-                "reparam= is only supported on the top-level distribution call of `~`, found it nested in `$expr`",
+                "$(expr.args[1])= is only supported on the top-level distribution call of `~`, found it nested in `$expr`",
             ),
         )
     end
@@ -216,37 +216,54 @@ function _reject_nested_reparam(expr)
     return nothing
 end
 
-# Strip `reparam=` keywords from a distribution-call RHS and return the
-# normalized call plus the flag, so macro-time consumers (the parameter
-# layout pre-pass) see the same positional arguments as the emitted spec.
+# Strip `reparam=`/`marginalize=` keywords from a distribution-call RHS and
+# return the normalized call plus the flags, so macro-time consumers (the
+# parameter layout pre-pass) see the same positional arguments as the
+# emitted spec.
 function _normalized_rhs_call(rhs)
-    (rhs isa Expr && rhs.head == :call && !isempty(rhs.args)) || return rhs, :centered
-    positional, reparam = _split_rhs_keywords(rhs)
-    return Expr(:call, rhs.args[1], positional...), reparam
+    (rhs isa Expr && rhs.head == :call && !isempty(rhs.args)) || return rhs, :centered, :none
+    positional, reparam, marginalize = _split_rhs_keywords(rhs)
+    return Expr(:call, rhs.args[1], positional...), reparam, marginalize
 end
 
+# Finite-support discrete families eligible for marginalize=:enumerate
+# (docs/discrete-enumeration.md). categorical additionally needs a macro-time
+# literal probability container so the support size is compile-time.
+const _MARGINALIZE_ELIGIBLE_FAMILIES = (:bernoulli, :categorical)
+
 # Split the keyword arguments off a `~` distribution call. Only
-# `reparam=:centered|:noncentered` is recognized; any other keyword is a
-# macro-time error (previously keywords were silently spliced into the
-# positional argument list as a malformed `Expr(:parameters, ...)`).
+# `reparam=:centered|:noncentered|:auto` and `marginalize=:enumerate|:none`
+# are recognized; any other keyword is a macro-time error (previously
+# keywords were silently spliced into the positional argument list as a
+# malformed `Expr(:parameters, ...)`).
 function _split_rhs_keywords(rhs::Expr)
     callee = rhs.args[1]
     positional = Any[]
     reparam = :centered
+    marginalize = :none
     handle_kw =
         kw -> begin
-            (kw isa Expr && kw.head == :kw && kw.args[1] === :reparam) || throw(
+            (kw isa Expr && kw.head == :kw && kw.args[1] in (:reparam, :marginalize)) || throw(
                 ArgumentError(  # also fires for generative (submodel) calls, which never supported keywords
-                    "unsupported keyword argument in `~` distribution call `$rhs`; only `reparam=` is recognized",
+                    "unsupported keyword argument in `~` distribution call `$rhs`; only `reparam=` and `marginalize=` are recognized",
                 ),
             )
             value = kw.args[2]
-            (value isa QuoteNode && value.value in (:centered, :noncentered, :auto)) || throw(
-                ArgumentError(
-                    "reparam must be the literal :centered, :noncentered, or :auto, got `$(value)` in `$rhs`",
-                ),
-            )
-            reparam = value.value
+            if kw.args[1] === :reparam
+                (value isa QuoteNode && value.value in (:centered, :noncentered, :auto)) || throw(
+                    ArgumentError(
+                        "reparam must be the literal :centered, :noncentered, or :auto, got `$(value)` in `$rhs`",
+                    ),
+                )
+                reparam = value.value
+            else
+                (value isa QuoteNode && value.value in (:enumerate, :none)) || throw(
+                    ArgumentError(
+                        "marginalize must be the literal :enumerate or :none, got `$(value)` in `$rhs`",
+                    ),
+                )
+                marginalize = value.value
+            end
             return nothing
         end
     for arg in rhs.args[2:end]
@@ -270,6 +287,26 @@ function _split_rhs_keywords(rhs::Expr)
             ),
         )
     end
+    if marginalize === :enumerate
+        callee in _MARGINALIZE_ELIGIBLE_FAMILIES || throw(
+            ArgumentError(
+                "marginalize=:enumerate supports the finite-support discrete families " *
+                "$(_MARGINALIZE_ELIGIBLE_FAMILIES), got `$callee`",
+            ),
+        )
+        if callee === :categorical
+            (
+                length(positional) == 1 &&
+                positional[1] isa Expr &&
+                positional[1].head in (:vect, :tuple)
+            ) || throw(
+                ArgumentError(
+                    "marginalize=:enumerate requires a literal probability vector/tuple for " *
+                    "categorical (the support size must be known at macro time), got `$rhs`",
+                ),
+            )
+        end
+    end
     if reparam === :auto
         if callee === :iid
             base = positional[1]
@@ -278,7 +315,7 @@ function _split_rhs_keywords(rhs::Expr)
             reparam = _resolve_auto_reparam(callee, positional)
         end
     end
-    return positional, reparam
+    return positional, reparam, marginalize
 end
 
 function _iid_reparam_base_eligible(positional)
@@ -289,16 +326,19 @@ function _iid_reparam_base_eligible(positional)
     return base.args[1] in (:normal, :studentt, :laplace)
 end
 
-# Drop `reparam=` keywords from a distribution call in the rewritten runtime
-# body: `generate`/`assess` semantics stay centered, only the spec/plan carry
-# the flag.
+# Drop `reparam=`/`marginalize=` keywords from a distribution call in the
+# rewritten runtime body: `generate`/`assess` semantics stay centered and
+# forward-sampled, only the spec/plan carry the flags.
 function _strip_reparam_arguments(arguments::Vector{Any})
     stripped = Any[]
     for arg in arguments
         if arg isa Expr && arg.head == :parameters
-            kept = Any[kw for kw in arg.args if !(kw isa Expr && kw.head == :kw && kw.args[1] === :reparam)]
+            kept = Any[
+                kw for kw in arg.args if
+                       !(kw isa Expr && kw.head == :kw && kw.args[1] in (:reparam, :marginalize))
+            ]
             isempty(kept) || push!(stripped, Expr(:parameters, kept...))
-        elseif arg isa Expr && arg.head == :kw && arg.args[1] === :reparam
+        elseif arg isa Expr && arg.head == :kw && arg.args[1] in (:reparam, :marginalize)
             continue
         else
             push!(stripped, arg)
@@ -320,7 +360,7 @@ function _rhs_spec_expr(rhs)
     end
 
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args) && rhs.args[1] === :iid
-        iid_positional, iid_reparam = _split_rhs_keywords(rhs)
+        iid_positional, iid_reparam, _ = _split_rhs_keywords(rhs)
         length(iid_positional) == 2 ||
             throw(ArgumentError("iid expects `iid(distribution_call, n)`"))
         base = iid_positional[1]
@@ -340,7 +380,7 @@ function _rhs_spec_expr(rhs)
 
     if rhs isa Expr && rhs.head == :call && !isempty(rhs.args)
         callee = rhs.args[1]
-        positional, reparam = _split_rhs_keywords(rhs)
+        positional, reparam, marginalize = _split_rhs_keywords(rhs)
         arguments = Expr(:vect, map(QuoteNode, positional)...)
 
         if callee === :lkjcholesky
@@ -360,6 +400,7 @@ function _rhs_spec_expr(rhs)
                 $arguments,
                 nothing,
                 $(QuoteNode(reparam)),
+                $(QuoteNode(marginalize)),
             ))
         end
         if callee isa Symbol && haskey(USER_DISTRIBUTION_REGISTRY, callee)
@@ -395,7 +436,16 @@ function _parameter_layout_expr(choice_nodes)
         rhs = choice_expr.args[3]
         binding_symbol = isnothing(binding_override) ? (lhs isa Symbol ? lhs : nothing) : binding_override
 
-        rhs, reparam = _normalized_rhs_call(rhs)
+        rhs, reparam, marginalize = _normalized_rhs_call(rhs)
+        if marginalize === :enumerate && !isempty(loop_scopes)
+            throw(
+                ArgumentError(
+                    "marginalize=:enumerate is not supported on loop-scoped choices " *
+                    "(the plan-suffix semantics do not extend into loop bodies; " *
+                    "docs/discrete-enumeration.md), found `$lhs`",
+                ),
+            )
+        end
         if !isnothing(binding_symbol) && isempty(loop_scopes) && _supports_parameter_slot(rhs)
             address = _address_spec_expr(lhs)
             transform = _parameter_transform_expr(rhs, reparam)
