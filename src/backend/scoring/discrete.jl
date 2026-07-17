@@ -279,7 +279,7 @@ function _score_backend_step!(
     # scores the plain joint at that value (branch selection); the others
     # marginalize. Bool == Int equality makes bernoulli constraints match.
     address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
-    constrained_branch = Vector{Int}(undef, batch_size)  # 0 = marginalize, -1 = out of support
+    constrained_branch = Vector{Int}(undef, batch_size)  # 0 = marginalize
     for batch_index = 1:batch_size
         address = _concrete_batched_address(address_parts, batch_index)
         found, value = _choice_tryget_normalized(_batched_constraint(constraints, batch_index), address)
@@ -287,21 +287,17 @@ function _score_backend_step!(
             0
         else
             matched = findfirst(support_value -> support_value == value, step.support)
-            if !isnothing(matched)
-                matched
-            elseif step.family === :bernoulli && !(value isa Bool) && value != 0
-                # the runtime bernoulli pmf treats any non-zero numeric as
-                # true while the binding keeps the raw value; branch selection
-                # cannot reproduce both, so only the per-column path preserves
-                # the reference semantics
-                throw(
-                    BatchedBackendFallback(
-                        "marginalized bernoulli conditioned on the non-boolean value $value",
-                    ),
-                )
-            else
-                -1
-            end
+            # an unmatched conditioning value cannot be reproduced by branch
+            # selection: the reference path binds the RAW value into the
+            # suffix (a non-boolean bernoulli numeric scores as true, an
+            # out-of-support categorical may make the suffix throw), so only
+            # the per-column path preserves its semantics
+            isnothing(matched) && throw(
+                BatchedBackendFallback(
+                    "marginalized $(step.family) conditioned on the out-of-support value $value",
+                ),
+            )
+            matched
         end
     end
 
@@ -342,9 +338,7 @@ function _score_backend_step!(
 
     for batch_index = 1:batch_size
         selected = constrained_branch[batch_index]
-        if selected == -1
-            totals[batch_index] += -Inf
-        elseif selected != 0
+        if selected != 0
             totals[batch_index] += log_pmf[selected, batch_index] + branch_totals[selected][batch_index]
         else
             shift = -Inf

@@ -87,6 +87,33 @@ end
     return x
 end
 
+# a Pair model-argument address in the suffix: the backend index machinery
+# cannot score it, so the per-column workspace path must drop to the compiled
+# plan (the same gap exists without the enumerated latent)
+@tea static function denc_dynamic_address_model(addr)
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.5; marginalize=:enumerate)
+    {addr} ~ normal(mu + z, 1.0)
+    return mu
+end
+
+# conditioning a marginalized categorical on an out-of-support value binds the
+# RAW value into the suffix on the reference path; bernoulli(z * 0.3) stays
+# evaluable (total -Inf via the pmf), bernoulli(z) throws
+@tea static function denc_cat_out_of_support_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ categorical([0.5, 0.5]; marginalize=:enumerate)
+    {:w} ~ bernoulli(z * 0.3)
+    return mu
+end
+
+@tea static function denc_cat_out_of_support_throwing_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ categorical([0.4, 0.6]; marginalize=:enumerate)
+    {:w} ~ bernoulli(1.0 * z)
+    return mu
+end
+
 # six nested bernoulli latents = support product 64 > the backend limit 32
 @tea static function denc_support_cap_model()
     mu ~ normal(0.0, 1.0)
@@ -235,6 +262,45 @@ end
         denc_bn_cap_report = backend_report(denc_support_cap_model)
         @test denc_bn_cap_report.supported == false
         @test any(issue -> occursin("support product", issue), denc_bn_cap_report.issues)
+
+        # a Pair model-argument address in the suffix drops all the way to
+        # the compiled plan (backend index slots cannot hold it); this held
+        # neither for plain nor for enumerated models before the workspace
+        # fallback learned to retry on the compiled steps
+        denc_bn_addr = :a => 1
+        denc_bn_addr_params = reshape([0.3, -0.2], 1, 2)
+        @test backend_report(denc_dynamic_address_model).supported == true
+        @test batched_logjoint_unconstrained(
+            denc_dynamic_address_model,
+            denc_bn_addr_params,
+            (denc_bn_addr,),
+            choicemap((denc_bn_addr, 0.4)),
+        ) ≈ [
+            logjoint_unconstrained(
+                denc_dynamic_address_model,
+                denc_bn_addr_params[:, index],
+                (denc_bn_addr,),
+                choicemap((denc_bn_addr, 0.4)),
+            ) for index = 1:2
+        ] atol = 1e-12
+
+        # conditioning a marginalized categorical on an out-of-support value
+        # reproduces the reference semantics through the fallback: the raw
+        # value is bound into the suffix, so the pmf-only case totals -Inf
+        # and the invalid-parameter case throws like the compiled path
+        denc_bn_oos_params = reshape([0.2], 1, 1)
+        @test batched_logjoint_unconstrained(
+            denc_cat_out_of_support_model,
+            denc_bn_oos_params,
+            (),
+            choicemap((:z, 3), (:w, true)),
+        ) == [-Inf]
+        @test_throws ArgumentError batched_logjoint_unconstrained(
+            denc_cat_out_of_support_throwing_model,
+            denc_bn_oos_params,
+            (),
+            choicemap((:z, 3), (:w, true)),
+        )
 
         # a branch body runs for every column, including columns whose result
         # is ignored -- if such a column makes the suffix throw (here p = x >
