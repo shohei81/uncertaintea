@@ -60,6 +60,15 @@ end
     return mu
 end
 
+# a zero-mass branch whose suffix is unevaluable (sigma = 0 for z = false):
+# the marginalizer must skip it instead of throwing
+@tea static function denc_zero_mass_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(1.0; marginalize=:enumerate)
+    {:y} ~ normal(mu, z * 1.0)
+    return mu
+end
+
 @testset "discrete_enum_cpu" begin
     denc_constraints = choicemap((:y, 0.8))
 
@@ -153,6 +162,15 @@ end
               UncertainTea.logpdf(normal(0.0, 1.0), 0.7) +
               denc_rebind_shift +
               log(sum(exp.(denc_rebind_terms .- denc_rebind_shift))) atol = 1e-12
+    end
+
+    @testset "denc_zero_mass_branch" begin
+        # bernoulli(1.0) puts zero mass on false, whose branch has sigma = 0;
+        # the marginal is just the z = true branch
+        denc_zm_params = [0.4]
+        @test logjoint_unconstrained(denc_zero_mass_model, denc_zm_params, (), choicemap((:y, 0.9))) ≈
+              UncertainTea.logpdf(normal(0.0, 1.0), 0.4) +
+              UncertainTea.logpdf(normal(0.4, 1.0), 0.9) atol = 1e-12
     end
 
     @testset "denc_conditioning" begin

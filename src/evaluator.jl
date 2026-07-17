@@ -485,8 +485,18 @@ function _marginalized_suffix_terms(
     # (suffix rebinds like `x = x + 1` must not leak across branches)
     _environment_restore_snapshot!(env, snapshot)
     value = first(support)
-    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
-    term = logpdf(dist, value) + _score_compiled_steps(tail, env, params, constraints)
+    choice_logpdf = logpdf(dist, value)
+    # a zero-mass support value (bernoulli(1.0) at false, a zero categorical
+    # weight) contributes nothing to the marginal, and its suffix may be
+    # unevaluable (branch-dependent invalid parameters) -- skip it, with
+    # clean zero partials so an infinite pmf derivative cannot poison the
+    # logsumexp gradient
+    term = if isfinite(choice_logpdf)
+        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+        choice_logpdf + _score_compiled_steps(tail, env, params, constraints)
+    else
+        oftype(choice_logpdf, -Inf)
+    end
     return (
         term,
         _marginalized_suffix_terms(Base.tail(support), snapshot, dist, step, tail, env, params, constraints)...,
