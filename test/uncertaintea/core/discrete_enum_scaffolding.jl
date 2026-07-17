@@ -69,15 +69,11 @@ end
     end
 
     @testset "denum_honest_rejections" begin
-        # PR-2 carries the flag but does not marginalize yet: an unconstrained
-        # marginalized latent still errors in the compiled logjoint (PR-3
-        # intentionally flips this to the suffix logsumexp)
+        # PR-3 landed the suffix logsumexp: an unconstrained flagged latent
+        # scores the finite marginal (semantics tested in discrete_enum_cpu.jl)
         trace, _ = generate(denum_bernoulli_model, (), choicemap((:y, 0.4f0)); rng=MersenneTwister(33))
-        @test_throws ArgumentError logjoint(
-            denum_bernoulli_model,
-            parameter_vector(trace),
-            (),
-            choicemap((:y, 0.4f0)),
+        @test isfinite(
+            logjoint(denum_bernoulli_model, parameter_vector(trace), (), choicemap((:y, 0.4f0))),
         )
 
         # backend lowering rejects the flag honestly until PR-4

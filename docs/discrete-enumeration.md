@@ -56,11 +56,14 @@ end
 
 - `generate` / forward simulation: unchanged — `z` is sampled and lands in
   the trace like today (the kwarg is stripped from the runtime body).
-- `logjoint` / `logjoint_unconstrained` / gradients / batched / `assess`:
+- `logjoint` / `logjoint_unconstrained` / gradients / batched:
   if the constraints provide a value for `z`, the step scores that branch
   exactly as today (conditioning on `z` stays free); otherwise the step
   marginalizes — the returned density is the *marginal* over `z`'s
-  support. Since `z` never had a parameter slot, `parametercount`,
+  support. `assess` is exempt: it scores the full joint of the choices it
+  is given through the interpreted runtime, so it keeps requiring `z` like
+  any slotless choice (its semantics are "density of these choices", which
+  includes the discrete one). Since `z` never had a parameter slot, `parametercount`,
   `initialparameters`, and every sampler are untouched: NUTS samples the
   continuous vector against the marginalized density.
 - Posterior samples *of* `z` (responsibility extraction / `infer_discrete`)
