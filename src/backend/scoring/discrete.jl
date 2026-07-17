@@ -303,7 +303,22 @@ function _score_backend_step!(
         _batched_environment_restore_snapshot!(env, snapshot)
         isnothing(step.binding_slot) ||
             _batched_environment_set_shared!(env, step.binding_slot, _marginalize_binding_value(step, value))
-        _score_backend_steps!(branch_totals[branch], step.body, env, params, constraints)
+        try
+            _score_backend_steps!(branch_totals[branch], step.body, env, params, constraints)
+        catch err
+            err isa BatchedBackendFallback && rethrow()
+            # the branch body runs for every column, including columns whose
+            # result is later ignored (conditioned on another branch, or
+            # zero-mass only for them); a throwing scorer in such a column is
+            # not a model error, so route to the per-column fallback, whose
+            # marginalizer evaluates only the branches each column needs (and
+            # faithfully re-raises genuine errors)
+            throw(
+                BatchedBackendFallback(
+                    "marginalize branch $(value) suffix scoring failed for at least one column: $(sprint(showerror, err))",
+                ),
+            )
+        end
     end
     _batched_environment_restore_snapshot!(env, snapshot)
 

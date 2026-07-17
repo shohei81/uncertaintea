@@ -78,6 +78,15 @@ end
     return p
 end
 
+# the z = 1 branch has p = x, which exceeds 1 (a throwing scorer) for columns
+# with large x; those columns condition on z = false and never need the branch
+@tea static function denc_partial_branch_model()
+    x ~ lognormal(0.0, 1.0)
+    z ~ bernoulli(0.5; marginalize=:enumerate)
+    {:w} ~ bernoulli(x * z + 0.1 * (1 - z))
+    return x
+end
+
 # six nested bernoulli latents = support product 64 > the backend limit 32
 @tea static function denc_support_cap_model()
     mu ~ normal(0.0, 1.0)
@@ -203,6 +212,30 @@ end
         denc_bn_cap_report = backend_report(denc_support_cap_model)
         @test denc_bn_cap_report.supported == false
         @test any(issue -> occursin("support product", issue), denc_bn_cap_report.issues)
+
+        # a branch body runs for every column, including columns whose result
+        # is ignored -- if such a column makes the suffix throw (here p = x >
+        # 1 in the z = 1 branch for a column conditioned on z = false), the
+        # scorer routes to the per-column fallback, which stays exact
+        denc_bn_partial_params = reshape([log(0.5), log(1.5)], 1, 2)
+        denc_bn_partial_constraints = [
+            choicemap((:w, true)),
+            choicemap((:z, false), (:w, true)),
+        ]
+        @test backend_report(denc_partial_branch_model).supported == true
+        @test batched_logjoint_unconstrained(
+            denc_partial_branch_model,
+            denc_bn_partial_params,
+            (),
+            denc_bn_partial_constraints,
+        ) ≈ [
+            logjoint_unconstrained(
+                denc_partial_branch_model,
+                denc_bn_partial_params[:, index],
+                (),
+                denc_bn_partial_constraints[index],
+            ) for index = 1:2
+        ] atol = 1e-12
     end
 
     @testset "denc_gradients" begin

@@ -856,6 +856,11 @@ function _backend_noncentered_dependencies_ok!(issues::Vector{String}, steps::Tu
                 )
                 ok = false
             end
+        elseif step isa BackendMarginalizeChoicePlanStep
+            # the enumerated binding is a slotless choice, and the audit must
+            # keep walking the suffix the step owns
+            isnothing(step.binding_slot) || push!(tainted, step.binding_slot)
+            ok &= _backend_noncentered_dependencies_ok!(issues, step.body, tainted)
         elseif step isa BackendChoicePlanStep
             if isnothing(step.parameter_slot) && !isnothing(step.binding_slot)
                 push!(tainted, step.binding_slot)
