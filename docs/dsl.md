@@ -387,6 +387,41 @@ end
   honestly by `backend_report`/`device_lowering_report`.
 - See docs/noncentered-reparam.md for the staged design.
 
+## Marginalized Discrete Latents
+
+Finite-support discrete latents can opt into automatic enumeration so
+gradient-based samplers work without user-side marginalization:
+
+```julia
+@tea (static) function indicator_mixture()
+    m1 ~ normal(-2.0, 1.0)
+    m2 ~ normal(2.0, 1.0)
+    z ~ bernoulli(0.3; marginalize=:enumerate)
+    {:y} ~ normal(z * m1 + (1 - z) * m2, 0.5)
+    return m1
+end
+```
+
+- `logjoint`/`logjoint_unconstrained` (and everything built on them: HMC/NUTS,
+  gradients, the batched per-column path) score the MARGINAL over `z`'s
+  support via a logsumexp over the remaining model, so the samplers see only
+  the continuous parameters. Providing `z` in the constraints scores the
+  plain joint instead (conditioning stays free).
+- `generate` still forward-samples `z` into the trace, and `assess` still
+  scores the full joint of the choices it is given (it requires `z` like any
+  unflagged slotless choice).
+- Eligible: `bernoulli` (support `false/true`) and `categorical` with a
+  literal probability vector (the support size must be known at macro time;
+  the probability values may be expressions, including other latents). The
+  flag must sit on the top-level call of `~`, outside loops.
+- Each marginalized site multiplies the cost of the model suffix after it by
+  its support size (nested sites multiply), so put enumerated latents as late
+  in the model as dependencies allow.
+- The backend-native batched path does not lower the flag yet
+  (`backend_report` says so honestly); batched calls ride the per-column
+  fallback, which marginalizes correctly.
+- See docs/discrete-enumeration.md for the staged design.
+
 ## User-Defined Distributions
 
 A distribution defined outside the package participates in `@tea` models on

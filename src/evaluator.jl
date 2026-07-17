@@ -52,6 +52,18 @@ function _environment_restore!(env::PlanEnvironment, slot::Int, previous_value, 
     return nothing
 end
 
+# Full-environment snapshot/restore for suffix re-evaluation under
+# enumeration: suffix steps may rebind slots from their own prior values
+# (`x = x + 1`), so restoring only the enumerated binding would leak one
+# branch's mutations into the next.
+_environment_snapshot(env::PlanEnvironment) = (copy(env.values), copy(env.assigned))
+
+function _environment_restore_snapshot!(env::PlanEnvironment, snapshot::Tuple{Vector{Any},BitVector})
+    copyto!(env.values, snapshot[1])
+    copyto!(env.assigned, snapshot[2])
+    return nothing
+end
+
 abstract type AbstractCompiledExpr end
 abstract type AbstractCompiledAddressPart end
 abstract type AbstractCompiledPlanStep end
@@ -101,6 +113,13 @@ struct CompiledNoncentered
     logspace::Bool
 end
 
+# marginalize=:enumerate walk data (docs/discrete-enumeration.md): the
+# compile-time support values to enumerate. bernoulli: (false, true);
+# categorical: (1, ..., K) from the literal probability-vector length.
+struct CompiledMarginalize
+    support::Tuple
+end
+
 struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCompiledPlanStep
     binding_slot::Union{Nothing,Int}
     address::AD
@@ -111,6 +130,9 @@ struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCom
     # compiled location/scale (plus log-space flag) for reparam=:noncentered
     # latents; `nothing` for centered choices
     noncentered::Union{Nothing,CompiledNoncentered}
+    # compile-time enumeration support for marginalize=:enumerate latents;
+    # `nothing` for ordinary choices
+    marginalize::Union{Nothing,CompiledMarginalize}
 end
 
 struct CompiledDeterministicPlanStep{E<:AbstractCompiledExpr} <: AbstractCompiledPlanStep
@@ -258,6 +280,10 @@ function _compile_plan_step(
             )
         end
     end
+    marginalize = nothing
+    if step.rhs isa DistributionSpec && step.rhs.marginalize === :enumerate
+        marginalize = CompiledMarginalize(_marginalize_support(step.rhs))
+    end
     return CompiledChoicePlanStep(
         step.binding_slot,
         _compile_address(layout, model, step.address),
@@ -266,7 +292,28 @@ function _compile_plan_step(
         parameter_value_indices,
         step.parameter_slot,
         noncentered,
+        marginalize,
     )
+end
+
+function _marginalize_support(rhs::DistributionSpec)
+    rhs.family === :bernoulli && return (false, true)
+    if rhs.family === :categorical
+        probabilities = rhs.arguments[1]
+        support_size = if probabilities isa Expr && probabilities.head == :vect
+            length(probabilities.args)
+        elseif probabilities isa AbstractVector
+            length(probabilities)
+        else
+            throw(
+                ArgumentError(
+                    "marginalize=:enumerate requires a literal categorical probability vector, got `$probabilities`",
+                ),
+            )
+        end
+        return ntuple(identity, support_size)
+    end
+    throw(ArgumentError("marginalize=:enumerate is not supported for family `$(rhs.family)`"))
 end
 
 function _compile_plan_step(
@@ -366,8 +413,94 @@ end
 _score_compiled_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
 
 function _score_compiled_steps(steps::Tuple, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap)
-    return _score_plan_step!(first(steps), env, params, constraints) +
-           _score_compiled_steps(Base.tail(steps), env, params, constraints)
+    head = first(steps)
+    tail = Base.tail(steps)
+    if head isa CompiledChoicePlanStep && !isnothing(head.marginalize)
+        return _score_marginalized_choice!(head, tail, env, params, constraints)
+    end
+    return _score_plan_step!(head, env, params, constraints) +
+           _score_compiled_steps(tail, env, params, constraints)
+end
+
+# marginalize=:enumerate (docs/discrete-enumeration.md): the fold above makes
+# a marginalized choice own its suffix -- bind each compile-time support
+# value, score the remaining steps, and logsumexp-combine, so the returned
+# density is the marginal over the discrete latent. A constrained value
+# short-circuits to the plain joint (conditioning on the latent stays free).
+# Nested marginalized latents recurse through the suffix scoring (product
+# enumeration).
+function _score_marginalized_choice!(
+    step::CompiledChoicePlanStep,
+    tail::Tuple,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    dist = _compiled_distribution(step, env)
+    found, constrained_value = _choice_tryget_normalized(constraints, address)
+    if found
+        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
+        return logpdf(dist, constrained_value) + _score_compiled_steps(tail, env, params, constraints)
+    end
+
+    snapshot = _environment_snapshot(env)
+    terms = _marginalized_suffix_terms(step.marginalize.support, snapshot, dist, step, tail, env, params, constraints)
+    _environment_restore_snapshot!(env, snapshot)
+
+    # max-shifted logsumexp, mirroring `logpdf(::MixtureDist, x)`
+    shift = maximum(terms)
+    isfinite(shift) || return oftype(shift, -Inf)
+    total = zero(shift)
+    for term in terms
+        total += exp(term - shift)
+    end
+    return shift + log(total)
+end
+
+function _marginalized_suffix_terms(
+    ::Tuple{},
+    snapshot::Tuple{Vector{Any},BitVector},
+    dist,
+    step::CompiledChoicePlanStep,
+    tail::Tuple,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    return ()
+end
+
+function _marginalized_suffix_terms(
+    support::Tuple,
+    snapshot::Tuple{Vector{Any},BitVector},
+    dist,
+    step::CompiledChoicePlanStep,
+    tail::Tuple,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    # every branch re-runs the suffix from the same pre-branch environment
+    # (suffix rebinds like `x = x + 1` must not leak across branches)
+    _environment_restore_snapshot!(env, snapshot)
+    value = first(support)
+    choice_logpdf = logpdf(dist, value)
+    # a zero-mass support value (bernoulli(1.0) at false, a zero categorical
+    # weight) contributes nothing to the marginal, and its suffix may be
+    # unevaluable (branch-dependent invalid parameters) -- skip it, with
+    # clean zero partials so an infinite pmf derivative cannot poison the
+    # logsumexp gradient
+    term = if isfinite(choice_logpdf)
+        isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+        choice_logpdf + _score_compiled_steps(tail, env, params, constraints)
+    else
+        oftype(choice_logpdf, -Inf)
+    end
+    return (
+        term,
+        _marginalized_suffix_terms(Base.tail(support), snapshot, dist, step, tail, env, params, constraints)...,
+    )
 end
 
 function _score_plan_step!(
