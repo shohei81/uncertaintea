@@ -99,8 +99,13 @@ function _eval_backend_expr(env::BatchedPlanEnvironment, expr::BackendBlockExpr,
     return value
 end
 
+# Like `_backend_index_error` below: a numeric-typed position holding a
+# non-real value is a backend capability gap, and the scalar path signals the
+# same fallback as the batched one so the per-column workspace scoring can
+# drop to the compiled plan (which reproduces the reference semantics for such
+# values, including their errors).
 function _backend_numeric_error(env::PlanEnvironment, message::String)
-    throw(ArgumentError(message))
+    throw(BatchedBackendFallback(message))
 end
 
 function _backend_numeric_error(env::BatchedPlanEnvironment, message::String)

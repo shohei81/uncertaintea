@@ -302,6 +302,36 @@ end
             choicemap((:z, 3), (:w, true)),
         )
 
+        # a non-real value that compares equal to a support index (1 + 0im)
+        # must not select a branch: the reference path treats it as out of
+        # support and binds the raw value, so batched behavior (through the
+        # fallback) matches the reference exactly -- including its throw
+        denc_bn_complex_constraints = choicemap((:z, 1 + 0im), (:w, true))
+        denc_bn_complex_reference = try
+            logjoint_unconstrained(
+                denc_cat_out_of_support_model,
+                denc_bn_oos_params[:, 1],
+                (),
+                denc_bn_complex_constraints,
+            )
+            nothing
+        catch err
+            typeof(err)
+        end
+        denc_bn_complex_batched = try
+            batched_logjoint_unconstrained(
+                denc_cat_out_of_support_model,
+                denc_bn_oos_params,
+                (),
+                denc_bn_complex_constraints,
+            )
+            nothing
+        catch err
+            typeof(err)
+        end
+        @test !isnothing(denc_bn_complex_reference)
+        @test denc_bn_complex_batched === denc_bn_complex_reference
+
         # a branch body runs for every column, including columns whose result
         # is ignored -- if such a column makes the suffix throw (here p = x >
         # 1 in the z = 1 branch for a column conditioned on z = false), the

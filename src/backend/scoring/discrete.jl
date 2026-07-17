@@ -286,15 +286,21 @@ function _score_backend_step!(
         constrained_branch[batch_index] = if !found
             0
         else
-            matched = findfirst(support_value -> support_value == value, step.support)
-            # an unmatched conditioning value cannot be reproduced by branch
-            # selection: the reference path binds the RAW value into the
-            # suffix (a non-boolean bernoulli numeric scores as true, an
-            # out-of-support categorical may make the suffix throw), so only
-            # the per-column path preserves its semantics
+            # branch selection is only faithful for values the family's own
+            # normalization accepts AND whose raw binding is arithmetic-equal
+            # to the branch value; anything else (a non-boolean bernoulli
+            # numeric, an out-of-support or non-real categorical value) binds
+            # the RAW value into the suffix on the reference path, which only
+            # the per-column fallback reproduces
+            matched = if step.family === :bernoulli
+                value isa Bool ? Int(value) + 1 :
+                (value isa Real && (value == 0 || value == 1)) ? Int(value) + 1 : nothing
+            else
+                _categorical_index(value, support_size)
+            end
             isnothing(matched) && throw(
                 BatchedBackendFallback(
-                    "marginalized $(step.family) conditioned on the out-of-support value $value",
+                    "marginalized $(step.family) conditioned on the unsupported value $value",
                 ),
             )
             matched
