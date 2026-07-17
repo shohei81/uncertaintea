@@ -48,6 +48,18 @@ end
     return x
 end
 
+# a self-referential rebind in the suffix: every enumerated branch must
+# re-run from the same pre-branch environment (a leaked `s` from branch one
+# would double-increment in branch two)
+@tea static function denc_rebind_model()
+    mu ~ normal(0.0, 1.0)
+    s = 1.0
+    z ~ bernoulli(0.4; marginalize=:enumerate)
+    s = s + 1.0
+    {:y} ~ normal(mu * s + z, 0.5)
+    return mu
+end
+
 @testset "discrete_enum_cpu" begin
     denc_constraints = choicemap((:y, 0.8))
 
@@ -129,6 +141,18 @@ end
             (),
             choicemap((:y, 2.2)),
         ) ≈ denc_fd_gradient(denc_two_latent_model, denc_two_params, choicemap((:y, 2.2))) atol = 5e-6
+    end
+
+    @testset "denc_suffix_rebind_isolation" begin
+        denc_rebind_params = [0.7]
+        denc_rebind_terms = [
+            log(z == 1 ? 0.4 : 0.6) + UncertainTea.logpdf(normal(0.7 * 2.0 + z, 0.5), 1.9) for z = 0:1
+        ]
+        denc_rebind_shift = maximum(denc_rebind_terms)
+        @test logjoint_unconstrained(denc_rebind_model, denc_rebind_params, (), choicemap((:y, 1.9))) ≈
+              UncertainTea.logpdf(normal(0.0, 1.0), 0.7) +
+              denc_rebind_shift +
+              log(sum(exp.(denc_rebind_terms .- denc_rebind_shift))) atol = 1e-12
     end
 
     @testset "denc_conditioning" begin

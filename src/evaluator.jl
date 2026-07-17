@@ -52,6 +52,18 @@ function _environment_restore!(env::PlanEnvironment, slot::Int, previous_value, 
     return nothing
 end
 
+# Full-environment snapshot/restore for suffix re-evaluation under
+# enumeration: suffix steps may rebind slots from their own prior values
+# (`x = x + 1`), so restoring only the enumerated binding would leak one
+# branch's mutations into the next.
+_environment_snapshot(env::PlanEnvironment) = (copy(env.values), copy(env.assigned))
+
+function _environment_restore_snapshot!(env::PlanEnvironment, snapshot::Tuple{Vector{Any},BitVector})
+    copyto!(env.values, snapshot[1])
+    copyto!(env.assigned, snapshot[2])
+    return nothing
+end
+
 abstract type AbstractCompiledExpr end
 abstract type AbstractCompiledAddressPart end
 abstract type AbstractCompiledPlanStep end
@@ -432,10 +444,9 @@ function _score_marginalized_choice!(
         return logpdf(dist, constrained_value) + _score_compiled_steps(tail, env, params, constraints)
     end
 
-    had_previous = !isnothing(step.binding_slot) && _environment_hasvalue(env, step.binding_slot)
-    previous_value = had_previous ? _environment_value(env, step.binding_slot) : nothing
-    terms = _marginalized_suffix_terms(step.marginalize.support, dist, step, tail, env, params, constraints)
-    isnothing(step.binding_slot) || _environment_restore!(env, step.binding_slot, previous_value, had_previous)
+    snapshot = _environment_snapshot(env)
+    terms = _marginalized_suffix_terms(step.marginalize.support, snapshot, dist, step, tail, env, params, constraints)
+    _environment_restore_snapshot!(env, snapshot)
 
     # max-shifted logsumexp, mirroring `logpdf(::MixtureDist, x)`
     shift = maximum(terms)
@@ -449,6 +460,7 @@ end
 
 function _marginalized_suffix_terms(
     ::Tuple{},
+    snapshot::Tuple{Vector{Any},BitVector},
     dist,
     step::CompiledChoicePlanStep,
     tail::Tuple,
@@ -461,6 +473,7 @@ end
 
 function _marginalized_suffix_terms(
     support::Tuple,
+    snapshot::Tuple{Vector{Any},BitVector},
     dist,
     step::CompiledChoicePlanStep,
     tail::Tuple,
@@ -468,10 +481,16 @@ function _marginalized_suffix_terms(
     params::AbstractVector,
     constraints::ChoiceMap,
 )
+    # every branch re-runs the suffix from the same pre-branch environment
+    # (suffix rebinds like `x = x + 1` must not leak across branches)
+    _environment_restore_snapshot!(env, snapshot)
     value = first(support)
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
     term = logpdf(dist, value) + _score_compiled_steps(tail, env, params, constraints)
-    return (term, _marginalized_suffix_terms(Base.tail(support), dist, step, tail, env, params, constraints)...)
+    return (
+        term,
+        _marginalized_suffix_terms(Base.tail(support), snapshot, dist, step, tail, env, params, constraints)...,
+    )
 end
 
 function _score_plan_step!(
