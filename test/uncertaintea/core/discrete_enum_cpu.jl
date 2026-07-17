@@ -154,6 +154,29 @@ end
             for index = 1:3
         ] atol = 1e-12
 
+        # conditioning on 0/1 numerics selects the matching branch (Bool ==
+        # Int equality), and a non-boolean numeric like 2 -- which the
+        # runtime pmf treats as true while binding the raw value -- routes to
+        # the per-column path so the reference semantics survive
+        @test batched_logjoint_unconstrained(
+            denc_indicator_model,
+            denc_bn_params,
+            (),
+            choicemap((:z, 1), (:y, 0.8)),
+        ) ≈ [
+            logjoint(denc_indicator_model, denc_bn_params[:, index], (), choicemap((:z, true), (:y, 0.8)))
+            for index = 1:3
+        ] atol = 1e-12
+        @test batched_logjoint_unconstrained(
+            denc_indicator_model,
+            denc_bn_params,
+            (),
+            choicemap((:z, 2), (:y, 0.8)),
+        ) ≈ [
+            logjoint(denc_indicator_model, denc_bn_params[:, index], (), choicemap((:z, 2), (:y, 0.8)))
+            for index = 1:3
+        ] atol = 1e-12
+
         # per-column heterogeneous conditioning: column 1 marginalizes,
         # columns 2/3 condition on opposite indicator values
         denc_bn_heterogeneous = [

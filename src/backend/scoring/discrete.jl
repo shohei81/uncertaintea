@@ -283,8 +283,26 @@ function _score_backend_step!(
     for batch_index = 1:batch_size
         address = _concrete_batched_address(address_parts, batch_index)
         found, value = _choice_tryget_normalized(_batched_constraint(constraints, batch_index), address)
-        constrained_branch[batch_index] =
-            found ? something(findfirst(support_value -> support_value == value, step.support), -1) : 0
+        constrained_branch[batch_index] = if !found
+            0
+        else
+            matched = findfirst(support_value -> support_value == value, step.support)
+            if !isnothing(matched)
+                matched
+            elseif step.family === :bernoulli && !(value isa Bool) && value != 0
+                # the runtime bernoulli pmf treats any non-zero numeric as
+                # true while the binding keeps the raw value; branch selection
+                # cannot reproduce both, so only the per-column path preserves
+                # the reference semantics
+                throw(
+                    BatchedBackendFallback(
+                        "marginalized bernoulli conditioned on the non-boolean value $value",
+                    ),
+                )
+            else
+                -1
+            end
+        end
     end
 
     snapshot = _batched_environment_snapshot(env)
