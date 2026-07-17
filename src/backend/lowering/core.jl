@@ -278,6 +278,13 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         _backend_issue!(issues, "unsupported distribution family `$(step.rhs.family)` in backend lowering")
         return nothing
     end
+    step.rhs.marginalize === :none || begin
+        _backend_issue!(
+            issues,
+            "marginalize=:enumerate is not lowered to the backend yet (docs/discrete-enumeration.md PR-4)",
+        )
+        return nothing
+    end
     parameter_row, parameter_row_ok = _backend_scalar_parameter_row(model, step.parameter_slot, issues)
     parameter_row_ok || return nothing
     if step.rhs.reparam === :noncentered && step.rhs.family !== :normal

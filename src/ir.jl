@@ -24,10 +24,15 @@ struct DistributionSpec <: AbstractChoiceRhsSpec
     # :centered (default) or :noncentered -- the staged reparameterization of
     # docs/noncentered-reparam.md (issue #19).
     reparam::Symbol
+    # :none (default) or :enumerate -- marginalize a finite-support discrete
+    # latent out of the logjoint (docs/discrete-enumeration.md, issue #13).
+    marginalize::Symbol
 end
 
-DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing, :centered)
-DistributionSpec(family::Symbol, arguments, builder) = DistributionSpec(family, arguments, builder, :centered)
+DistributionSpec(family::Symbol, arguments) = DistributionSpec(family, arguments, nothing, :centered, :none)
+DistributionSpec(family::Symbol, arguments, builder) = DistributionSpec(family, arguments, builder, :centered, :none)
+DistributionSpec(family::Symbol, arguments, builder, reparam::Symbol) =
+    DistributionSpec(family, arguments, builder, reparam, :none)
 
 struct GenerativeCallSpec <: AbstractChoiceRhsSpec
     callee::Any
@@ -408,6 +413,7 @@ function _substitute_rhs(rhs::DistributionSpec, substitutions::Dict{Symbol,Any})
         Any[_substitute_expr(arg, substitutions) for arg in rhs.arguments],
         rhs.builder,
         rhs.reparam,
+        rhs.marginalize,
     )
 end
 
@@ -903,6 +909,30 @@ function _inline_plan_step(step::ChoicePlanStep)
     throw(ArgumentError("unsupported choice RHS in execution-plan inlining: $(typeof(step.rhs))"))
 end
 
+# marginalize=:enumerate is rejected on loop-scoped choices at macro time, but
+# submodel inlining can move a flagged choice into a LoopPlanStep afterwards
+# (a child model with an enumerated latent called from inside a parent loop);
+# re-validate on the inlined plan so the rejection cannot be bypassed.
+function _reject_loop_scoped_marginalize(steps, in_loop::Bool)
+    for step in steps
+        if step isa LoopPlanStep
+            _reject_loop_scoped_marginalize(step.body, true)
+        elseif in_loop &&
+               step isa ChoicePlanStep &&
+               step.rhs isa DistributionSpec &&
+               step.rhs.marginalize === :enumerate
+            throw(
+                ArgumentError(
+                    "marginalize=:enumerate is not supported on loop-scoped choices " *
+                    "(including choices inlined from a submodel called inside a loop; " *
+                    "docs/discrete-enumeration.md), found choice at $(step.address)",
+                ),
+            )
+        end
+    end
+    return nothing
+end
+
 function build_execution_plan(
     name::Symbol,
     arguments::Vector{Symbol},
@@ -916,6 +946,7 @@ function build_execution_plan(
     end
 
     steps = _inline_plan_steps(raw_steps)
+    _reject_loop_scoped_marginalize(steps, false)
     parameterized_steps, parameterized_layout = _assign_parameter_layout(steps)
     environment_layout = _build_environment_layout(arguments, parameterized_steps)
     annotated_steps = _annotate_environment_slots(parameterized_steps, environment_layout)
