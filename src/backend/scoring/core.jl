@@ -109,6 +109,29 @@ function _batched_environment_set!(env::BatchedPlanEnvironment, slot::Int, value
     return nothing
 end
 
+# Full-environment snapshot/restore for suffix re-evaluation under
+# enumeration (the batched mirror of `_environment_snapshot`): suffix steps
+# may rebind slots from their own prior values, so restoring only the
+# enumerated binding would leak one branch's mutations into the next.
+function _batched_environment_snapshot(env::BatchedPlanEnvironment)
+    return (
+        copy(env.numeric_values),
+        copy(env.index_values),
+        [copy(values) for values in env.generic_values],
+        copy(env.assigned),
+    )
+end
+
+function _batched_environment_restore_snapshot!(env::BatchedPlanEnvironment, snapshot::Tuple)
+    copyto!(env.numeric_values, snapshot[1])
+    copyto!(env.index_values, snapshot[2])
+    for (values, saved) in zip(env.generic_values, snapshot[3])
+        copyto!(values, saved)
+    end
+    copyto!(env.assigned, snapshot[4])
+    return nothing
+end
+
 function _batched_environment_restore!(
     env::BatchedPlanEnvironment,
     slot::Int,

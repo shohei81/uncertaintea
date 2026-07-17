@@ -417,9 +417,11 @@ end
 - Each marginalized site multiplies the cost of the model suffix after it by
   its support size (nested sites multiply), so put enumerated latents as late
   in the model as dependencies allow.
-- The backend-native batched path does not lower the flag yet
-  (`backend_report` says so honestly); batched calls ride the per-column
-  fallback, which marginalizes correctly.
+- The batched path is backend-native: the flag lowers to a suffix-owning
+  backend step (conditioning stays free per column, and nested support
+  products beyond 32 are rejected honestly). Batched gradients ride the
+  ForwardDiff tier until the analytic marginalize gradient lands; the device
+  path reports the step as unsupported.
 - See docs/discrete-enumeration.md for the staged design.
 
 ## User-Defined Distributions

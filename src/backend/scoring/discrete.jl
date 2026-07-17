@@ -196,6 +196,144 @@ function _backend_binomial_logpdf(trials, probability, x)
            (trial_count - count) * log1p(-probability_)
 end
 
+# --- marginalize=:enumerate (docs/discrete-enumeration.md, PR-4) -------------
+
+_marginalize_choice_logpmf(step::BackendMarginalizeChoicePlanStep, probabilities::Tuple, value) =
+    step.family === :bernoulli ? _backend_bernoulli_logpdf(probabilities[1], value) :
+    _backend_categorical_logpdf(probabilities, value)
+
+# Branch values bind as plain integers: bernoulli lowers false/true to 0/1 for
+# the numeric binding slot, categorical binds the category index.
+_marginalize_binding_value(step::BackendMarginalizeChoicePlanStep, value) = value isa Bool ? Int(value) : value
+
+function _score_backend_step!(
+    step::BackendMarginalizeChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    address = _concrete_address(env, step.address)
+    probabilities = tuple((_eval_backend_numeric_expr(env, expr) for expr in step.probabilities)...)
+    found, constrained_value = _choice_tryget_normalized(constraints, address)
+    if found
+        isnothing(step.binding_slot) ||
+            _environment_set!(env, step.binding_slot, _marginalize_binding_value(step, constrained_value))
+        return _marginalize_choice_logpmf(step, probabilities, constrained_value) +
+               _score_backend_steps(step.body, env, params, constraints)
+    end
+
+    snapshot = _environment_snapshot(env)
+    terms = [
+        begin
+            _environment_restore_snapshot!(env, snapshot)
+            choice_logpdf = _marginalize_choice_logpmf(step, probabilities, value)
+            # zero-mass branches contribute nothing and their suffix may be
+            # unevaluable (branch-dependent invalid parameters) -- skip them
+            if isfinite(choice_logpdf)
+                isnothing(step.binding_slot) ||
+                    _environment_set!(env, step.binding_slot, _marginalize_binding_value(step, value))
+                choice_logpdf + _score_backend_steps(step.body, env, params, constraints)
+            else
+                oftype(choice_logpdf, -Inf)
+            end
+        end for value in step.support
+    ]
+    _environment_restore_snapshot!(env, snapshot)
+    shift = maximum(terms)
+    isfinite(shift) || return oftype(shift, -Inf)
+    total = zero(shift)
+    for term in terms
+        total += exp(term - shift)
+    end
+    return shift + log(total)
+end
+
+function _score_backend_step!(
+    step::BackendMarginalizeChoicePlanStep,
+    totals::AbstractVector,
+    env::BatchedPlanEnvironment,
+    params::AbstractMatrix,
+    constraints,
+)
+    batch_size = env.batch_size
+    support_size = length(step.support)
+    element_type = eltype(env.numeric_values)
+
+    # evaluate the pmf arguments into OWNED buffers first: the branch bodies
+    # below reuse the environment scratch pool and would clobber them
+    probability_values = [Vector{element_type}(undef, batch_size) for _ in step.probabilities]
+    for (argument, expr) in enumerate(step.probabilities)
+        _eval_backend_numeric_expr!(probability_values[argument], env, expr, 1)
+    end
+    # the flat ForwardDiff gradient tier runs this scorer with a Dual-typed
+    # environment, so every buffer follows the environment element type
+    log_pmf = Matrix{element_type}(undef, support_size, batch_size)
+    for batch_index = 1:batch_size
+        column = tuple((values[batch_index] for values in probability_values)...)
+        for (branch, value) in enumerate(step.support)
+            log_pmf[branch, batch_index] = _marginalize_choice_logpmf(step, column, value)
+        end
+    end
+
+    # per-column conditioning: a column whose constraints provide the latent
+    # scores the plain joint at that value (branch selection); the others
+    # marginalize. Bool == Int equality makes bernoulli constraints match.
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    constrained_branch = Vector{Int}(undef, batch_size)  # 0 = marginalize, -1 = out of support
+    for batch_index = 1:batch_size
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, value = _choice_tryget_normalized(_batched_constraint(constraints, batch_index), address)
+        constrained_branch[batch_index] =
+            found ? something(findfirst(support_value -> support_value == value, step.support), -1) : 0
+    end
+
+    snapshot = _batched_environment_snapshot(env)
+    branch_totals = [fill!(similar(totals), zero(eltype(totals))) for _ = 1:support_size]
+    for (branch, value) in enumerate(step.support)
+        # a branch is scored when any column marginalizes over it with
+        # nonzero mass or is conditioned on it; an all-columns-dead branch
+        # is skipped (its suffix may be unevaluable)
+        branch_needed = any(
+            batch_index ->
+                constrained_branch[batch_index] == 0 ? isfinite(log_pmf[branch, batch_index]) :
+                constrained_branch[batch_index] == branch,
+            1:batch_size,
+        )
+        branch_needed || continue
+        _batched_environment_restore_snapshot!(env, snapshot)
+        isnothing(step.binding_slot) ||
+            _batched_environment_set_shared!(env, step.binding_slot, _marginalize_binding_value(step, value))
+        _score_backend_steps!(branch_totals[branch], step.body, env, params, constraints)
+    end
+    _batched_environment_restore_snapshot!(env, snapshot)
+
+    for batch_index = 1:batch_size
+        selected = constrained_branch[batch_index]
+        if selected == -1
+            totals[batch_index] += -Inf
+        elseif selected != 0
+            totals[batch_index] += log_pmf[selected, batch_index] + branch_totals[selected][batch_index]
+        else
+            shift = -Inf
+            for branch = 1:support_size
+                isfinite(log_pmf[branch, batch_index]) || continue
+                shift = max(shift, log_pmf[branch, batch_index] + branch_totals[branch][batch_index])
+            end
+            if !isfinite(shift)
+                totals[batch_index] += -Inf
+                continue
+            end
+            accumulator = 0.0
+            for branch = 1:support_size
+                isfinite(log_pmf[branch, batch_index]) || continue
+                accumulator += exp(log_pmf[branch, batch_index] + branch_totals[branch][batch_index] - shift)
+            end
+            totals[batch_index] += shift + log(accumulator)
+        end
+    end
+    return totals
+end
+
 function _backend_categorical_logpdf(probabilities::Tuple, x)
     length(probabilities) > 0 || throw(ArgumentError("categorical requires at least one probability"))
     total = zero(float(first(probabilities)))

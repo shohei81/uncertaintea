@@ -69,6 +69,28 @@ end
     return mu
 end
 
+# the enumerated category feeds an integer consumer (binomial trials): the
+# backend binding must stay an index slot
+@tea static function denc_index_consumer_model()
+    p ~ beta(2.0, 2.0)
+    z ~ categorical([0.5, 0.5]; marginalize=:enumerate)
+    {:y} ~ binomial(z, p)
+    return p
+end
+
+# six nested bernoulli latents = support product 64 > the backend limit 32
+@tea static function denc_support_cap_model()
+    mu ~ normal(0.0, 1.0)
+    a ~ bernoulli(0.5; marginalize=:enumerate)
+    b ~ bernoulli(0.5; marginalize=:enumerate)
+    c ~ bernoulli(0.5; marginalize=:enumerate)
+    d ~ bernoulli(0.5; marginalize=:enumerate)
+    e ~ bernoulli(0.5; marginalize=:enumerate)
+    f ~ bernoulli(0.5; marginalize=:enumerate)
+    {:y} ~ normal(mu + a + b + c + d + e + f, 0.5)
+    return mu
+end
+
 @testset "discrete_enum_cpu" begin
     denc_constraints = choicemap((:y, 0.8))
 
@@ -97,13 +119,90 @@ end
                   logjoint_unconstrained(denc_mixture_model, denc_params, (), denc_constraints)
         end
 
-        # the batched path rides the per-column fallback (backend rejects the
-        # flag until PR-4) and must marginalize identically
+        # the batched path is backend-native since PR-4 and must marginalize
+        # identically to the per-column reference
         denc_batch = [-1.5 -1.2; 1.7 2.1]
         @test batched_logjoint_unconstrained(denc_indicator_model, denc_batch, (), denc_constraints) ≈ [
             logjoint_unconstrained(denc_indicator_model, denc_batch[:, index], (), denc_constraints) for
             index = 1:2
         ] atol = 1e-12
+    end
+
+    @testset "denc_backend_native" begin
+        # the flag lowers to the suffix-owning backend step (PR-4); the
+        # workspace form guarantees the backend plan scored these values
+        @test backend_report(denc_indicator_model).supported == true
+        denc_bn_params = [-1.5 -1.2 0.3; 1.7 2.1 -0.4]
+        denc_bn_workspace = UncertainTea.BatchedLogjointWorkspace(denc_indicator_model)
+        denc_bn_values = UncertainTea._logjoint_with_batched_backend!(
+            denc_bn_workspace,
+            denc_bn_params,
+            (),
+            denc_constraints,
+        )
+        @test denc_bn_values ≈ [
+            logjoint_unconstrained(denc_indicator_model, denc_bn_params[:, index], (), denc_constraints)
+            for index = 1:3
+        ] atol = 1e-12
+
+        # per-column heterogeneous conditioning: column 1 marginalizes,
+        # columns 2/3 condition on opposite indicator values
+        denc_bn_heterogeneous = [
+            choicemap((:y, 0.8)),
+            choicemap((:z, true), (:y, 0.8)),
+            choicemap((:z, false), (:y, 0.8)),
+        ]
+        denc_bn_het_values = UncertainTea._logjoint_with_batched_backend!(
+            denc_bn_workspace,
+            denc_bn_params,
+            (),
+            denc_bn_heterogeneous,
+        )
+        @test denc_bn_het_values ≈ [
+            logjoint(denc_indicator_model, denc_bn_params[:, index], (), denc_bn_heterogeneous[index])
+            for index = 1:3
+        ] atol = 1e-12
+
+        # categorical binding consumed as an INDEX (binomial trials) stays an
+        # index slot through the backend lowering
+        @test backend_report(denc_index_consumer_model).supported == true
+        denc_bn_index_params = reshape([0.55, 0.35], 1, 2)
+        denc_bn_index_workspace = UncertainTea.BatchedLogjointWorkspace(denc_index_consumer_model)
+        @test UncertainTea._logjoint_with_batched_backend!(
+            denc_bn_index_workspace,
+            denc_bn_index_params,
+            (),
+            choicemap((:y, 1)),
+        ) ≈ [
+            logjoint(denc_index_consumer_model, denc_bn_index_params[:, index], (), choicemap((:y, 1)))
+            for index = 1:2
+        ] atol = 1e-12
+
+        # zero-mass branches are skipped in the batched scorer too
+        @test backend_report(denc_zero_mass_model).supported == true
+        denc_bn_zero_workspace = UncertainTea.BatchedLogjointWorkspace(denc_zero_mass_model)
+        @test UncertainTea._logjoint_with_batched_backend!(
+            denc_bn_zero_workspace,
+            reshape([0.4], 1, 1),
+            (),
+            choicemap((:y, 0.9)),
+        )[1] ≈ UncertainTea.logpdf(normal(0.0, 1.0), 0.4) + UncertainTea.logpdf(normal(0.4, 1.0), 0.9) atol =
+            1e-12
+
+        # gradients ride the flat ForwardDiff tier through the backend value
+        # path (analytic marginalize gradients land in PR-5)
+        denc_bn_cache = BatchedLogjointGradientCache(denc_indicator_model, denc_bn_params, (), denc_constraints)
+        @test isnothing(denc_bn_cache.backend_cache)
+        denc_bn_gradient = batched_logjoint_gradient_unconstrained(denc_bn_cache, denc_bn_params)
+        for index = 1:3
+            @test denc_bn_gradient[:, index] ≈
+                  denc_fd_gradient(denc_indicator_model, denc_bn_params[:, index], denc_constraints) atol = 5e-6
+        end
+
+        # nested support products beyond the backend limit reject honestly
+        denc_bn_cap_report = backend_report(denc_support_cap_model)
+        @test denc_bn_cap_report.supported == false
+        @test any(issue -> occursin("support product", issue), denc_bn_cap_report.issues)
     end
 
     @testset "denc_gradients" begin

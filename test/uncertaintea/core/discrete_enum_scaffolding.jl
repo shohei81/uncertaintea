@@ -76,10 +76,17 @@ end
             logjoint(denum_bernoulli_model, parameter_vector(trace), (), choicemap((:y, 0.4f0))),
         )
 
-        # backend lowering rejects the flag honestly until PR-4
+        # PR-4 landed the suffix-owning backend step: the flag lowers, the
+        # analytic gradient tier stays honestly gated (PR-5), and the device
+        # rejects the step through the generic choice fallback
         denum_report = backend_report(denum_bernoulli_model)
-        @test denum_report.supported == false
-        @test any(issue -> occursin("marginalize", issue), denum_report.issues)
+        @test denum_report.supported == true
+        denum_plan = backend_execution_plan(denum_bernoulli_model)
+        @test denum_plan.steps[end] isa UncertainTea.BackendMarginalizeChoicePlanStep
+        @test !UncertainTea._backend_gradient_supported(denum_plan)
+        denum_device_supported, denum_device_issues = device_lowering_report(denum_bernoulli_model)
+        @test !denum_device_supported
+        @test any(issue -> occursin("marginalize", lowercase(issue)), denum_device_issues)
     end
 
     @testset "denum_macro_time_errors" begin
