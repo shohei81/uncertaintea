@@ -173,6 +173,13 @@ _gibbs_expr_uses(expr::Expr, symbols::Set{Symbol}) = any(arg -> _gibbs_expr_uses
 # dynamic-address template may be only partially constrained (one (:w, i)
 # observed, later ones latent), which a static check cannot verify.
 function _gibbs_step_potentially_latent(step::ChoicePlanStep, constraints::ChoiceMap)
+    if step.rhs isa BroadcastDistributionSpec
+        # broadcast observations have no latent form; a constrained
+        # all-literal one is plain data
+        all(part -> part isa AddressLiteralPart, step.address.parts) || return true
+        static_address = Tuple(part.value for part in step.address.parts)
+        return !haskey(constraints, static_address)
+    end
     step.rhs isa DistributionSpec || return true
     step.rhs.marginalize === :enumerate && return false
     isnothing(step.parameter_slot) || return false
@@ -211,7 +218,7 @@ end
 # and discrete sites and unobserved marginalize=:enumerate choices are random
 # by definition.
 function _gibbs_step_samples_binding(step::ChoicePlanStep, constraints::ChoiceMap)
-    if step.rhs isa DistributionSpec &&
+    if step.rhs isa Union{DistributionSpec,BroadcastDistributionSpec} &&
        isnothing(step.parameter_slot) &&
        all(part -> part isa AddressLiteralPart, step.address.parts)
         static_address = Tuple(part.value for part in step.address.parts)

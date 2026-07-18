@@ -222,6 +222,18 @@ end
     return m
 end
 
+# a CONSTRAINED broadcast observation is fixed data: its binding must not
+# taint the site loop sized from it
+@tea static function gibbs_broadcast_obs_model(mu_vec)
+    z ~ poisson(2.0)
+    y = ({:y} ~ normal.(mu_vec, 1.0))
+    for i = 1:length(y)
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:v} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
 # a clean assignment BEFORE the sample must not launder the binding: the
 # choice re-taints z at its own (later) step
 @tea static function gibbs_laundered_binding_model()
@@ -716,6 +728,19 @@ end
             num_samples=10,
             rng=MersenneTwister(75),
         )
+        # a constrained broadcast observation is fixed data: sizing a site
+        # loop from its binding keeps the shape static and the model runs
+        gibbs_bcast_chain = gibbs(
+            gibbs_broadcast_obs_model,
+            ([0.0, 0.5, 1.0],),
+            choicemap((:y, Float32[0.1, 0.6, 0.9]), (:v, 2.0));
+            num_samples=100,
+            num_warmup=50,
+            rng=MersenneTwister(77),
+        )
+        @test (:w, 1) in gibbs_bcast_chain.discrete_addresses
+        @test (:w, 3) in gibbs_bcast_chain.discrete_addresses
+        @test all(isfinite, gibbs_bcast_chain.logjoint_values)
 
         # a straight-line reassignment from a clean expression clears the
         # taint: this fixed-shape model runs
