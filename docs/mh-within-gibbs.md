@@ -153,6 +153,11 @@ Track 1 supplies the oracle: the same indicator-mixture model written with
 
 ## Non-goals
 
+- Trans-dimensional models: a discrete site whose value shapes the SET of
+  latent choices (a loop bound or a dynamic address depending on its
+  binding) would make up-moves require missing choices and down-moves leave
+  stale ones behind — reversible-jump territory. The sampler rejects such
+  models at construction via a binding-taint walk over the plan.
 - Batched/multi-chain Gibbs (single-chain first; the batched NUTS machinery
   conditions all columns on one constraint layout and would need per-column
   discrete states).

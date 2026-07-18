@@ -137,7 +137,61 @@ function _gibbs_discrete_sites(model::TeaModel, trace::TeaTrace, constraints::Ch
         site = _gibbs_site(choice_steps, address)
         isnothing(site) || push!(sites, site)
     end
+    _gibbs_validate_static_shape(model, choice_steps, sites)
     return sites
+end
+
+_gibbs_expr_uses(expr, symbols::Set{Symbol}) = false
+_gibbs_expr_uses(expr::Symbol, symbols::Set{Symbol}) = expr in symbols
+_gibbs_expr_uses(expr::Expr, symbols::Set{Symbol}) = any(arg -> _gibbs_expr_uses(arg, symbols), expr.args)
+
+# A discrete site whose value shapes the latent-choice SET (a loop bound or a
+# dynamic address depending on its binding) is trans-dimensional: the merged
+# conditioning map is discovered from one trace, so up-moves would require
+# missing choices and down-moves would leave stale ones behind, silently
+# biasing the chain. Reject such models at construction.
+function _gibbs_validate_static_shape(model::TeaModel, choice_steps::Vector{ChoicePlanStep}, sites::Vector{GibbsSite})
+    tainted = Set{Symbol}()
+    for site in sites
+        for step in choice_steps
+            if _gibbs_step_matches(step, site.address; exact=true) ||
+               _gibbs_step_matches(step, site.address; exact=false)
+                isnothing(step.binding) || push!(tainted, step.binding)
+            end
+        end
+    end
+    isempty(tainted) && return nothing
+    _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted)
+    return nothing
+end
+
+function _gibbs_validate_static_shape_steps(steps, tainted::Set{Symbol})
+    for step in steps
+        if step isa DeterministicPlanStep
+            _gibbs_expr_uses(step.expr, tainted) && push!(tainted, step.binding)
+        elseif step isa LoopPlanStep
+            _gibbs_expr_uses(step.iterable, tainted) && throw(
+                ArgumentError(
+                    "gibbs does not support discrete latents whose value shapes the set of " *
+                    "latent choices (a loop bound depends on a Gibbs site); marginalize the " *
+                    "site or restructure the model",
+                ),
+            )
+            _gibbs_validate_static_shape_steps(step.body, tainted)
+        elseif step isa ChoicePlanStep
+            for part in step.address.parts
+                part isa AddressDynamicPart || continue
+                _gibbs_expr_uses(part.value, tainted) && throw(
+                    ArgumentError(
+                        "gibbs does not support discrete latents whose value shapes the set of " *
+                        "latent choices (the address of $(step.address) depends on a Gibbs " *
+                        "site); marginalize the site or restructure the model",
+                    ),
+                )
+            end
+        end
+    end
+    return nothing
 end
 
 # Exceptions a PROPOSAL evaluation may convert into a zero-density rejection:
@@ -213,56 +267,66 @@ function gibbs(
 
     # one prior trace seeds BOTH the discrete values and (absent
     # initial_params) the continuous position, so the initial state is a
-    # coherent draw from the prior conditioned on the observations
-    trace, _ = generate(model, args, constraints; rng=rng)
-    sites = _gibbs_discrete_sites(model, trace, constraints)
-
-    # the persistent conditioning map: observations plus the CURRENT discrete
-    # values, mutated in place so the NUTS target/gradient cache (which hold
-    # it by reference) always see the current conditioning
+    # coherent draw from the prior conditioned on the observations.
+    # Observations can rule most prior draws of a discrete site out, and a
+    # ruled-out draw may even make `generate` itself throw (a downstream
+    # consumer of the drawn value, like ps[z + 1]); retry the prior seed a
+    # bounded number of times, applying initial_discrete overrides each time.
+    initialization_limit = 100
+    sites = GibbsSite[]
     merged = choicemap((first(entry), last(entry)) for entry in constraints.entries)
-    for site in sites
-        _pushchoice!(merged, site.address, trace.choices[site.address])
-    end
-
-    if !isnothing(initial_discrete)
-        for entry in initial_discrete.entries
-            address = first(entry)
-            any(site -> site.address == address, sites) || throw(
-                ArgumentError(
-                    "initial_discrete provides a value for $address, which is not a discovered " *
-                    "Gibbs site (sites: $(Any[site.address for site in sites]))",
-                ),
-            )
-            _pushchoice!(merged, address, last(entry))
-        end
-    end
-
-    position = if isnothing(initial_params)
-        has_continuous ? transform_to_unconstrained(trace) : Float64[]
-    else
-        _initial_hmc_position(model, args, merged, initial_params, rng)
-    end
-    current_logjoint = logjoint_unconstrained(model, position, args, merged)
-    # observations can rule most prior draws of a discrete site out (a
-    # binomial observation above the drawn trial count, say); retry the prior
-    # seed a bounded number of times before asking for initial_discrete
+    position = Float64[]
+    current_logjoint = -Inf
+    initialized = false
     initialization_attempt = 0
-    while !isfinite(current_logjoint) && isnothing(initial_discrete) && initialization_attempt < 100
+    while initialization_attempt < initialization_limit
         initialization_attempt += 1
-        trace, _ = generate(model, args, constraints; rng=rng)
+        trace = try
+            generate(model, args, constraints; rng=rng)[1]
+        catch err
+            _gibbs_rejectable_error(err) || rethrow()
+            continue
+        end
+        if !initialized
+            sites = _gibbs_discrete_sites(model, trace, constraints)
+            if !isnothing(initial_discrete)
+                for entry in initial_discrete.entries
+                    address = first(entry)
+                    any(site -> site.address == address, sites) || throw(
+                        ArgumentError(
+                            "initial_discrete provides a value for $address, which is not a " *
+                            "discovered Gibbs site (sites: $(Any[site.address for site in sites]))",
+                        ),
+                    )
+                end
+            end
+            initialized = true
+        end
         for site in sites
             _pushchoice!(merged, site.address, trace.choices[site.address])
         end
-        if isnothing(initial_params) && has_continuous
-            position = transform_to_unconstrained(trace)
+        if !isnothing(initial_discrete)
+            for entry in initial_discrete.entries
+                _pushchoice!(merged, first(entry), last(entry))
+            end
         end
-        current_logjoint = logjoint_unconstrained(model, position, args, merged)
+        position = if isnothing(initial_params)
+            has_continuous ? transform_to_unconstrained(trace) : Float64[]
+        else
+            _initial_hmc_position(model, args, merged, initial_params, rng)
+        end
+        current_logjoint = try
+            logjoint_unconstrained(model, position, args, merged)
+        catch err
+            _gibbs_rejectable_error(err) || rethrow()
+            -Inf
+        end
+        isfinite(current_logjoint) && break
     end
     isfinite(current_logjoint) || throw(
         ArgumentError(
             "gibbs could not find a finite initial state from the prior after " *
-            "$(initialization_attempt + 1) attempts; pass initial_discrete (and initial_params) " *
+            "$initialization_limit attempts; pass initial_discrete (and initial_params) " *
             "to seed a supported state",
         ),
     )

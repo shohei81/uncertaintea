@@ -117,6 +117,33 @@ end
     return z
 end
 
+# a prior draw can make `generate` ITSELF throw (ps[z + 1] out of bounds for
+# z >= 3): the initializer must retry through that too
+@tea static function gibbs_throwing_init_model(ps)
+    z ~ poisson(1.0)
+    {:y} ~ normal(ps[z+1], 1.0)
+    return z
+end
+
+# a loop bound depending on a Gibbs site changes the latent-choice SET
+# (trans-dimensional): rejected at construction, not silently biased
+@tea static function gibbs_transdim_loop_model()
+    z ~ poisson(2.0)
+    for i = 1:z
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
+# same for a dynamic address depending on the site's binding
+@tea static function gibbs_transdim_address_model()
+    z ~ poisson(2.0)
+    {:w => z} ~ bernoulli(0.5)
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
 @testset "mh_within_gibbs" begin
     @testset "gibbs_pure_discrete_vs_enumeration" begin
         # posterior over z by direct truncated enumeration of the support
@@ -358,6 +385,38 @@ end
         @test UncertainTea._gibbs_rejectable_error(DomainError(-1.0))
         @test !UncertainTea._gibbs_rejectable_error(InterruptException())
         @test !UncertainTea._gibbs_rejectable_error(ErrorException("bug"))
+
+        # a prior draw that makes generate itself throw is retried
+        gibbs_throwing_chain = gibbs(
+            gibbs_throwing_init_model,
+            ([0.0, 1.0, 2.0],),
+            choicemap((:y, 1.2));
+            num_samples=300,
+            num_warmup=100,
+            rng=MersenneTwister(39),
+        )
+        @test all(value -> 0 <= value <= 2, gibbs_throwing_chain.discrete_samples)
+        @test all(isfinite, gibbs_throwing_chain.logjoint_values)
+    end
+
+    @testset "gibbs_transdimensional_rejection" begin
+        # a Gibbs site shaping the latent-choice set is rejected honestly at
+        # construction (up-moves would need missing choices, down-moves would
+        # leave stale ones -- a silent bias otherwise)
+        @test_throws ArgumentError gibbs(
+            gibbs_transdim_loop_model,
+            (),
+            choicemap((:y, 2.0));
+            num_samples=10,
+            rng=MersenneTwister(41),
+        )
+        @test_throws ArgumentError gibbs(
+            gibbs_transdim_address_model,
+            (),
+            choicemap((:y, 2.0));
+            num_samples=10,
+            rng=MersenneTwister(43),
+        )
     end
 
     @testset "gibbs_nuts_option_parity" begin
