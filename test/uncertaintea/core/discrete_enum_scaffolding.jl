@@ -76,10 +76,32 @@ end
             logjoint(denum_bernoulli_model, parameter_vector(trace), (), choicemap((:y, 0.4f0))),
         )
 
-        # backend lowering rejects the flag honestly until PR-4
+        # PR-4 landed the suffix-owning backend step: the flag lowers, the
+        # analytic gradient tier stays honestly gated (PR-5), and the device
+        # rejects the step through the generic choice fallback
         denum_report = backend_report(denum_bernoulli_model)
-        @test denum_report.supported == false
-        @test any(issue -> occursin("marginalize", issue), denum_report.issues)
+        @test denum_report.supported == true
+        denum_plan = backend_execution_plan(denum_bernoulli_model)
+        @test denum_plan.steps[end] isa UncertainTea.BackendMarginalizeChoicePlanStep
+        @test !UncertainTea._backend_gradient_supported(denum_plan)
+        denum_device_supported, denum_device_issues = device_lowering_report(denum_bernoulli_model)
+        @test !denum_device_supported
+        @test any(issue -> occursin("marginalize", lowercase(issue)), denum_device_issues)
+
+        # the noncentered dependency audit must keep walking the suffix the
+        # marginalize step owns: a noncentered location depending on the
+        # enumerated binding is rejected by the CPU transform, so the backend
+        # must reject it too
+        @eval @tea static function denum_enum_noncentered_model()
+            tau ~ lognormal(0.0, 0.5)
+            z ~ bernoulli(0.5; marginalize=:enumerate)
+            x ~ normal(z * 1.0, tau; reparam=:noncentered)
+            {:y} ~ normal(x, 0.5)
+            return x
+        end
+        denum_nc_report = backend_report(denum_enum_noncentered_model)
+        @test denum_nc_report.supported == false
+        @test any(issue -> occursin("noncentered", issue), denum_nc_report.issues)
     end
 
     @testset "denum_macro_time_errors" begin

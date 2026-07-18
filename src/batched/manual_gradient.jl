@@ -154,6 +154,12 @@ function _backend_gradient_supported_step(step::BackendLKJCholeskyChoicePlanStep
     return _backend_gradient_supported_expr(step.eta)
 end
 
+# analytic gradients for the marginalize step land in PR-5
+# (docs/discrete-enumeration.md); until then the per-column ForwardDiff
+# fallback marginalizes correctly
+_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep) = false
+_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep, numeric_slots::BitVector) = false
+
 function _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep)
     return isnothing(step.binding_slot) &&
            _backend_gradient_supported_expr(step.mu) &&

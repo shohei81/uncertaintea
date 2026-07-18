@@ -314,7 +314,17 @@ function _logjoint_with_workspace!(
         throw(DimensionMismatch("expected $(workspace.constrained_parameter_count) parameters, got $(length(params))"))
     env = _prepare_environment!(workspace, args)
     if !isnothing(workspace.backend_plan)
-        return _score_backend_steps(workspace.backend_plan.steps, env, params, constraints)
+        try
+            return _score_backend_steps(workspace.backend_plan.steps, env, params, constraints)
+        catch err
+            # a scalar-backend capability gap (index-typed slot holding a
+            # Pair/Tuple argument, an unsupported conditioning value, ...)
+            # drops to the compiled plan, which scores those natively; the
+            # environment is re-prepared because the aborted backend pass may
+            # have partially mutated it
+            err isa BatchedBackendFallback || rethrow()
+            env = _prepare_environment!(workspace, args)
+        end
     end
     return _score_compiled_steps(workspace.compiled_plan.steps, env, params, constraints)
 end

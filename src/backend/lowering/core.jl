@@ -279,9 +279,13 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         return nothing
     end
     step.rhs.marginalize === :none || begin
+        # unreachable through _backend_lower_steps (which routes flagged
+        # choices to the suffix-consuming marginalize lowering before this
+        # dispatch) and loop bodies reject the flag at plan build; kept as a
+        # defense against future call paths
         _backend_issue!(
             issues,
-            "marginalize=:enumerate is not lowered to the backend yet (docs/discrete-enumeration.md PR-4)",
+            "marginalize=:enumerate choices must lower through the suffix-consuming marginalize path",
         )
         return nothing
     end
@@ -749,6 +753,7 @@ function _backend_loop_observed_choice(step::BackendLoopPlanStep)
     choice = first(step.body)
     choice isa BackendChoicePlanStep || return nothing
     choice isa BackendMvNormalChoicePlanStep && return nothing
+    choice isa BackendMarginalizeChoicePlanStep && return nothing
     choice isa BackendMvNormalDenseChoicePlanStep && return nothing
     choice isa BackendLKJCholeskyChoicePlanStep && return nothing
     choice isa BackendTruncatedNormalChoicePlanStep && return nothing
@@ -770,11 +775,33 @@ function _derive_backend_slot_kinds(layout::EnvironmentLayout, steps::Tuple)
     return numeric_slots, index_slots, generic_slots
 end
 
+_backend_marginalized_choice_step(step) =
+    step isa ChoicePlanStep && step.rhs isa DistributionSpec && step.rhs.marginalize === :enumerate
+
+# Sequential lowering: a marginalize=:enumerate choice consumes the remaining
+# steps as its continuation (docs/discrete-enumeration.md), so the plan's tail
+# becomes the marginalize step's body and nested flagged latents nest as
+# nested steps. Everything else lowers step-by-step as before.
+function _backend_lower_steps(model::TeaModel, layout::EnvironmentLayout, steps::AbstractVector, issues::Vector{String})
+    lowered = Any[]
+    for (position, step) in enumerate(steps)
+        if _backend_marginalized_choice_step(step)
+            push!(
+                lowered,
+                _backend_lower_marginalize_choice_step(model, layout, step, steps[(position+1):end], issues),
+            )
+            return lowered
+        end
+        push!(lowered, _backend_lower_step(model, layout, step, issues))
+    end
+    return lowered
+end
+
 function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     target === :gpu || throw(ArgumentError("only :gpu backend lowering is currently supported"))
     plan = executionplan(model)
     issues = String[]
-    steps = map(step -> _backend_lower_step(model, plan.environment_layout, step, issues), plan.steps)
+    steps = _backend_lower_steps(model, plan.environment_layout, plan.steps, issues)
     report = BackendLoweringReport(
         target,
         isempty(issues),
@@ -829,6 +856,11 @@ function _backend_noncentered_dependencies_ok!(issues::Vector{String}, steps::Tu
                 )
                 ok = false
             end
+        elseif step isa BackendMarginalizeChoicePlanStep
+            # the enumerated binding is a slotless choice, and the audit must
+            # keep walking the suffix the step owns
+            isnothing(step.binding_slot) || push!(tainted, step.binding_slot)
+            ok &= _backend_noncentered_dependencies_ok!(issues, step.body, tainted)
         elseif step isa BackendChoicePlanStep
             if isnothing(step.parameter_slot) && !isnothing(step.binding_slot)
                 push!(tainted, step.binding_slot)
