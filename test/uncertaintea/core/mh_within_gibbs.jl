@@ -222,6 +222,32 @@ end
     return m
 end
 
+# a reassignment inside a maybe-empty loop must NOT clear the taint: at
+# runtime the loop body never runs and n keeps depending on z
+@tea static function gibbs_loop_shadowed_reassign_model()
+    z ~ poisson(2.0)
+    n = z + 1
+    for j = 1:0
+        n = 2
+    end
+    for i = 1:n
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
+# an OBSERVED marginalized choice is conditioned to a fixed value, so a shape
+# depending on it stays static and the model must run
+@tea static function gibbs_observed_marginalized_shape_model()
+    m ~ categorical([0.5, 0.5]; marginalize=:enumerate)
+    for i = 1:m
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * m, 1.0)
+    return m
+end
+
 # a straight-line reassignment from a clean expression clears the taint:
 # the loop bound no longer depends on z
 @tea static function gibbs_reassigned_bound_model()
@@ -638,6 +664,28 @@ end
             choicemap((:y, 1.5));
             num_samples=10,
             rng=MersenneTwister(65),
+        )
+        # ... unless the marginalized choice is observed (fixed value):
+        # OBSERVING m fixes the shape and the model runs
+        gibbs_obs_marg_chain = gibbs(
+            gibbs_observed_marginalized_shape_model,
+            (),
+            choicemap((:m, 2), (:y, 2.0));
+            num_samples=100,
+            num_warmup=50,
+            rng=MersenneTwister(71),
+        )
+        @test (:w, 1) in gibbs_obs_marg_chain.discrete_addresses
+        @test (:w, 2) in gibbs_obs_marg_chain.discrete_addresses
+        @test all(isfinite, gibbs_obs_marg_chain.logjoint_values)
+        # a reassignment inside a maybe-empty loop keeps the outer taint:
+        # this model still depends on z at runtime and rejects
+        @test_throws ArgumentError gibbs(
+            gibbs_loop_shadowed_reassign_model,
+            (),
+            choicemap((:y, 2.0));
+            num_samples=10,
+            rng=MersenneTwister(73),
         )
 
         # a straight-line reassignment from a clean expression clears the

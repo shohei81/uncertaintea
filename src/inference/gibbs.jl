@@ -212,14 +212,20 @@ function _gibbs_validate_static_shape(
         push!(tainted, slot.binding)
     end
     # a marginalize=:enumerate binding is sampled too (the logjoint sums over
-    # its support): a shape depending on it differs per enumeration branch
+    # its support): a shape depending on it differs per enumeration branch --
+    # unless the choice is observed, which conditions it to one fixed value
     for step in _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
         step.rhs isa DistributionSpec || continue
         step.rhs.marginalize === :enumerate || continue
-        isnothing(step.binding) || push!(tainted, step.binding)
+        isnothing(step.binding) && continue
+        if all(part -> part isa AddressLiteralPart, step.address.parts)
+            static_address = Tuple(part.value for part in step.address.parts)
+            haskey(constraints, static_address) && continue
+        end
+        push!(tainted, step.binding)
     end
     isempty(tainted) && return nothing
-    _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted, constraints, false)
+    _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted, constraints, false, false)
     return nothing
 end
 
@@ -228,16 +234,19 @@ function _gibbs_validate_static_shape_steps(
     tainted::Set{Symbol},
     constraints::ChoiceMap,
     under_tainted_loop::Bool,
+    in_loop::Bool,
 )
     for step in steps
         if step isa DeterministicPlanStep
             # any assignment under a tainted loop depends on the sampled
             # iteration count (`last = i` inside `for i = 1:z`), whatever its
-            # right-hand side mentions; a straight-line reassignment from a
-            # clean expression clears the symbol (`n = z; n = 2`)
+            # right-hand side mentions; a STRAIGHT-LINE reassignment from a
+            # clean expression clears the symbol (`n = z; n = 2`), but a
+            # reassignment inside any loop may execute zero times and must
+            # not clear the outer taint
             if under_tainted_loop || _gibbs_expr_uses(step.expr, tainted)
                 push!(tainted, step.binding)
-            else
+            elseif !in_loop
                 delete!(tainted, step.binding)
             end
         elseif step isa LoopPlanStep
@@ -263,7 +272,7 @@ function _gibbs_validate_static_shape_steps(
                     ),
                 )
             end
-            _gibbs_validate_static_shape_steps(step.body, tainted, constraints, loop_tainted)
+            _gibbs_validate_static_shape_steps(step.body, tainted, constraints, loop_tainted, true)
             if iterator_was_tainted
                 push!(tainted, step.iterator)
             else
