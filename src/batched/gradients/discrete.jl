@@ -452,20 +452,38 @@ function _score_backend_step_and_gradient!(
                probability_values[branch][batch_index]
     end
 
+    # an impossible branch (finite prior mass but a -Inf suffix, or zero
+    # mass) carries zero responsibility, and its branch gradient may hold
+    # NaN/Inf from the degenerate scoring -- exclude such branches by their
+    # FULL term before reading the gradient buffers
+    branch_term = function (branch, batch_index)
+        pmf = log_pmf[branch, batch_index]
+        return isfinite(pmf) ? pmf + branch_totals[branch][batch_index] : oftype(pmf, -Inf)
+    end
+
     for batch_index = 1:batch_size
         selected = constrained_branch[batch_index]
         if selected != 0
-            totals[batch_index] += log_pmf[selected, batch_index] + branch_totals[selected][batch_index]
-            for parameter_row = 1:parameter_count
-                gradients[parameter_row, batch_index] +=
-                    pmf_gradient(selected, batch_index, parameter_row) +
-                    branch_gradients[selected][parameter_row, batch_index]
+            term = branch_term(selected, batch_index)
+            if isfinite(term)
+                totals[batch_index] += term
+                for parameter_row = 1:parameter_count
+                    gradients[parameter_row, batch_index] +=
+                        pmf_gradient(selected, batch_index, parameter_row) +
+                        branch_gradients[selected][parameter_row, batch_index]
+                end
+            else
+                # a -Inf conditioned column has no usable gradient; leave the
+                # other steps' contributions untouched (the sampler rejects
+                # the state on the -Inf total)
+                totals[batch_index] += -Inf
             end
         else
             shift = -Inf
             for branch = 1:support_size
-                isfinite(log_pmf[branch, batch_index]) || continue
-                shift = max(shift, log_pmf[branch, batch_index] + branch_totals[branch][batch_index])
+                term = branch_term(branch, batch_index)
+                isfinite(term) || continue
+                shift = max(shift, term)
             end
             if !isfinite(shift)
                 totals[batch_index] += -Inf
@@ -473,15 +491,16 @@ function _score_backend_step_and_gradient!(
             end
             accumulator = zero(T)
             for branch = 1:support_size
-                isfinite(log_pmf[branch, batch_index]) || continue
-                accumulator += exp(log_pmf[branch, batch_index] + branch_totals[branch][batch_index] - shift)
+                term = branch_term(branch, batch_index)
+                isfinite(term) || continue
+                accumulator += exp(term - shift)
             end
             column_total = shift + log(accumulator)
             totals[batch_index] += column_total
             for branch = 1:support_size
-                isfinite(log_pmf[branch, batch_index]) || continue
-                responsibility =
-                    exp(log_pmf[branch, batch_index] + branch_totals[branch][batch_index] - column_total)
+                term = branch_term(branch, batch_index)
+                isfinite(term) || continue
+                responsibility = exp(term - column_total)
                 for parameter_row = 1:parameter_count
                     gradients[parameter_row, batch_index] +=
                         responsibility * (

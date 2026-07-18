@@ -135,6 +135,17 @@ end
     return p
 end
 
+# the z = 0 branch has finite prior mass but an impossible observation
+# (bernoulli(0) with y = true scores -Inf): its degenerate branch gradient
+# must not contaminate the marginal gradient through a zero responsibility
+@tea static function denc_impossible_branch_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.5; marginalize=:enumerate)
+    {:y} ~ bernoulli(1.0 * z)
+    {:w} ~ normal(mu + z, 1.0)
+    return mu
+end
+
 # six nested bernoulli latents = support product 64 > the backend limit 32
 @tea static function denc_support_cap_model()
     mu ~ normal(0.0, 1.0)
@@ -313,6 +324,29 @@ end
                 denc_partial_branch_model,
                 denc_bn_runtime_bad_params[:, index],
                 denc_bn_runtime_constraints[index],
+            ) atol = 5e-6
+        end
+
+        # an impossible branch (finite mass, -Inf suffix) is excluded by its
+        # FULL term, so its degenerate gradient buffer cannot contaminate the
+        # marginal gradient through NaN * zero-responsibility
+        denc_bn_impossible_params = reshape([0.4, -0.6], 1, 2)
+        denc_bn_impossible_constraints = choicemap((:y, true), (:w, 1.2))
+        denc_bn_impossible_cache = BatchedLogjointGradientCache(
+            denc_impossible_branch_model,
+            denc_bn_impossible_params,
+            (),
+            denc_bn_impossible_constraints,
+        )
+        @test !isnothing(denc_bn_impossible_cache.backend_cache)
+        denc_bn_impossible_gradient =
+            batched_logjoint_gradient_unconstrained(denc_bn_impossible_cache, denc_bn_impossible_params)
+        @test all(isfinite, denc_bn_impossible_gradient)
+        for index = 1:2
+            @test denc_bn_impossible_gradient[:, index] ≈ denc_fd_gradient(
+                denc_impossible_branch_model,
+                denc_bn_impossible_params[:, index],
+                denc_bn_impossible_constraints,
             ) atol = 5e-6
         end
 
