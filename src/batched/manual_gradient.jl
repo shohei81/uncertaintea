@@ -154,11 +154,11 @@ function _backend_gradient_supported_step(step::BackendLKJCholeskyChoicePlanStep
     return _backend_gradient_supported_expr(step.eta)
 end
 
-# analytic gradients for the marginalize step land in PR-5
-# (docs/discrete-enumeration.md); until then the per-column ForwardDiff
-# fallback marginalizes correctly
-_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep) = false
-_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep, numeric_slots::BitVector) = false
+# the marginalize step's analytic gradient needs differentiable pmf
+# expressions and a fully supported suffix (it scores the body per branch)
+_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep, numeric_slots::BitVector) =
+    all(_backend_gradient_supported_expr, step.probabilities) &&
+    all(inner -> _backend_gradient_supported_step(inner, numeric_slots), step.body)
 
 function _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep)
     return isnothing(step.binding_slot) &&
@@ -232,6 +232,8 @@ _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep, num
 function _mark_backend_latent_vector_bindings!(tainted::BitVector, steps)
     for step in steps
         if step isa BackendLoopPlanStep
+            _mark_backend_latent_vector_bindings!(tainted, step.body)
+        elseif step isa BackendMarginalizeChoicePlanStep
             _mark_backend_latent_vector_bindings!(tainted, step.body)
         elseif step isa Union{
             BackendMvNormalChoicePlanStep,

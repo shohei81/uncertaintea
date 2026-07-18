@@ -206,6 +206,55 @@ _marginalize_choice_logpmf(step::BackendMarginalizeChoicePlanStep, probabilities
 # the numeric binding slot, categorical binds the category index.
 _marginalize_binding_value(step::BackendMarginalizeChoicePlanStep, value) = value isa Bool ? Int(value) : value
 
+# Per-column conditioning: a column whose constraints provide the latent
+# scores the plain joint at that value (branch selection); the others (entry
+# 0) marginalize. Branch selection is only faithful for values the family's
+# own normalization accepts AND whose raw binding is arithmetic-equal to the
+# branch value; anything else (a non-boolean bernoulli numeric, an
+# out-of-support or non-real categorical value) binds the RAW value into the
+# suffix on the reference path, which only the per-column fallback reproduces.
+function _marginalize_constrained_branches(
+    step::BackendMarginalizeChoicePlanStep,
+    env::BatchedPlanEnvironment,
+    constraints,
+)
+    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
+    constrained_branch = Vector{Int}(undef, env.batch_size)
+    for batch_index = 1:env.batch_size
+        address = _concrete_batched_address(address_parts, batch_index)
+        found, value = _choice_tryget_normalized(_batched_constraint(constraints, batch_index), address)
+        constrained_branch[batch_index] = if !found
+            0
+        else
+            matched = if step.family === :bernoulli
+                value isa Bool ? Int(value) + 1 :
+                (value isa Real && (value == 0 || value == 1)) ? Int(value) + 1 : nothing
+            else
+                _categorical_index(value, length(step.support))
+            end
+            isnothing(matched) && throw(
+                BatchedBackendFallback(
+                    "marginalized $(step.family) conditioned on the unsupported value $value",
+                ),
+            )
+            matched
+        end
+    end
+    return constrained_branch
+end
+
+# A branch is scored when any column marginalizes over it with nonzero mass or
+# is conditioned on it; an all-columns-dead branch is skipped (its suffix may
+# be unevaluable).
+function _marginalize_branch_needed(constrained_branch::Vector{Int}, log_pmf::AbstractMatrix, branch::Int)
+    return any(
+        batch_index ->
+            constrained_branch[batch_index] == 0 ? isfinite(log_pmf[branch, batch_index]) :
+            constrained_branch[batch_index] == branch,
+        eachindex(constrained_branch),
+    )
+end
+
 function _score_backend_step!(
     step::BackendMarginalizeChoicePlanStep,
     env::PlanEnvironment,
@@ -275,51 +324,12 @@ function _score_backend_step!(
         end
     end
 
-    # per-column conditioning: a column whose constraints provide the latent
-    # scores the plain joint at that value (branch selection); the others
-    # marginalize. Bool == Int equality makes bernoulli constraints match.
-    address_parts = _batched_backend_address_parts(env, step.address.parts, 1)
-    constrained_branch = Vector{Int}(undef, batch_size)  # 0 = marginalize
-    for batch_index = 1:batch_size
-        address = _concrete_batched_address(address_parts, batch_index)
-        found, value = _choice_tryget_normalized(_batched_constraint(constraints, batch_index), address)
-        constrained_branch[batch_index] = if !found
-            0
-        else
-            # branch selection is only faithful for values the family's own
-            # normalization accepts AND whose raw binding is arithmetic-equal
-            # to the branch value; anything else (a non-boolean bernoulli
-            # numeric, an out-of-support or non-real categorical value) binds
-            # the RAW value into the suffix on the reference path, which only
-            # the per-column fallback reproduces
-            matched = if step.family === :bernoulli
-                value isa Bool ? Int(value) + 1 :
-                (value isa Real && (value == 0 || value == 1)) ? Int(value) + 1 : nothing
-            else
-                _categorical_index(value, support_size)
-            end
-            isnothing(matched) && throw(
-                BatchedBackendFallback(
-                    "marginalized $(step.family) conditioned on the unsupported value $value",
-                ),
-            )
-            matched
-        end
-    end
+    constrained_branch = _marginalize_constrained_branches(step, env, constraints)
 
     snapshot = _batched_environment_snapshot(env)
     branch_totals = [fill!(similar(totals), zero(eltype(totals))) for _ = 1:support_size]
     for (branch, value) in enumerate(step.support)
-        # a branch is scored when any column marginalizes over it with
-        # nonzero mass or is conditioned on it; an all-columns-dead branch
-        # is skipped (its suffix may be unevaluable)
-        branch_needed = any(
-            batch_index ->
-                constrained_branch[batch_index] == 0 ? isfinite(log_pmf[branch, batch_index]) :
-                constrained_branch[batch_index] == branch,
-            1:batch_size,
-        )
-        branch_needed || continue
+        _marginalize_branch_needed(constrained_branch, log_pmf, branch) || continue
         _batched_environment_restore_snapshot!(env, snapshot)
         isnothing(step.binding_slot) ||
             _batched_environment_set_shared!(env, step.binding_slot, _marginalize_binding_value(step, value))

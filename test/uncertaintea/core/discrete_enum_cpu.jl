@@ -248,10 +248,10 @@ end
         )[1] ≈ UncertainTea.logpdf(normal(0.0, 1.0), 0.4) + UncertainTea.logpdf(normal(0.4, 1.0), 0.9) atol =
             1e-12
 
-        # gradients ride the flat ForwardDiff tier through the backend value
-        # path (analytic marginalize gradients land in PR-5)
+        # PR-5: the analytic tier owns the marginalize step (crosscheck runs
+        # the full five-tier battery; this pins the tier selection and FD)
         denc_bn_cache = BatchedLogjointGradientCache(denc_indicator_model, denc_bn_params, (), denc_constraints)
-        @test isnothing(denc_bn_cache.backend_cache)
+        @test !isnothing(denc_bn_cache.backend_cache)
         denc_bn_gradient = batched_logjoint_gradient_unconstrained(denc_bn_cache, denc_bn_params)
         for index = 1:3
             @test denc_bn_gradient[:, index] ≈
