@@ -250,6 +250,20 @@ end
 function _backend_step_reads_tainted_slot(step, tainted::BitVector)
     step isa BackendLoopPlanStep &&
         return any(inner -> _backend_step_reads_tainted_slot(inner, tainted), step.body)
+    if step isa BackendMarginalizeChoicePlanStep
+        # the suffix needs the per-step walk (a broadcast step inside it has
+        # its mu/sigma reads intentionally unmarked by the slot-kind
+        # collection), plus the step's own probability-expression reads
+        any(inner -> _backend_step_reads_tainted_slot(inner, tainted), step.body) && return true
+        referenced_numeric = falses(length(tainted))
+        referenced_index = falses(length(tainted))
+        referenced_generic = falses(length(tainted))
+        _mark_backend_choice_address_slots!(step.address, referenced_numeric, referenced_index, referenced_generic)
+        for expr in step.probabilities
+            _mark_backend_generic_expr_slots!(expr, referenced_numeric, referenced_index, referenced_generic)
+        end
+        return any((referenced_numeric .| referenced_index .| referenced_generic) .& tainted)
+    end
     referenced_numeric = falses(length(tainted))
     referenced_index = falses(length(tainted))
     referenced_generic = falses(length(tainted))

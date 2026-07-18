@@ -409,8 +409,13 @@ function _score_backend_step_and_gradient!(
         _marginalize_branch_needed(constrained_branch, log_pmf, branch) || continue
         _batched_environment_restore_snapshot!(env, environment_snapshot)
         copyto!(cache.slot_gradients, slot_gradients_snapshot)
-        isnothing(step.binding_slot) ||
+        if !isnothing(step.binding_slot)
             _batched_environment_set_shared!(env, step.binding_slot, _marginalize_binding_value(step, value))
+            # the branch value is a constant: a symbol rebound from an earlier
+            # differentiable assignment must not leak that derivative into
+            # suffix reads through its slot-gradient plane
+            fill!(view(cache.slot_gradients, :, step.binding_slot, :), zero(T))
+        end
         try
             _score_backend_steps_and_gradient!(
                 step.body,
