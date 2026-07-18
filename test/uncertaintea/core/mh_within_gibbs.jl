@@ -92,6 +92,23 @@ end
     return mu
 end
 
+# a wildcard (dynamic-address) template coexisting with a literal site of a
+# DIFFERENT family: the exact literal match must win over the wildcard
+@tea static function gibbs_wildcard_model(addr)
+    {addr} ~ poisson(2.0)
+    z ~ bernoulli(0.5)
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
+# a singleton categorical support can never move and must self-transition
+@tea static function gibbs_singleton_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ categorical([1.0])
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
+end
+
 @testset "mh_within_gibbs" begin
     @testset "gibbs_pure_discrete_vs_enumeration" begin
         # posterior over z by direct truncated enumeration of the support
@@ -254,5 +271,41 @@ end
         )
         @test gibbs_dynamic_marg_chain.discrete_addresses == Any[(:z,)]
         @test all(isfinite, gibbs_dynamic_marg_chain.logjoint_values)
+
+        # exact literal matches beat wildcard templates: the bernoulli site
+        # is classified as a flip, not shadowed by the {addr} poisson
+        gibbs_wildcard_chain = gibbs(
+            gibbs_wildcard_model,
+            (:w,),
+            choicemap((:y, 0.6));
+            num_samples=200,
+            num_warmup=100,
+            rng=MersenneTwister(21),
+        )
+        @test gibbs_wildcard_chain.discrete_addresses == Any[(:w,), (:z,)]
+        @test all(value -> value in (0, 1), gibbs_wildcard_chain.discrete_samples[2, :])
+        @test all(value -> value >= 0, gibbs_wildcard_chain.discrete_samples[1, :])
+
+        # a Pair-valued dynamic address normalizes to multiple parts and
+        # cannot be matched: clear error, not silent misclassification
+        @test_throws ArgumentError gibbs(
+            gibbs_wildcard_model,
+            (:a => 1,),
+            choicemap((:y, 0.6));
+            num_samples=10,
+            rng=MersenneTwister(23),
+        )
+
+        # a singleton categorical self-transitions instead of erroring
+        gibbs_singleton_chain = gibbs(
+            gibbs_singleton_model,
+            (),
+            choicemap((:y, 1.4));
+            num_samples=100,
+            num_warmup=50,
+            rng=MersenneTwister(25),
+        )
+        @test all(==(1), gibbs_singleton_chain.discrete_samples)
+        @test all(isfinite, gibbs_singleton_chain.constrained_samples)
     end
 end

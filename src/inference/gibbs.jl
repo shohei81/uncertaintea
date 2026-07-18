@@ -28,37 +28,79 @@ function _gibbs_collect_choice_steps!(collected::Vector{ChoicePlanStep}, steps)
     return collected
 end
 
-function _gibbs_matching_choice_step(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
-    for step in choice_steps
-        parts = step.address.parts
-        length(parts) == length(address) || continue
-        matched = true
-        for index in eachindex(address)
-            part = parts[index]
-            if part isa AddressLiteralPart && part.value != address[index]
-                matched = false
-                break
-            end
+function _gibbs_step_matches(step::ChoicePlanStep, address::Tuple; exact::Bool)
+    parts = step.address.parts
+    length(parts) == length(address) || return false
+    for index in eachindex(address)
+        part = parts[index]
+        if part isa AddressLiteralPart
+            part.value == address[index] || return false
+        elseif exact
+            return false
         end
-        matched && return step
     end
-    return nothing
+    return true
 end
 
-# Classify one candidate latent address: `nothing` for marginalize=:enumerate
-# sites (they stay marginalized inside the logjoint), a GibbsSite for discrete
-# families, a loud error otherwise (continuous slotless latents have no
-# sampler).
-function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
-    step = _gibbs_matching_choice_step(choice_steps, address)
-    (isnothing(step) || !(step.rhs isa DistributionSpec)) && throw(
+# Classification of a matched step for one site: whether it stays
+# marginalized, the family, and the proposal-relevant support size.
+function _gibbs_step_classification(step::ChoicePlanStep, address::Tuple)
+    step.rhs isa DistributionSpec || throw(
         ArgumentError(
             "gibbs found the latent choice $address but could not match it to a distribution " *
             "choice in the model's execution plan",
         ),
     )
-    step.rhs.marginalize === :enumerate && return nothing
+    step.rhs.marginalize === :enumerate && return (true, :none, 0)
     family = step.rhs.family
+    categories = 0
+    if family === :categorical
+        probabilities = step.rhs.arguments[1]
+        if probabilities isa Expr && probabilities.head == :vect
+            categories = length(probabilities.args)
+        end
+    end
+    return (false, family, categories)
+end
+
+# Classify one candidate latent address: `nothing` for marginalize=:enumerate
+# sites (they stay marginalized inside the logjoint), a GibbsSite for discrete
+# families, a loud error otherwise. An exact all-literal address match wins
+# outright; otherwise every template match (dynamic parts as wildcards) must
+# agree on the classification, because a wildcard template can shadow an
+# unrelated concrete site.
+function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
+    matched_step = nothing
+    for step in choice_steps
+        if _gibbs_step_matches(step, address; exact=true)
+            matched_step = step
+            break
+        end
+    end
+    classification = if !isnothing(matched_step)
+        _gibbs_step_classification(matched_step, address)
+    else
+        candidates = [step for step in choice_steps if _gibbs_step_matches(step, address; exact=false)]
+        isempty(candidates) && throw(
+            ArgumentError(
+                "gibbs could not match the latent choice $address to any choice in the model's " *
+                "execution plan (a dynamic address expression that normalizes to multiple parts, " *
+                "e.g. a Pair-valued address argument, cannot be matched; use static or " *
+                "single-part addresses for Gibbs sites)",
+            ),
+        )
+        classifications = unique(_gibbs_step_classification(step, address) for step in candidates)
+        length(classifications) == 1 || throw(
+            ArgumentError(
+                "gibbs matched the latent choice $address to multiple template choices with " *
+                "conflicting classifications $classifications; disambiguate the addresses",
+            ),
+        )
+        classifications[1]
+    end
+
+    marginalized, family, categories = classification
+    marginalized && return nothing
     family in _GIBBS_DISCRETE_FAMILIES || throw(
         ArgumentError(
             "gibbs requires every non-observed slotless choice to be a finite- or integer-support " *
@@ -69,10 +111,10 @@ function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
     if family === :bernoulli
         return GibbsSite(address, :flip, 0, 0)
     elseif family === :categorical
-        probabilities = step.rhs.arguments[1]
-        if probabilities isa Expr && probabilities.head == :vect
-            return GibbsSite(address, :uniform_other, 1, length(probabilities.args))
-        end
+        # a singleton support can never move: self-transition instead of
+        # sampling from an empty proposal range
+        categories == 1 && return GibbsSite(address, :fixed, 1, 1)
+        categories > 1 && return GibbsSite(address, :uniform_other, 1, categories)
         # non-literal probability vector: the support size is unknown at this
         # point, so fall back to the +-1 walk (out-of-range proposals reject
         # through scoring)
@@ -223,6 +265,7 @@ function gibbs(
     for iteration = 1:total_iterations
         # --- discrete pass: symmetric single-site MH ----------------------
         for (site_index, site) in enumerate(sites)
+            site.kind === :fixed && continue
             current_value = merged[site.address]
             proposed = _gibbs_propose(rng, site, current_value)
             # static-lower-bound pre-rejection (the compiled scorer would
