@@ -93,19 +93,35 @@ chain actually visits (the Turing-style pragmatic choice); after
 Prior-conditional proposals would need the site's standalone prior density,
 which no current primitive exposes without re-deriving per-family logpdfs of
 runtime-built distributions. Symmetric proposals sidestep the correction
-term entirely — `log alpha = L(z') - L(z)` — and out-of-support proposals
-reject naturally through the model's own `-Inf`/error-free pmf evaluation:
+term entirely — `log alpha = L(z') - L(z)`:
 
 - integer supports (poisson, geometric, negativebinomial, binomial):
   `z' = z ± s` with random sign and step `s = 1` by default; an optional
   heavier-tailed symmetric step (`s = 1 + Geometric(p)`) helps large-count
-  posteriors and stays correction-free. A negative proposal scores `-Inf`
-  and rejects.
+  posteriors and stays correction-free.
 - bernoulli: deterministic flip.
 - categorical(K): uniform over the K-1 other categories.
 
 The family (and K, for categorical) comes from the model spec choice
 matching the site's address; loop-scoped sites share their template's spec.
+
+Out-of-support proposals must be rejected BEFORE the logjoint evaluation
+where possible: the compiled scorer binds the provided value and keeps
+walking even past a `-Inf` pmf, so a suffix consumer can throw on an invalid
+value (`z ~ poisson(...); {:y} ~ binomial(z, p)` with a proposed `z = -1`
+dies in the binomial constructor, not in the pmf). Concretely:
+
+- proposals below the family's static lower bound (0 for the count families)
+  reject immediately without scoring — this covers the entire ±s hazard for
+  poisson/geometric/negativebinomial;
+- bernoulli/categorical proposals are in-support by construction;
+- dynamic upper bounds (binomial trials) cannot be pre-checked statically,
+  so the PROPOSAL's logjoint evaluation is wrapped in a catch that converts
+  a throw into a rejection. This is MH-correct — unevaluable states are
+  zero-density regions, and the chain invariant guarantees the CURRENT
+  state always evaluates (its own scoring is never caught, so genuine model
+  errors still surface loudly at initialization or in the current-state
+  refresh).
 
 ## Acceptance
 
