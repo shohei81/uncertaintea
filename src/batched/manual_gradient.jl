@@ -154,11 +154,11 @@ function _backend_gradient_supported_step(step::BackendLKJCholeskyChoicePlanStep
     return _backend_gradient_supported_expr(step.eta)
 end
 
-# analytic gradients for the marginalize step land in PR-5
-# (docs/discrete-enumeration.md); until then the per-column ForwardDiff
-# fallback marginalizes correctly
-_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep) = false
-_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep, numeric_slots::BitVector) = false
+# the marginalize step's analytic gradient needs differentiable pmf
+# expressions and a fully supported suffix (it scores the body per branch)
+_backend_gradient_supported_step(step::BackendMarginalizeChoicePlanStep, numeric_slots::BitVector) =
+    all(_backend_gradient_supported_expr, step.probabilities) &&
+    all(inner -> _backend_gradient_supported_step(inner, numeric_slots), step.body)
 
 function _backend_gradient_supported_step(step::BackendBroadcastNormalChoicePlanStep)
     return isnothing(step.binding_slot) &&
@@ -233,6 +233,8 @@ function _mark_backend_latent_vector_bindings!(tainted::BitVector, steps)
     for step in steps
         if step isa BackendLoopPlanStep
             _mark_backend_latent_vector_bindings!(tainted, step.body)
+        elseif step isa BackendMarginalizeChoicePlanStep
+            _mark_backend_latent_vector_bindings!(tainted, step.body)
         elseif step isa Union{
             BackendMvNormalChoicePlanStep,
             BackendMvNormalDenseChoicePlanStep,
@@ -248,6 +250,20 @@ end
 function _backend_step_reads_tainted_slot(step, tainted::BitVector)
     step isa BackendLoopPlanStep &&
         return any(inner -> _backend_step_reads_tainted_slot(inner, tainted), step.body)
+    if step isa BackendMarginalizeChoicePlanStep
+        # the suffix needs the per-step walk (a broadcast step inside it has
+        # its mu/sigma reads intentionally unmarked by the slot-kind
+        # collection), plus the step's own probability-expression reads
+        any(inner -> _backend_step_reads_tainted_slot(inner, tainted), step.body) && return true
+        referenced_numeric = falses(length(tainted))
+        referenced_index = falses(length(tainted))
+        referenced_generic = falses(length(tainted))
+        _mark_backend_choice_address_slots!(step.address, referenced_numeric, referenced_index, referenced_generic)
+        for expr in step.probabilities
+            _mark_backend_generic_expr_slots!(expr, referenced_numeric, referenced_index, referenced_generic)
+        end
+        return any((referenced_numeric .| referenced_index .| referenced_generic) .& tainted)
+    end
     referenced_numeric = falses(length(tainted))
     referenced_index = falses(length(tainted))
     referenced_generic = falses(length(tainted))

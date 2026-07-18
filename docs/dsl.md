@@ -419,9 +419,9 @@ end
   in the model as dependencies allow.
 - The batched path is backend-native: the flag lowers to a suffix-owning
   backend step (conditioning stays free per column, and nested support
-  products beyond 32 are rejected honestly). Batched gradients ride the
-  ForwardDiff tier until the analytic marginalize gradient lands; the device
-  path reports the step as unsupported.
+  products beyond 32 are rejected honestly), and batched gradients use the
+  analytic responsibility-weighted branch gradients. The device path reports
+  the step as unsupported.
 - See docs/discrete-enumeration.md for the staged design.
 
 ## User-Defined Distributions

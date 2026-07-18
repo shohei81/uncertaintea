@@ -136,6 +136,53 @@ function BatchedLogjointGradientCache(
     return BatchedLogjointGradientCache(model, column_caches, nothing, nothing, gradient_buffer, parameter_count, batch_size)
 end
 
+# A cached analytic backend gradient can hit a runtime capability gap the
+# construction-time probe could not see (a marginalize branch whose suffix
+# becomes unevaluable for an ignored column at the CURRENT parameters):
+# recompute that call per column, which evaluates only what each column needs
+# (the scalar workspace path itself retries on the compiled plan). Later calls
+# keep the analytic tier.
+function _batched_backend_gradient_or_columns!(
+    totals::AbstractVector,
+    cache::BatchedLogjointGradientCache,
+    params::AbstractMatrix,
+)
+    backend_cache = cache.backend_cache
+    try
+        _batched_backend_logjoint_and_gradient_unconstrained!(
+            totals,
+            cache.gradient_buffer,
+            cache.model,
+            backend_cache,
+            params,
+        )
+        return totals, cache.gradient_buffer
+    catch err
+        err isa BatchedBackendFallback || rethrow()
+    end
+    for batch_index = 1:cache.batch_size
+        column_args = _batched_args(backend_cache.args, batch_index)
+        column_constraints = _batched_constraints(backend_cache.constraints, batch_index)
+        seed = collect(view(params, :, batch_index))
+        _batched_gradient_column!(
+            cache.model,
+            backend_cache.workspace,
+            view(cache.gradient_buffer, :, batch_index),
+            seed,
+            column_args,
+            column_constraints,
+        )
+        totals[batch_index] = _logjoint_unconstrained_with_workspace!(
+            cache.model,
+            backend_cache.workspace,
+            seed,
+            column_args,
+            column_constraints,
+        )
+    end
+    return totals, cache.gradient_buffer
+end
+
 function batched_logjoint_gradient_unconstrained!(
     cache::BatchedLogjointGradientCache,
     params::AbstractMatrix,
@@ -147,13 +194,7 @@ function batched_logjoint_gradient_unconstrained!(
 
     if !isnothing(cache.backend_cache)
         totals = _batched_totals_buffer!(cache.backend_cache.workspace, cache.batch_size, eltype(cache.gradient_buffer))
-        _batched_backend_logjoint_and_gradient_unconstrained!(
-            totals,
-            cache.gradient_buffer,
-            cache.model,
-            cache.backend_cache,
-            params,
-        )
+        _batched_backend_gradient_or_columns!(totals, cache, params)
         return cache.gradient_buffer
     end
 
@@ -225,13 +266,7 @@ function _batched_logjoint_and_gradient_unconstrained!(
         throw(DimensionMismatch("expected $(cache.batch_size) batch elements, got $(size(params, 2))"))
 
     if !isnothing(cache.backend_cache)
-        _batched_backend_logjoint_and_gradient_unconstrained!(
-            destination,
-            cache.gradient_buffer,
-            cache.model,
-            cache.backend_cache,
-            params,
-        )
+        _batched_backend_gradient_or_columns!(destination, cache, params)
         return destination, cache.gradient_buffer
     end
 

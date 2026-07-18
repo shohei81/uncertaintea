@@ -198,6 +198,29 @@
         return x
     end
 
+    # marginalize=:enumerate latents (issue #13 PR-5): the suffix-owning
+    # backend step's analytic gradient is the responsibility-weighted sum of
+    # branch gradients; the bernoulli entry chains d(log pmf)/dp through a
+    # latent probability, the categorical entry adds a suffix rebind and
+    # latent-dependent probabilities
+    @tea static function gxc_bernoulli_marginalized()
+        m1 ~ normal(-2.0, 1.0)
+        m2 ~ normal(2.0, 1.0)
+        p ~ beta(2.0, 2.0)
+        z ~ bernoulli(p; marginalize=:enumerate)
+        {:y} ~ normal(z * m1 + (1 - z) * m2, 0.5)
+        return m1
+    end
+
+    @tea static function gxc_categorical_marginalized()
+        x ~ beta(2.0, 2.0)
+        s = 1.0
+        z ~ categorical([x * 0.5, 0.3, 0.7 - x * 0.5]; marginalize=:enumerate)
+        s = s + 1.0
+        {:y} ~ normal(1.0 * z * s, 0.8)
+        return x
+    end
+
     @tea static function gxc_bernoulli_obs()
         p ~ beta(2.0f0, 3.0f0)
         {:y} ~ bernoulli(p)
@@ -402,12 +425,18 @@
             (gxc_studentt_obs, (), choicemap((:y, 0.6f0))),
             (gxc_studentt_latent, (), choicemap((:y, 0.4f0))),
         ],
-        :bernoulli => [(gxc_bernoulli_obs, (), choicemap((:y, true)))],
+        :bernoulli => [
+            (gxc_bernoulli_obs, (), choicemap((:y, true))),
+            (gxc_bernoulli_marginalized, (), choicemap((:y, 0.8))),
+        ],
         :binomial => [(gxc_binomial_obs, (), choicemap((:y, 5)))],
         :geometric => [(gxc_geometric_obs, (), choicemap((:y, 3)))],
         :negativebinomial => [(gxc_negativebinomial_obs, (), choicemap((:y, 4)))],
         :poisson => [(gxc_poisson_obs, (), choicemap((:y, 2)))],
-        :categorical => [(gxc_categorical_obs, (), choicemap((:y, 2)))],
+        :categorical => [
+            (gxc_categorical_obs, (), choicemap((:y, 2))),
+            (gxc_categorical_marginalized, (), choicemap((:y, 2.2))),
+        ],
         :dirichlet => [
             (gxc_dirichlet_latent, (), choicemap()),
             (gxc_dirichlet_then_scalar, (), choicemap((:y, 0.4f0))),

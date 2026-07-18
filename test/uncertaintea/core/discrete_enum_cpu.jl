@@ -114,6 +114,38 @@ end
     return mu
 end
 
+# a vector latent BEFORE the marginalized choice with a broadcast consumer in
+# the suffix: the tainted-read audit must walk the suffix, else the analytic
+# tier would treat the dirichlet weights as constant data in the likelihood
+@tea static function denc_tainted_suffix_model()
+    w ~ dirichlet([2.0, 3.0, 4.0])
+    z ~ bernoulli(0.5; marginalize=:enumerate)
+    {:y} ~ normal.(w, 1.0)
+    return w
+end
+
+# the binding symbol is rebound from an earlier differentiable assignment: the
+# branch write must clear the slot-gradient plane, else suffix reads of z pick
+# up d(1.0 * p)/dtheta through a discrete branch constant
+@tea static function denc_rebound_binding_model()
+    p ~ beta(2.0, 2.0)
+    z = 1.0 * p
+    z ~ bernoulli(p; marginalize=:enumerate)
+    {:y} ~ normal(z * 2.0, 1.0)
+    return p
+end
+
+# the z = 0 branch has finite prior mass but an impossible observation
+# (bernoulli(0) with y = true scores -Inf): its degenerate branch gradient
+# must not contaminate the marginal gradient through a zero responsibility
+@tea static function denc_impossible_branch_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.5; marginalize=:enumerate)
+    {:y} ~ bernoulli(1.0 * z)
+    {:w} ~ normal(mu + z, 1.0)
+    return mu
+end
+
 # six nested bernoulli latents = support product 64 > the backend limit 32
 @tea static function denc_support_cap_model()
     mu ~ normal(0.0, 1.0)
@@ -248,10 +280,94 @@ end
         )[1] ≈ UncertainTea.logpdf(normal(0.0, 1.0), 0.4) + UncertainTea.logpdf(normal(0.4, 1.0), 0.9) atol =
             1e-12
 
-        # gradients ride the flat ForwardDiff tier through the backend value
-        # path (analytic marginalize gradients land in PR-5)
+        # PR-5: the analytic tier owns the marginalize step (crosscheck runs
+        # the full five-tier battery; this pins the tier selection and FD)
         denc_bn_cache = BatchedLogjointGradientCache(denc_indicator_model, denc_bn_params, (), denc_constraints)
-        @test isnothing(denc_bn_cache.backend_cache)
+        @test !isnothing(denc_bn_cache.backend_cache)
+
+        # a broadcast consumer of a pre-existing vector latent inside the
+        # suffix keeps the model OFF the analytic tier (the tainted-read
+        # audit walks marginalize bodies), and the fallback still matches FD
+        denc_bn_taint_constraints = choicemap((:y, Float32[0.3, 0.3, 0.4]))
+        denc_bn_taint_params = reshape([0.1, -0.2], 2, 1)
+        denc_bn_taint_cache = BatchedLogjointGradientCache(
+            denc_tainted_suffix_model,
+            denc_bn_taint_params,
+            (),
+            denc_bn_taint_constraints,
+        )
+        @test isnothing(denc_bn_taint_cache.backend_cache)
+        @test batched_logjoint_gradient_unconstrained(denc_bn_taint_cache, denc_bn_taint_params)[:, 1] ≈
+              denc_fd_gradient(denc_tainted_suffix_model, denc_bn_taint_params[:, 1], denc_bn_taint_constraints) atol =
+            5e-6
+
+        # a cached analytic gradient can hit a runtime capability gap the
+        # construction probe could not see: constructed where every branch is
+        # evaluable, then called at parameters where the z = 1 branch throws
+        # for the conditioned-away column -- that call recomputes per column
+        denc_bn_runtime_constraints = [
+            choicemap((:w, true)),
+            choicemap((:z, false), (:w, true)),
+        ]
+        denc_bn_runtime_cache = BatchedLogjointGradientCache(
+            denc_partial_branch_model,
+            reshape([log(0.5), log(0.5)], 1, 2),
+            (),
+            denc_bn_runtime_constraints,
+        )
+        @test !isnothing(denc_bn_runtime_cache.backend_cache)
+        denc_bn_runtime_bad_params = reshape([log(0.5), log(1.5)], 1, 2)
+        denc_bn_runtime_gradient =
+            batched_logjoint_gradient_unconstrained(denc_bn_runtime_cache, denc_bn_runtime_bad_params)
+        for index = 1:2
+            @test denc_bn_runtime_gradient[:, index] ≈ denc_fd_gradient(
+                denc_partial_branch_model,
+                denc_bn_runtime_bad_params[:, index],
+                denc_bn_runtime_constraints[index],
+            ) atol = 5e-6
+        end
+
+        # an impossible branch (finite mass, -Inf suffix) is excluded by its
+        # FULL term, so its degenerate gradient buffer cannot contaminate the
+        # marginal gradient through NaN * zero-responsibility
+        denc_bn_impossible_params = reshape([0.4, -0.6], 1, 2)
+        denc_bn_impossible_constraints = choicemap((:y, true), (:w, 1.2))
+        denc_bn_impossible_cache = BatchedLogjointGradientCache(
+            denc_impossible_branch_model,
+            denc_bn_impossible_params,
+            (),
+            denc_bn_impossible_constraints,
+        )
+        @test !isnothing(denc_bn_impossible_cache.backend_cache)
+        denc_bn_impossible_gradient =
+            batched_logjoint_gradient_unconstrained(denc_bn_impossible_cache, denc_bn_impossible_params)
+        @test all(isfinite, denc_bn_impossible_gradient)
+        for index = 1:2
+            @test denc_bn_impossible_gradient[:, index] ≈ denc_fd_gradient(
+                denc_impossible_branch_model,
+                denc_bn_impossible_params[:, index],
+                denc_bn_impossible_constraints,
+            ) atol = 5e-6
+        end
+
+        # a binding rebound from a differentiable assignment stays a branch
+        # CONSTANT in the analytic gradient (the slot-gradient plane is
+        # cleared per branch)
+        denc_bn_rebind_params = reshape([0.3, -0.4], 1, 2)
+        denc_bn_rebind_cache = BatchedLogjointGradientCache(
+            denc_rebound_binding_model,
+            denc_bn_rebind_params,
+            (),
+            denc_constraints,
+        )
+        @test !isnothing(denc_bn_rebind_cache.backend_cache)
+        denc_bn_rebind_gradient =
+            batched_logjoint_gradient_unconstrained(denc_bn_rebind_cache, denc_bn_rebind_params)
+        for index = 1:2
+            @test denc_bn_rebind_gradient[:, index] ≈
+                  denc_fd_gradient(denc_rebound_binding_model, denc_bn_rebind_params[:, index], denc_constraints) atol =
+                5e-6
+        end
         denc_bn_gradient = batched_logjoint_gradient_unconstrained(denc_bn_cache, denc_bn_params)
         for index = 1:3
             @test denc_bn_gradient[:, index] ≈
