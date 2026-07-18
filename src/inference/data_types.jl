@@ -76,6 +76,28 @@ struct HMCChains{A,C}
     chains::Vector{HMCChain}
 end
 
+# MH-within-Gibbs result (docs/mh-within-gibbs.md): the continuous block's
+# samples and frozen adaptation, plus per-site discrete samples in trace
+# order. `constraints` holds the user observations only; the discrete values
+# live in `discrete_samples` (sites x samples, Bool sites stored as 0/1).
+struct GibbsChain
+    model::TeaModel
+    args::Tuple
+    constraints::ChoiceMap
+    unconstrained_samples::Matrix{Float64}
+    constrained_samples::Matrix{Float64}
+    logjoint_values::Vector{Float64}
+    acceptance_stats::Vector{Float64}
+    accepted::BitVector
+    divergent::BitVector
+    step_size::Float64
+    mass_matrix::Vector{Float64}
+    discrete_addresses::Vector{Any}
+    discrete_samples::Matrix{Int}
+    # per-site MH acceptance rate over ALL sweeps (warmup included)
+    discrete_acceptance::Vector{Float64}
+end
+
 struct HMCParameterSummary
     index::Int
     binding::Symbol

@@ -32,6 +32,7 @@ export HMCChain, HMCChains, HMCMassAdaptationWindowSummary, HMCMassAdaptationSum
     HMCSummary, SamplerWarnings
 export ADVIResult, ImportanceSamplingResult, SIRResult, SMCStageSummary, SMCResult
 export hmc, hmc_chains, nuts, nuts_chains, batched_hmc, batched_nuts, batched_advi
+export gibbs, GibbsChain
 export batched_importance_sampling, batched_sir, batched_smc
 export acceptancerate,
     divergencerate, massadaptationwindows, treedepths, integrationsteps, nchains, numsamples, numstages, rhat, ess, summarize
