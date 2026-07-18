@@ -13,25 +13,24 @@ struct GibbsSite
     categories::Int   # K for :uniform_other
 end
 
-# Addresses of marginalize=:enumerate sites: they stay marginalized inside the
-# logjoint and are excluded from the Gibbs site set (their addresses are
-# static by the macro-time loop-scope rejection).
-function _gibbs_marginalized_addresses(model::TeaModel)
-    addresses = Set{Any}()
-    for choice in modelspec(model).choices
-        choice.rhs isa DistributionSpec || continue
-        choice.rhs.marginalize === :enumerate || continue
-        push!(addresses, _static_address(choice.address))
+# Sites are matched against the INLINED execution plan's choice steps, not
+# the raw spec: submodel calls are expanded there with prefixed addresses
+# ((:sub, :z) for a child latent), and loop-scoped or dynamic address parts
+# match as templates (literal parts must agree, dynamic parts match anything).
+function _gibbs_collect_choice_steps!(collected::Vector{ChoicePlanStep}, steps)
+    for step in steps
+        if step isa ChoicePlanStep
+            push!(collected, step)
+        elseif step isa LoopPlanStep
+            _gibbs_collect_choice_steps!(collected, step.body)
+        end
     end
-    return addresses
+    return collected
 end
 
-# Match a concrete (normalized tuple) trace address against the spec choices:
-# literal parts must agree, dynamic parts (loop iterators, address arguments)
-# match anything. Loop-scoped sites share their template's spec.
-function _gibbs_matching_choice(spec::ModelSpec, address::Tuple)
-    for choice in spec.choices
-        parts = choice.address.parts
+function _gibbs_matching_choice_step(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
+    for step in choice_steps
+        parts = step.address.parts
         length(parts) == length(address) || continue
         matched = true
         for index in eachindex(address)
@@ -41,20 +40,25 @@ function _gibbs_matching_choice(spec::ModelSpec, address::Tuple)
                 break
             end
         end
-        matched && return choice
+        matched && return step
     end
     return nothing
 end
 
-function _gibbs_site(model::TeaModel, address::Tuple)
-    choice = _gibbs_matching_choice(modelspec(model), address)
-    (isnothing(choice) || !(choice.rhs isa DistributionSpec)) && throw(
+# Classify one candidate latent address: `nothing` for marginalize=:enumerate
+# sites (they stay marginalized inside the logjoint), a GibbsSite for discrete
+# families, a loud error otherwise (continuous slotless latents have no
+# sampler).
+function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
+    step = _gibbs_matching_choice_step(choice_steps, address)
+    (isnothing(step) || !(step.rhs isa DistributionSpec)) && throw(
         ArgumentError(
             "gibbs found the latent choice $address but could not match it to a distribution " *
-            "choice in the model spec",
+            "choice in the model's execution plan",
         ),
     )
-    family = choice.rhs.family
+    step.rhs.marginalize === :enumerate && return nothing
+    family = step.rhs.family
     family in _GIBBS_DISCRETE_FAMILIES || throw(
         ArgumentError(
             "gibbs requires every non-observed slotless choice to be a finite- or integer-support " *
@@ -65,7 +69,7 @@ function _gibbs_site(model::TeaModel, address::Tuple)
     if family === :bernoulli
         return GibbsSite(address, :flip, 0, 0)
     elseif family === :categorical
-        probabilities = choice.rhs.arguments[1]
+        probabilities = step.rhs.arguments[1]
         if probabilities isa Expr && probabilities.head == :vect
             return GibbsSite(address, :uniform_other, 1, length(probabilities.args))
         end
@@ -82,14 +86,14 @@ end
 # detection pattern, complemented).
 function _gibbs_discrete_sites(model::TeaModel, trace::TeaTrace, constraints::ChoiceMap)
     latent_map = parameterchoicemap(model, parameter_vector(trace))
-    marginalized = _gibbs_marginalized_addresses(model)
+    choice_steps = _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
     sites = GibbsSite[]
     for entry in trace.choices.entries
         address = first(entry)
         haskey(latent_map, address) && continue
         haskey(constraints, address) && continue
-        address in marginalized && continue
-        push!(sites, _gibbs_site(model, address))
+        site = _gibbs_site(choice_steps, address)
+        isnothing(site) || push!(sites, site)
     end
     return sites
 end

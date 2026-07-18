@@ -68,6 +68,30 @@ end
     return n
 end
 
+# a discrete site inside a SUBMODEL: the trace address is prefixed
+# ((:sub, :z)) and only the inlined execution plan carries its spec
+@tea static function gibbs_count_child()
+    z ~ poisson(2.0)
+    return z
+end
+
+@tea static function gibbs_nested_model()
+    mu ~ normal(0.0, 1.0)
+    z = ({:sub} ~ gibbs_count_child())
+    {:y} ~ normal(mu + z, 0.8)
+    return mu
+end
+
+# a marginalized site with a DYNAMIC (non-loop) address: the exclusion must
+# match by template, not by forcing a static address
+@tea static function gibbs_dynamic_marginalized_model(k)
+    mu ~ normal(0.0, 1.0)
+    {:m => k} ~ bernoulli(0.4; marginalize=:enumerate)
+    z ~ poisson(2.0)
+    {:y} ~ normal(mu + z, 0.8)
+    return mu
+end
+
 @testset "mh_within_gibbs" begin
     @testset "gibbs_pure_discrete_vs_enumeration" begin
         # posterior over z by direct truncated enumeration of the support
@@ -205,5 +229,30 @@ end
             num_samples=10,
             rng=MersenneTwister(3),
         )
+
+        # a submodel latent matches through the inlined plan's prefixed address
+        gibbs_nested_chain = gibbs(
+            gibbs_nested_model,
+            (),
+            choicemap((:y, 3.1));
+            num_samples=200,
+            num_warmup=100,
+            rng=MersenneTwister(17),
+        )
+        @test gibbs_nested_chain.discrete_addresses == Any[(:sub, :z)]
+        @test all(isfinite, gibbs_nested_chain.logjoint_values)
+
+        # a marginalized site with a dynamic address stays excluded by
+        # template matching (no static-address requirement)
+        gibbs_dynamic_marg_chain = gibbs(
+            gibbs_dynamic_marginalized_model,
+            (7,),
+            choicemap((:y, 2.4));
+            num_samples=100,
+            num_warmup=100,
+            rng=MersenneTwister(19),
+        )
+        @test gibbs_dynamic_marg_chain.discrete_addresses == Any[(:z,)]
+        @test all(isfinite, gibbs_dynamic_marg_chain.logjoint_values)
     end
 end
