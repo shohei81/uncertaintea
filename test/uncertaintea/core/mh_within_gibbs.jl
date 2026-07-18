@@ -308,4 +308,46 @@ end
         @test all(==(1), gibbs_singleton_chain.discrete_samples)
         @test all(isfinite, gibbs_singleton_chain.constrained_samples)
     end
+
+    @testset "gibbs_nuts_option_parity" begin
+        # the mirrored NUTS options validate like nuts itself
+        @test_throws ArgumentError gibbs(
+            gibbs_indicator_model,
+            (),
+            choicemap((:y, 0.8));
+            num_samples=10,
+            step_size=0.0,
+            rng=MersenneTwister(27),
+        )
+        @test_throws ArgumentError gibbs(
+            gibbs_indicator_model,
+            (),
+            choicemap((:y, 0.8));
+            num_samples=10,
+            target_accept=1.5,
+            rng=MersenneTwister(27),
+        )
+
+        # dense-metric runs keep the adapted dense inverse mass
+        gibbs_dense_chain = gibbs(
+            gibbs_indicator_model,
+            (),
+            choicemap((:y, 0.8));
+            num_samples=100,
+            num_warmup=150,
+            metric=:dense,
+            rng=MersenneTwister(29),
+        )
+        @test gibbs_dense_chain.dense_mass_matrix isa Matrix{Float64}
+        @test size(gibbs_dense_chain.dense_mass_matrix) == (2, 2)
+        gibbs_diag_chain = gibbs(
+            gibbs_indicator_model,
+            (),
+            choicemap((:y, 0.8));
+            num_samples=50,
+            num_warmup=50,
+            rng=MersenneTwister(31),
+        )
+        @test isnothing(gibbs_diag_chain.dense_mass_matrix)
+    end
 end

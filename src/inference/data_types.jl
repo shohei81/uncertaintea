@@ -92,6 +92,8 @@ struct GibbsChain
     divergent::BitVector
     step_size::Float64
     mass_matrix::Vector{Float64}
+    # metric=:dense runs: the adapted dense inverse mass; `nothing` otherwise
+    dense_mass_matrix::Union{Nothing,Matrix{Float64}}
     discrete_addresses::Vector{Any}
     discrete_samples::Matrix{Int}
     # per-site MH acceptance rate over ALL sweeps (warmup included)

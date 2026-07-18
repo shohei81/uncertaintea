@@ -185,11 +185,22 @@ function gibbs(
     rng::AbstractRNG=Random.default_rng(),
 )
     metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
-    num_samples >= 1 || throw(ArgumentError("num_samples must be positive"))
-    num_warmup >= 0 || throw(ArgumentError("num_warmup must be non-negative"))
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     has_continuous = num_params > 0
+    # a pure-discrete model legitimately has zero continuous parameters; the
+    # remaining NUTS options are validated uniformly either way
+    _validate_nuts_arguments(
+        has_continuous ? num_params : 1,
+        num_samples,
+        num_warmup,
+        step_size,
+        max_tree_depth,
+        target_accept,
+        max_delta_energy,
+        mass_matrix_regularization,
+        mass_matrix_min_samples,
+    )
 
     # one prior trace seeds BOTH the discrete values and (absent
     # initial_params) the continuous position, so the initial state is a
@@ -350,6 +361,7 @@ function gibbs(
         divergent,
         has_continuous ? driver.step_size : nuts_step_size,
         has_continuous ? copy(driver.inverse_mass_matrix) : Float64[],
+        has_continuous && driver.metric_kind === :dense ? copy(driver.dense_metric.inverse_mass) : nothing,
         Any[site.address for site in sites],
         discrete_samples,
         discrete_accepted ./ total_iterations,
