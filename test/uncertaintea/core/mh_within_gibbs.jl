@@ -101,6 +101,25 @@ end
     return z
 end
 
+# the vararg categorical form carries K as the argument count
+@tea static function gibbs_vararg_categorical_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ categorical(0.2, 0.3, 0.5)
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
+end
+
+# a fixed-shape loop whose iterator SHADOWS a sampled symbol: the site set is
+# fixed, so this valid model must run
+@tea static function gibbs_shadowing_iterator_model(n)
+    z ~ poisson(2.0)
+    for z = 1:n
+        {:w => z} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
 # a singleton categorical support can never move and must self-transition
 @tea static function gibbs_singleton_model()
     mu ~ normal(0.0, 1.0)
@@ -391,6 +410,32 @@ end
             num_samples=10,
             rng=MersenneTwister(23),
         )
+
+        # the vararg categorical form classifies with K = argument count
+        gibbs_vararg_chain = gibbs(
+            gibbs_vararg_categorical_model,
+            (),
+            choicemap((:y, 1.8));
+            num_samples=200,
+            num_warmup=100,
+            rng=MersenneTwister(61),
+        )
+        @test all(value -> value in 1:3, gibbs_vararg_chain.discrete_samples)
+        @test all(isfinite, gibbs_vararg_chain.constrained_samples)
+
+        # a fixed loop shadowing a sampled iterator name stays a valid
+        # static-shape model
+        gibbs_shadow_chain = gibbs(
+            gibbs_shadowing_iterator_model,
+            (2,),
+            choicemap((:y, 2.0));
+            num_samples=100,
+            num_warmup=50,
+            rng=MersenneTwister(63),
+        )
+        @test (:z,) in gibbs_shadow_chain.discrete_addresses
+        @test (:w, 1) in gibbs_shadow_chain.discrete_addresses
+        @test all(isfinite, gibbs_shadow_chain.logjoint_values)
 
         # a singleton categorical self-transitions instead of erroring
         gibbs_singleton_chain = gibbs(

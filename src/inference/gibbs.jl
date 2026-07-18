@@ -55,9 +55,16 @@ function _gibbs_step_classification(step::ChoicePlanStep, address::Tuple)
     family = step.rhs.family
     categories = 0
     if family === :categorical
-        probabilities = step.rhs.arguments[1]
-        if probabilities isa Expr && probabilities.head == :vect
-            categories = length(probabilities.args)
+        arguments = step.rhs.arguments
+        categories = if length(arguments) > 1
+            # vararg form categorical(p1, p2, ...): K is the argument count
+            length(arguments)
+        elseif length(arguments) == 1 && arguments[1] isa Expr && arguments[1].head == :vect
+            length(arguments[1].args)
+        elseif length(arguments) == 1 && arguments[1] isa Real
+            1
+        else
+            0
         end
     end
     return (false, family, categories)
@@ -224,10 +231,16 @@ function _gibbs_validate_static_shape_steps(
         elseif step isa LoopPlanStep
             loop_tainted = under_tainted_loop || _gibbs_expr_uses(step.iterable, tainted)
             # the iterator's taint is scoped to this loop (the evaluator
-            # restores iterators too): a later fixed-shape loop reusing the
-            # same iterator name must not inherit it
+            # shadows and restores iterators too): inside a FIXED loop the
+            # iterator is fixed even when it shadows a tainted outer symbol,
+            # and a later loop reusing a tainted iterator name must not
+            # inherit it
             iterator_was_tainted = step.iterator in tainted
-            loop_tainted && push!(tainted, step.iterator)
+            if loop_tainted
+                push!(tainted, step.iterator)
+            else
+                delete!(tainted, step.iterator)
+            end
             if loop_tainted && _gibbs_contains_potential_site(step.body, constraints)
                 throw(
                     ArgumentError(
@@ -239,7 +252,11 @@ function _gibbs_validate_static_shape_steps(
                 )
             end
             _gibbs_validate_static_shape_steps(step.body, tainted, constraints, loop_tainted)
-            loop_tainted && !iterator_was_tainted && delete!(tainted, step.iterator)
+            if iterator_was_tainted
+                push!(tainted, step.iterator)
+            else
+                delete!(tainted, step.iterator)
+            end
         elseif step isa ChoicePlanStep && _gibbs_step_potentially_latent(step, constraints)
             for part in step.address.parts
                 part isa AddressDynamicPart || continue
