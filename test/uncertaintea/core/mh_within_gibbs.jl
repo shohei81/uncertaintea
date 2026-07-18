@@ -617,6 +617,15 @@ end
             num_samples=10,
             rng=MersenneTwister(45),
         )
+        # a constraint naming a SLOTTED latent does not fix it (the logjoint
+        # samples it from the position), so the rejection stands
+        @test_throws ArgumentError gibbs(
+            gibbs_continuous_shape_model,
+            (),
+            choicemap((:x, 1.2), (:y, 3.0));
+            num_samples=10,
+            rng=MersenneTwister(46),
+        )
         # a dynamic categorical support cannot guarantee a connected proposal
         @test_throws ArgumentError gibbs(
             gibbs_dynamic_categorical_model,

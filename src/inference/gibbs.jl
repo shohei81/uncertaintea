@@ -206,11 +206,14 @@ function _gibbs_validate_static_shape(model::TeaModel, constraints::ChoiceMap)
 end
 
 # Whether a choice step SAMPLES its binding: everything except an observed
-# all-literal address (fixed by data) counts -- continuous slots, discrete
-# sites, and unobserved marginalize=:enumerate choices (whose value differs
-# per enumeration branch) are all random.
+# SLOTLESS all-literal address (fixed by data) counts -- continuous slots
+# are sampled from the position even when a constraint names their address,
+# and discrete sites and unobserved marginalize=:enumerate choices are random
+# by definition.
 function _gibbs_step_samples_binding(step::ChoicePlanStep, constraints::ChoiceMap)
-    if step.rhs isa DistributionSpec && all(part -> part isa AddressLiteralPart, step.address.parts)
+    if step.rhs isa DistributionSpec &&
+       isnothing(step.parameter_slot) &&
+       all(part -> part isa AddressLiteralPart, step.address.parts)
         static_address = Tuple(part.value for part in step.address.parts)
         haskey(constraints, static_address) && return false
     end
