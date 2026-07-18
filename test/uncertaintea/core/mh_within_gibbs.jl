@@ -211,6 +211,40 @@ end
     return z
 end
 
+# a MARGINALIZED binding shaping the site set is sampled per enumeration
+# branch: equally trans-dimensional, equally rejected
+@tea static function gibbs_marginalized_shape_model()
+    m ~ categorical([0.5, 0.5]; marginalize=:enumerate)
+    for i = 1:m
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * m, 1.0)
+    return m
+end
+
+# a straight-line reassignment from a clean expression clears the taint:
+# the loop bound no longer depends on z
+@tea static function gibbs_reassigned_bound_model()
+    z ~ poisson(2.0)
+    n = z + 1
+    n = 2
+    for i = 1:n
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
+# prior continuous draws almost always make the suffix throw (lognormal(5,1)
+# indexing a 3-vector); a provided initial_params pins the slots during
+# discovery so the seeded start works like plain NUTS
+@tea static function gibbs_hostile_prior_model(ps)
+    x ~ lognormal(5.0, 1.0)
+    z ~ bernoulli(0.5)
+    {:y} ~ normal(ps[floor(Int, x)+1] + 1.0 * z, 1.0)
+    return x
+end
+
 # the shape dependence flows through an assignment inside the tainted loop
 # (`w_last` tracks the iteration count), not through the site binding itself
 @tea static function gibbs_iterator_taint_model()
@@ -596,6 +630,54 @@ end
         @test (:w, 1) in gibbs_reuse_chain.discrete_addresses
         @test (:w, 2) in gibbs_reuse_chain.discrete_addresses
         @test all(isfinite, gibbs_reuse_chain.logjoint_values)
+
+        # a marginalized binding shaping the site set is rejected too
+        @test_throws ArgumentError gibbs(
+            gibbs_marginalized_shape_model,
+            (),
+            choicemap((:y, 1.5));
+            num_samples=10,
+            rng=MersenneTwister(65),
+        )
+
+        # a straight-line reassignment from a clean expression clears the
+        # taint: this fixed-shape model runs
+        gibbs_reassigned_chain = gibbs(
+            gibbs_reassigned_bound_model,
+            (),
+            choicemap((:y, 2.0));
+            num_samples=100,
+            num_warmup=50,
+            rng=MersenneTwister(67),
+        )
+        @test (:w, 1) in gibbs_reassigned_chain.discrete_addresses
+        @test (:w, 2) in gibbs_reassigned_chain.discrete_addresses
+        @test all(isfinite, gibbs_reassigned_chain.logjoint_values)
+    end
+
+    @testset "gibbs_initial_params_pinning" begin
+        # prior continuous draws almost always throw (P(x < 2) ~ 1e-5 under
+        # lognormal(5, 1)), so unseeded initialization exhausts its retries;
+        # the provided initial_params pins the slots during discovery and the
+        # seeded start works. The continuous pass runs with a frozen tiny
+        # step so the trajectory cannot wander into the throwing region --
+        # this pins the INITIALIZATION behavior, not sampling robustness for
+        # a model that is genuinely unevaluable over most of its prior.
+        gibbs_hostile_chain = gibbs(
+            gibbs_hostile_prior_model,
+            ([0.0, 1.0, 2.0],),
+            choicemap((:y, 1.4));
+            num_samples=20,
+            num_warmup=0,
+            initial_params=[0.0],
+            step_size=1e-10,
+            max_tree_depth=1,
+            adapt_step_size=false,
+            adapt_mass_matrix=false,
+            rng=MersenneTwister(69),
+        )
+        @test all(isfinite, gibbs_hostile_chain.logjoint_values)
+        @test all(value -> value in (0, 1), gibbs_hostile_chain.discrete_samples)
     end
 
     @testset "gibbs_nuts_option_parity" begin

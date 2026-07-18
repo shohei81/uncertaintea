@@ -211,6 +211,13 @@ function _gibbs_validate_static_shape(
     for slot in parameterlayout(model).slots
         push!(tainted, slot.binding)
     end
+    # a marginalize=:enumerate binding is sampled too (the logjoint sums over
+    # its support): a shape depending on it differs per enumeration branch
+    for step in _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
+        step.rhs isa DistributionSpec || continue
+        step.rhs.marginalize === :enumerate || continue
+        isnothing(step.binding) || push!(tainted, step.binding)
+    end
     isempty(tainted) && return nothing
     _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted, constraints, false)
     return nothing
@@ -226,8 +233,13 @@ function _gibbs_validate_static_shape_steps(
         if step isa DeterministicPlanStep
             # any assignment under a tainted loop depends on the sampled
             # iteration count (`last = i` inside `for i = 1:z`), whatever its
-            # right-hand side mentions
-            (under_tainted_loop || _gibbs_expr_uses(step.expr, tainted)) && push!(tainted, step.binding)
+            # right-hand side mentions; a straight-line reassignment from a
+            # clean expression clears the symbol (`n = z; n = 2`)
+            if under_tainted_loop || _gibbs_expr_uses(step.expr, tainted)
+                push!(tainted, step.binding)
+            else
+                delete!(tainted, step.binding)
+            end
         elseif step isa LoopPlanStep
             loop_tainted = under_tainted_loop || _gibbs_expr_uses(step.iterable, tainted)
             # the iterator's taint is scoped to this loop (the evaluator
@@ -359,13 +371,25 @@ function gibbs(
     initialized = false
     initialization_attempt = 0
     # seed values enter the prior draws as constraints, so a seeded site can
-    # never take an unevaluable prior value in the first place
-    generation_constraints = if isnothing(initial_discrete)
+    # never take an unevaluable prior value in the first place; likewise a
+    # provided initial_params pins the continuous slots, so the discovery
+    # draws cannot wander into throwing regions the caller already avoided
+    seeded_position = isnothing(initial_params) ? nothing :
+                      _initial_hmc_position(model, args, constraints, initial_params, rng)
+    generation_constraints = if isnothing(initial_discrete) && isnothing(seeded_position)
         constraints
     else
         seeded = choicemap((first(entry), last(entry)) for entry in constraints.entries)
-        for entry in initial_discrete.entries
-            _pushchoice!(seeded, first(entry), last(entry))
+        if !isnothing(initial_discrete)
+            for entry in initial_discrete.entries
+                _pushchoice!(seeded, first(entry), last(entry))
+            end
+        end
+        if !isnothing(seeded_position) && has_continuous
+            seeded_constrained = transform_to_constrained(model, seeded_position, args)
+            for entry in parameterchoicemap(model, seeded_constrained).entries
+                _pushchoice!(seeded, first(entry), last(entry))
+            end
         end
         seeded
     end
@@ -400,10 +424,10 @@ function gibbs(
                 _pushchoice!(merged, first(entry), last(entry))
             end
         end
-        position = if isnothing(initial_params)
+        position = if isnothing(seeded_position)
             has_continuous ? transform_to_unconstrained(trace) : Float64[]
         else
-            _initial_hmc_position(model, args, merged, initial_params, rng)
+            seeded_position
         end
         current_logjoint = try
             logjoint_unconstrained(model, position, args, merged)
