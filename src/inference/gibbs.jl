@@ -158,20 +158,20 @@ _gibbs_expr_uses(expr::Symbol, symbols::Set{Symbol}) = expr in symbols
 _gibbs_expr_uses(expr::Expr, symbols::Set{Symbol}) = any(arg -> _gibbs_expr_uses(arg, symbols), expr.args)
 
 # A choice step that could be a latent Gibbs site: slotless, not
-# marginalized, and matching no observation address. This is judged from the
-# PLAN template, not from one trace's discovered sites -- a shape-dependent
-# model can draw a shape where the controlled sites do not exist at all
-# (`for i = 1:z` with z drawn 0), and the validation must still fire.
+# marginalized, and not verifiably observed. This is judged from the PLAN
+# template, not from one trace's discovered sites -- a shape-dependent model
+# can draw a shape where the controlled sites do not exist at all (`for i =
+# 1:z` with z drawn 0), and the validation must still fire. Only an
+# ALL-LITERAL address matching a constraint counts as observed: a
+# dynamic-address template may be only partially constrained (one (:w, i)
+# observed, later ones latent), which a static check cannot verify.
 function _gibbs_step_potentially_latent(step::ChoicePlanStep, constraints::ChoiceMap)
     step.rhs isa DistributionSpec || return true
     step.rhs.marginalize === :enumerate && return false
     isnothing(step.parameter_slot) || return false
-    for entry in constraints.entries
-        address = first(entry)
-        address isa Tuple || continue
-        _gibbs_step_matches(step, address; exact=false) && return false
-    end
-    return true
+    all(part -> part isa AddressLiteralPart, step.address.parts) || return true
+    static_address = Tuple(part.value for part in step.address.parts)
+    return !haskey(constraints, static_address)
 end
 
 function _gibbs_contains_potential_site(steps, constraints::ChoiceMap)
@@ -195,7 +195,8 @@ function _gibbs_validate_static_shape(
     site_steps::Set{ChoicePlanStep},
     constraints::ChoiceMap,
 )
-    isempty(sites) && return nothing
+    # NO early return on empty `sites`: the seed trace can draw a shape with
+    # zero controlled sites while a continuous parameter still shapes them
     tainted = Set{Symbol}()
     for step in site_steps
         isnothing(step.binding) || push!(tainted, step.binding)
@@ -216,9 +217,13 @@ function _gibbs_validate_static_shape_steps(
 )
     for step in steps
         if step isa DeterministicPlanStep
-            _gibbs_expr_uses(step.expr, tainted) && push!(tainted, step.binding)
+            # any assignment under a tainted loop depends on the sampled
+            # iteration count (`last = i` inside `for i = 1:z`), whatever its
+            # right-hand side mentions
+            (under_tainted_loop || _gibbs_expr_uses(step.expr, tainted)) && push!(tainted, step.binding)
         elseif step isa LoopPlanStep
             loop_tainted = under_tainted_loop || _gibbs_expr_uses(step.iterable, tainted)
+            loop_tainted && push!(tainted, step.iterator)
             if loop_tainted && _gibbs_contains_potential_site(step.body, constraints)
                 throw(
                     ArgumentError(

@@ -165,6 +165,30 @@ end
     return mu
 end
 
+# the continuous-shaped loop can draw ZERO controlled sites at the seed; the
+# rejection must fire regardless of the drawn shape
+@tea static function gibbs_zero_site_seed_model()
+    x ~ lognormal(0.0, 0.3)
+    for i = 1:(floor(Int, x)-1)
+        {:z => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * x, 1.0)
+    return x
+end
+
+# the shape dependence flows through an assignment inside the tainted loop
+# (`w_last` tracks the iteration count), not through the site binding itself
+@tea static function gibbs_iterator_taint_model()
+    w_last = 1
+    z ~ poisson(2.0)
+    for i = 1:z
+        w_last = i + 1
+    end
+    {:w => w_last} ~ bernoulli(0.5)
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
 @testset "mh_within_gibbs" begin
     @testset "gibbs_pure_discrete_vs_enumeration" begin
         # posterior over z by direct truncated enumeration of the support
@@ -467,6 +491,35 @@ end
             choicemap((:y, 1.4));
             num_samples=10,
             rng=MersenneTwister(47),
+        )
+        # a PARTIALLY observed dynamic template stays a potential site: one
+        # constrained (:w, 1) must not launder the whole loop as observed
+        @test_throws ArgumentError gibbs(
+            gibbs_transdim_loop_model,
+            (),
+            choicemap((:w => 1, false), (:y, 2.0));
+            num_samples=10,
+            rng=MersenneTwister(51),
+        )
+        # the rejection is shape-independent: seeds whose prior draw has zero
+        # controlled sites still reject at construction
+        for gibbs_zero_seed = 1:3
+            @test_throws ArgumentError gibbs(
+                gibbs_zero_site_seed_model,
+                (),
+                choicemap((:y, 1.0));
+                num_samples=10,
+                rng=MersenneTwister(52 + gibbs_zero_seed),
+            )
+        end
+        # taint flows through assignments inside the tainted loop (iteration
+        # count dependence), not only through the site binding itself
+        @test_throws ArgumentError gibbs(
+            gibbs_iterator_taint_model,
+            (),
+            choicemap((:y, 2.0));
+            num_samples=10,
+            rng=MersenneTwister(57),
         )
     end
 
