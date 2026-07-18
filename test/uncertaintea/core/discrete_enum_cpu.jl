@@ -290,6 +290,32 @@ end
               denc_fd_gradient(denc_tainted_suffix_model, denc_bn_taint_params[:, 1], denc_bn_taint_constraints) atol =
             5e-6
 
+        # a cached analytic gradient can hit a runtime capability gap the
+        # construction probe could not see: constructed where every branch is
+        # evaluable, then called at parameters where the z = 1 branch throws
+        # for the conditioned-away column -- that call recomputes per column
+        denc_bn_runtime_constraints = [
+            choicemap((:w, true)),
+            choicemap((:z, false), (:w, true)),
+        ]
+        denc_bn_runtime_cache = BatchedLogjointGradientCache(
+            denc_partial_branch_model,
+            reshape([log(0.5), log(0.5)], 1, 2),
+            (),
+            denc_bn_runtime_constraints,
+        )
+        @test !isnothing(denc_bn_runtime_cache.backend_cache)
+        denc_bn_runtime_bad_params = reshape([log(0.5), log(1.5)], 1, 2)
+        denc_bn_runtime_gradient =
+            batched_logjoint_gradient_unconstrained(denc_bn_runtime_cache, denc_bn_runtime_bad_params)
+        for index = 1:2
+            @test denc_bn_runtime_gradient[:, index] ≈ denc_fd_gradient(
+                denc_partial_branch_model,
+                denc_bn_runtime_bad_params[:, index],
+                denc_bn_runtime_constraints[index],
+            ) atol = 5e-6
+        end
+
         # a binding rebound from a differentiable assignment stays a branch
         # CONSTANT in the analytic gradient (the slot-gradient plane is
         # cleared per branch)
