@@ -222,6 +222,18 @@ end
     return m
 end
 
+# a clean assignment BEFORE the sample must not launder the binding: the
+# choice re-taints z at its own (later) step
+@tea static function gibbs_laundered_binding_model()
+    z = 0
+    z ~ poisson(2.0)
+    for i = 1:z
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * z, 1.0)
+    return z
+end
+
 # a reassignment inside a maybe-empty loop must NOT clear the taint: at
 # runtime the loop body never runs and n keeps depending on z
 @tea static function gibbs_loop_shadowed_reassign_model()
@@ -686,6 +698,14 @@ end
             choicemap((:y, 2.0));
             num_samples=10,
             rng=MersenneTwister(73),
+        )
+        # a clean assignment BEFORE the sample does not launder the binding
+        @test_throws ArgumentError gibbs(
+            gibbs_laundered_binding_model,
+            (),
+            choicemap((:y, 2.0));
+            num_samples=10,
+            rng=MersenneTwister(75),
         )
 
         # a straight-line reassignment from a clean expression clears the

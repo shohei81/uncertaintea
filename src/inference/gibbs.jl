@@ -156,7 +156,7 @@ function _gibbs_discrete_sites(model::TeaModel, trace::TeaTrace, constraints::Ch
         site = _gibbs_site(choice_steps, address, site_steps)
         isnothing(site) || push!(sites, site)
     end
-    _gibbs_validate_static_shape(model, sites, site_steps, constraints)
+    _gibbs_validate_static_shape(model, constraints)
     return sites
 end
 
@@ -196,37 +196,25 @@ end
 # down-moves would leave stale ones behind, silently biasing the chain.
 # Reject such models at construction. Model arguments and observed loops are
 # fixed and stay allowed.
-function _gibbs_validate_static_shape(
-    model::TeaModel,
-    sites::Vector{GibbsSite},
-    site_steps::Set{ChoicePlanStep},
-    constraints::ChoiceMap,
-)
-    # NO early return on empty `sites`: the seed trace can draw a shape with
-    # zero controlled sites while a continuous parameter still shapes them
-    tainted = Set{Symbol}()
-    for step in site_steps
-        isnothing(step.binding) || push!(tainted, step.binding)
-    end
-    for slot in parameterlayout(model).slots
-        push!(tainted, slot.binding)
-    end
-    # a marginalize=:enumerate binding is sampled too (the logjoint sums over
-    # its support): a shape depending on it differs per enumeration branch --
-    # unless the choice is observed, which conditions it to one fixed value
-    for step in _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
-        step.rhs isa DistributionSpec || continue
-        step.rhs.marginalize === :enumerate || continue
-        isnothing(step.binding) && continue
-        if all(part -> part isa AddressLiteralPart, step.address.parts)
-            static_address = Tuple(part.value for part in step.address.parts)
-            haskey(constraints, static_address) && continue
-        end
-        push!(tainted, step.binding)
-    end
-    isempty(tainted) && return nothing
-    _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted, constraints, false, false)
+function _gibbs_validate_static_shape(model::TeaModel, constraints::ChoiceMap)
+    # the walk runs regardless of the seed trace's drawn shape (it can draw
+    # zero controlled sites), and bindings are tainted AT their sampling step
+    # (a clean earlier assignment to the same symbol must not launder a later
+    # sample), so it starts from an empty set
+    _gibbs_validate_static_shape_steps(executionplan(model).steps, Set{Symbol}(), constraints, false, false)
     return nothing
+end
+
+# Whether a choice step SAMPLES its binding: everything except an observed
+# all-literal address (fixed by data) counts -- continuous slots, discrete
+# sites, and unobserved marginalize=:enumerate choices (whose value differs
+# per enumeration branch) are all random.
+function _gibbs_step_samples_binding(step::ChoicePlanStep, constraints::ChoiceMap)
+    if step.rhs isa DistributionSpec && all(part -> part isa AddressLiteralPart, step.address.parts)
+        static_address = Tuple(part.value for part in step.address.parts)
+        haskey(constraints, static_address) && return false
+    end
+    return true
 end
 
 function _gibbs_validate_static_shape_steps(
@@ -278,16 +266,23 @@ function _gibbs_validate_static_shape_steps(
             else
                 delete!(tainted, step.iterator)
             end
-        elseif step isa ChoicePlanStep && _gibbs_step_potentially_latent(step, constraints)
-            for part in step.address.parts
-                part isa AddressDynamicPart || continue
-                _gibbs_expr_uses(part.value, tainted) && throw(
-                    ArgumentError(
-                        "gibbs does not support models where the set of discrete latent sites " *
-                        "changes with a latent value (the address of $(step.address) depends " *
-                        "on a sampled quantity); marginalize the site or restructure the model",
-                    ),
-                )
+        elseif step isa ChoicePlanStep
+            if _gibbs_step_potentially_latent(step, constraints)
+                for part in step.address.parts
+                    part isa AddressDynamicPart || continue
+                    _gibbs_expr_uses(part.value, tainted) && throw(
+                        ArgumentError(
+                            "gibbs does not support models where the set of discrete latent " *
+                            "sites changes with a latent value (the address of " *
+                            "$(step.address) depends on a sampled quantity); marginalize the " *
+                            "site or restructure the model",
+                        ),
+                    )
+                end
+            end
+            # taint the binding at the sampling point (temporal correctness)
+            if !isnothing(step.binding) && _gibbs_step_samples_binding(step, constraints)
+                push!(tainted, step.binding)
             end
         end
     end
