@@ -100,7 +100,10 @@ term entirely — `log alpha = L(z') - L(z)`:
   heavier-tailed symmetric step (`s = 1 + Geometric(p)`) helps large-count
   posteriors and stays correction-free.
 - bernoulli: deterministic flip.
-- categorical(K): uniform over the K-1 other categories.
+- categorical(K): uniform over the K-1 other categories. The probability
+  vector must be a literal so K is known — a dynamic vector may contain
+  zero-probability categories between positive ones, which a local walk
+  cannot cross, so those sites are rejected honestly (marginalize instead).
 
 The family (and K, for categorical) comes from the model spec choice
 matching the site's address; loop-scoped sites share their template's spec.
@@ -153,11 +156,12 @@ Track 1 supplies the oracle: the same indicator-mixture model written with
 
 ## Non-goals
 
-- Trans-dimensional models: a discrete site whose value shapes the SET of
-  latent choices (a loop bound or a dynamic address depending on its
-  binding) would make up-moves require missing choices and down-moves leave
-  stale ones behind — reversible-jump territory. The sampler rejects such
-  models at construction via a binding-taint walk over the plan.
+- Trans-dimensional models: when the SET of Gibbs sites depends on any
+  sampled quantity — a Gibbs site's own binding or a continuous parameter
+  flowing into a loop bound or dynamic address around a site — moves would
+  require missing choices or leave stale ones behind (reversible-jump
+  territory). The sampler rejects such models at construction via a
+  binding-taint walk over the plan.
 - Batched/multi-chain Gibbs (single-chain first; the batched NUTS machinery
   conditions all columns on one constraint layout and would need per-column
   discrete states).

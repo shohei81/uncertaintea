@@ -144,6 +144,27 @@ end
     return z
 end
 
+# a CONTINUOUS parameter shaping the site set is trans-dimensional too: NUTS
+# moves would change which {:z => i} exist
+@tea static function gibbs_continuous_shape_model()
+    x ~ lognormal(1.0, 0.5)
+    n = floor(Int, x) + 1
+    for i = 1:n
+        {:z => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * n, 1.0)
+    return x
+end
+
+# a categorical with a dynamic probability vector hides the support size and
+# a +-1 walk could strand in a connected component: rejected honestly
+@tea static function gibbs_dynamic_categorical_model(ps)
+    mu ~ normal(0.0, 1.0)
+    z ~ categorical(ps)
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
+end
+
 @testset "mh_within_gibbs" begin
     @testset "gibbs_pure_discrete_vs_enumeration" begin
         # posterior over z by direct truncated enumeration of the support
@@ -397,6 +418,20 @@ end
         )
         @test all(value -> 0 <= value <= 2, gibbs_throwing_chain.discrete_samples)
         @test all(isfinite, gibbs_throwing_chain.logjoint_values)
+
+        # a seed enters the prior draws as a constraint, so a model whose
+        # UNSEEDED draws almost always throw (only z = 0 is evaluable)
+        # initializes deterministically from initial_discrete
+        gibbs_seeded_throwing_chain = gibbs(
+            gibbs_throwing_init_model,
+            ([0.5],),
+            choicemap((:y, 0.4));
+            num_samples=100,
+            num_warmup=50,
+            initial_discrete=choicemap((:z, 0)),
+            rng=MersenneTwister(49),
+        )
+        @test all(==(0), gibbs_seeded_throwing_chain.discrete_samples)
     end
 
     @testset "gibbs_transdimensional_rejection" begin
@@ -416,6 +451,22 @@ end
             choicemap((:y, 2.0));
             num_samples=10,
             rng=MersenneTwister(43),
+        )
+        # ... and for a continuous parameter shaping the site set
+        @test_throws ArgumentError gibbs(
+            gibbs_continuous_shape_model,
+            (),
+            choicemap((:y, 3.0));
+            num_samples=10,
+            rng=MersenneTwister(45),
+        )
+        # a dynamic categorical support cannot guarantee a connected proposal
+        @test_throws ArgumentError gibbs(
+            gibbs_dynamic_categorical_model,
+            ([0.3, 0.7],),
+            choicemap((:y, 1.4));
+            num_samples=10,
+            rng=MersenneTwister(47),
         )
     end
 

@@ -68,8 +68,9 @@ end
 # families, a loud error otherwise. An exact all-literal address match wins
 # outright; otherwise every template match (dynamic parts as wildcards) must
 # agree on the classification, because a wildcard template can shadow an
-# unrelated concrete site.
-function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
+# unrelated concrete site. Matched steps accumulate into `site_steps` for the
+# shape validation.
+function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple, site_steps::Set{ChoicePlanStep})
     matched_step = nothing
     for step in choice_steps
         if _gibbs_step_matches(step, address; exact=true)
@@ -78,6 +79,7 @@ function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
         end
     end
     classification = if !isnothing(matched_step)
+        push!(site_steps, matched_step)
         _gibbs_step_classification(matched_step, address)
     else
         candidates = [step for step in choice_steps if _gibbs_step_matches(step, address; exact=false)]
@@ -96,6 +98,9 @@ function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
                 "conflicting classifications $classifications; disambiguate the addresses",
             ),
         )
+        for step in candidates
+            push!(site_steps, step)
+        end
         classifications[1]
     end
 
@@ -115,10 +120,16 @@ function _gibbs_site(choice_steps::Vector{ChoicePlanStep}, address::Tuple)
         # sampling from an empty proposal range
         categories == 1 && return GibbsSite(address, :fixed, 1, 1)
         categories > 1 && return GibbsSite(address, :uniform_other, 1, categories)
-        # non-literal probability vector: the support size is unknown at this
-        # point, so fall back to the +-1 walk (out-of-range proposals reject
-        # through scoring)
-        return GibbsSite(address, :walk, 1, 0)
+        # a non-literal probability vector hides the support size, and a +-1
+        # walk cannot cross zero-probability categories between positive
+        # ones -- reject rather than sample a disconnected component
+        throw(
+            ArgumentError(
+                "gibbs requires categorical sites to have a literal probability vector so the " *
+                "uniform proposal can reach every category; choice $address has a dynamic one " *
+                "(marginalize the site or use a literal vector)",
+            ),
+        )
     end
     return GibbsSite(address, :walk, 0, 0)
 end
@@ -130,14 +141,15 @@ function _gibbs_discrete_sites(model::TeaModel, trace::TeaTrace, constraints::Ch
     latent_map = parameterchoicemap(model, parameter_vector(trace))
     choice_steps = _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
     sites = GibbsSite[]
+    site_steps = Set{ChoicePlanStep}()
     for entry in trace.choices.entries
         address = first(entry)
         haskey(latent_map, address) && continue
         haskey(constraints, address) && continue
-        site = _gibbs_site(choice_steps, address)
+        site = _gibbs_site(choice_steps, address, site_steps)
         isnothing(site) || push!(sites, site)
     end
-    _gibbs_validate_static_shape(model, choice_steps, sites)
+    _gibbs_validate_static_shape(model, sites, site_steps, constraints)
     return sites
 end
 
@@ -145,47 +157,87 @@ _gibbs_expr_uses(expr, symbols::Set{Symbol}) = false
 _gibbs_expr_uses(expr::Symbol, symbols::Set{Symbol}) = expr in symbols
 _gibbs_expr_uses(expr::Expr, symbols::Set{Symbol}) = any(arg -> _gibbs_expr_uses(arg, symbols), expr.args)
 
-# A discrete site whose value shapes the latent-choice SET (a loop bound or a
-# dynamic address depending on its binding) is trans-dimensional: the merged
-# conditioning map is discovered from one trace, so up-moves would require
-# missing choices and down-moves would leave stale ones behind, silently
-# biasing the chain. Reject such models at construction.
-function _gibbs_validate_static_shape(model::TeaModel, choice_steps::Vector{ChoicePlanStep}, sites::Vector{GibbsSite})
+# A choice step that could be a latent Gibbs site: slotless, not
+# marginalized, and matching no observation address. This is judged from the
+# PLAN template, not from one trace's discovered sites -- a shape-dependent
+# model can draw a shape where the controlled sites do not exist at all
+# (`for i = 1:z` with z drawn 0), and the validation must still fire.
+function _gibbs_step_potentially_latent(step::ChoicePlanStep, constraints::ChoiceMap)
+    step.rhs isa DistributionSpec || return true
+    step.rhs.marginalize === :enumerate && return false
+    isnothing(step.parameter_slot) || return false
+    for entry in constraints.entries
+        address = first(entry)
+        address isa Tuple || continue
+        _gibbs_step_matches(step, address; exact=false) && return false
+    end
+    return true
+end
+
+function _gibbs_contains_potential_site(steps, constraints::ChoiceMap)
+    for step in steps
+        step isa ChoicePlanStep && _gibbs_step_potentially_latent(step, constraints) && return true
+        step isa LoopPlanStep && _gibbs_contains_potential_site(step.body, constraints) && return true
+    end
+    return false
+end
+
+# The set of Gibbs-site addresses must stay constant across the chain: a loop
+# bound or dynamic address that shapes a potential SITE and depends on any
+# latent quantity (a Gibbs site's binding OR a continuous parameter) makes
+# the model trans-dimensional -- up-moves would require missing choices and
+# down-moves would leave stale ones behind, silently biasing the chain.
+# Reject such models at construction. Model arguments and observed loops are
+# fixed and stay allowed.
+function _gibbs_validate_static_shape(
+    model::TeaModel,
+    sites::Vector{GibbsSite},
+    site_steps::Set{ChoicePlanStep},
+    constraints::ChoiceMap,
+)
+    isempty(sites) && return nothing
     tainted = Set{Symbol}()
-    for site in sites
-        for step in choice_steps
-            if _gibbs_step_matches(step, site.address; exact=true) ||
-               _gibbs_step_matches(step, site.address; exact=false)
-                isnothing(step.binding) || push!(tainted, step.binding)
-            end
-        end
+    for step in site_steps
+        isnothing(step.binding) || push!(tainted, step.binding)
+    end
+    for slot in parameterlayout(model).slots
+        push!(tainted, slot.binding)
     end
     isempty(tainted) && return nothing
-    _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted)
+    _gibbs_validate_static_shape_steps(executionplan(model).steps, tainted, constraints, false)
     return nothing
 end
 
-function _gibbs_validate_static_shape_steps(steps, tainted::Set{Symbol})
+function _gibbs_validate_static_shape_steps(
+    steps,
+    tainted::Set{Symbol},
+    constraints::ChoiceMap,
+    under_tainted_loop::Bool,
+)
     for step in steps
         if step isa DeterministicPlanStep
             _gibbs_expr_uses(step.expr, tainted) && push!(tainted, step.binding)
         elseif step isa LoopPlanStep
-            _gibbs_expr_uses(step.iterable, tainted) && throw(
-                ArgumentError(
-                    "gibbs does not support discrete latents whose value shapes the set of " *
-                    "latent choices (a loop bound depends on a Gibbs site); marginalize the " *
-                    "site or restructure the model",
-                ),
-            )
-            _gibbs_validate_static_shape_steps(step.body, tainted)
-        elseif step isa ChoicePlanStep
+            loop_tainted = under_tainted_loop || _gibbs_expr_uses(step.iterable, tainted)
+            if loop_tainted && _gibbs_contains_potential_site(step.body, constraints)
+                throw(
+                    ArgumentError(
+                        "gibbs does not support models where the set of discrete latent sites " *
+                        "changes with a latent value (a loop bound around a latent choice " *
+                        "depends on a sampled quantity); marginalize the site or restructure " *
+                        "the model",
+                    ),
+                )
+            end
+            _gibbs_validate_static_shape_steps(step.body, tainted, constraints, loop_tainted)
+        elseif step isa ChoicePlanStep && _gibbs_step_potentially_latent(step, constraints)
             for part in step.address.parts
                 part isa AddressDynamicPart || continue
                 _gibbs_expr_uses(part.value, tainted) && throw(
                     ArgumentError(
-                        "gibbs does not support discrete latents whose value shapes the set of " *
-                        "latent choices (the address of $(step.address) depends on a Gibbs " *
-                        "site); marginalize the site or restructure the model",
+                        "gibbs does not support models where the set of discrete latent sites " *
+                        "changes with a latent value (the address of $(step.address) depends " *
+                        "on a sampled quantity); marginalize the site or restructure the model",
                     ),
                 )
             end
@@ -279,10 +331,21 @@ function gibbs(
     current_logjoint = -Inf
     initialized = false
     initialization_attempt = 0
+    # seed values enter the prior draws as constraints, so a seeded site can
+    # never take an unevaluable prior value in the first place
+    generation_constraints = if isnothing(initial_discrete)
+        constraints
+    else
+        seeded = choicemap((first(entry), last(entry)) for entry in constraints.entries)
+        for entry in initial_discrete.entries
+            _pushchoice!(seeded, first(entry), last(entry))
+        end
+        seeded
+    end
     while initialization_attempt < initialization_limit
         initialization_attempt += 1
         trace = try
-            generate(model, args, constraints; rng=rng)[1]
+            generate(model, args, generation_constraints; rng=rng)[1]
         catch err
             _gibbs_rejectable_error(err) || rethrow()
             continue
