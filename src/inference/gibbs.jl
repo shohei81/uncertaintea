@@ -223,6 +223,10 @@ function _gibbs_validate_static_shape_steps(
             (under_tainted_loop || _gibbs_expr_uses(step.expr, tainted)) && push!(tainted, step.binding)
         elseif step isa LoopPlanStep
             loop_tainted = under_tainted_loop || _gibbs_expr_uses(step.iterable, tainted)
+            # the iterator's taint is scoped to this loop (the evaluator
+            # restores iterators too): a later fixed-shape loop reusing the
+            # same iterator name must not inherit it
+            iterator_was_tainted = step.iterator in tainted
             loop_tainted && push!(tainted, step.iterator)
             if loop_tainted && _gibbs_contains_potential_site(step.body, constraints)
                 throw(
@@ -235,6 +239,7 @@ function _gibbs_validate_static_shape_steps(
                 )
             end
             _gibbs_validate_static_shape_steps(step.body, tainted, constraints, loop_tainted)
+            loop_tainted && !iterator_was_tainted && delete!(tainted, step.iterator)
         elseif step isa ChoicePlanStep && _gibbs_step_potentially_latent(step, constraints)
             for part in step.address.parts
                 part isa AddressDynamicPart || continue

@@ -176,6 +176,22 @@ end
     return x
 end
 
+# a latent-dependent loop WITHOUT sites followed by a fixed-shape site loop
+# reusing the iterator name: the iterator taint is scoped, so this valid
+# static-shape model must run
+@tea static function gibbs_iterator_reuse_model(n)
+    z ~ poisson(2.0)
+    total = 0.0
+    for i = 1:z
+        total = total + 1.0
+    end
+    for i = 1:n
+        {:w => i} ~ bernoulli(0.5)
+    end
+    {:y} ~ normal(1.0 * z + total, 1.0)
+    return z
+end
+
 # the shape dependence flows through an assignment inside the tainted loop
 # (`w_last` tracks the iteration count), not through the site binding itself
 @tea static function gibbs_iterator_taint_model()
@@ -521,6 +537,20 @@ end
             num_samples=10,
             rng=MersenneTwister(57),
         )
+        # ... but iterator taint is SCOPED: a fixed-shape site loop reusing
+        # the iterator name after a latent-dependent site-free loop is valid
+        gibbs_reuse_chain = gibbs(
+            gibbs_iterator_reuse_model,
+            (2,),
+            choicemap((:y, 3.0));
+            num_samples=100,
+            num_warmup=50,
+            rng=MersenneTwister(59),
+        )
+        @test (:z,) in gibbs_reuse_chain.discrete_addresses
+        @test (:w, 1) in gibbs_reuse_chain.discrete_addresses
+        @test (:w, 2) in gibbs_reuse_chain.discrete_addresses
+        @test all(isfinite, gibbs_reuse_chain.logjoint_values)
     end
 
     @testset "gibbs_nuts_option_parity" begin
