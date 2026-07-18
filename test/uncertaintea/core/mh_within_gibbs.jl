@@ -109,6 +109,14 @@ end
     return mu
 end
 
+# observations rule out most prior draws of z (binomial needs z >= y): the
+# initializer must retry, or accept an explicit initial_discrete seed
+@tea static function gibbs_constrained_init_model()
+    z ~ poisson(3.0)
+    {:y} ~ binomial(z, 0.6)
+    return z
+end
+
 @testset "mh_within_gibbs" begin
     @testset "gibbs_pure_discrete_vs_enumeration" begin
         # posterior over z by direct truncated enumeration of the support
@@ -307,6 +315,49 @@ end
         )
         @test all(==(1), gibbs_singleton_chain.discrete_samples)
         @test all(isfinite, gibbs_singleton_chain.constrained_samples)
+    end
+
+    @testset "gibbs_initialization" begin
+        # a moderately constrained observation: the bounded prior retry finds
+        # a supported state (P(z >= 5) under poisson(3) is ~0.18)
+        gibbs_init_chain = gibbs(
+            gibbs_constrained_init_model,
+            (),
+            choicemap((:y, 5));
+            num_samples=300,
+            num_warmup=100,
+            rng=MersenneTwister(33),
+        )
+        @test all(>=(5), gibbs_init_chain.discrete_samples)
+
+        # a hopeless prior (P(z >= 12) ~ 5e-5): initial_discrete seeds the
+        # supported state deterministically
+        gibbs_seeded_chain = gibbs(
+            gibbs_constrained_init_model,
+            (),
+            choicemap((:y, 12));
+            num_samples=300,
+            num_warmup=100,
+            initial_discrete=choicemap((:z, 14)),
+            rng=MersenneTwister(35),
+        )
+        @test all(>=(12), gibbs_seeded_chain.discrete_samples)
+
+        # initial_discrete addresses must be discovered sites
+        @test_throws ArgumentError gibbs(
+            gibbs_constrained_init_model,
+            (),
+            choicemap((:y, 5));
+            num_samples=10,
+            initial_discrete=choicemap((:nope, 1)),
+            rng=MersenneTwister(37),
+        )
+
+        # proposal-scoring rejection stays scoped to support/domain failures
+        @test UncertainTea._gibbs_rejectable_error(BoundsError([1.0], 2))
+        @test UncertainTea._gibbs_rejectable_error(DomainError(-1.0))
+        @test !UncertainTea._gibbs_rejectable_error(InterruptException())
+        @test !UncertainTea._gibbs_rejectable_error(ErrorException("bug"))
     end
 
     @testset "gibbs_nuts_option_parity" begin

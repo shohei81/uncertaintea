@@ -140,6 +140,11 @@ function _gibbs_discrete_sites(model::TeaModel, trace::TeaTrace, constraints::Ch
     return sites
 end
 
+# Exceptions a PROPOSAL evaluation may convert into a zero-density rejection:
+# support/domain failures a proposed branch can legitimately trigger.
+# Everything else (interrupts, genuine model bugs) rethrows diagnostically.
+_gibbs_rejectable_error(err) = err isa Union{ArgumentError,DomainError,BoundsError,InexactError}
+
 function _gibbs_propose(rng::AbstractRNG, site::GibbsSite, value)
     if site.kind === :flip
         current = value isa Bool ? value : value != 0
@@ -163,7 +168,10 @@ that is not `marginalize=:enumerate`); a model without discrete sites reduces
 to plain NUTS, and a model without continuous slots to pure single-site MH.
 
 Returns a [`GibbsChain`](@ref) with the continuous samples and per-site
-discrete samples. The NUTS keyword arguments mirror [`nuts`](@ref).
+discrete samples. The NUTS keyword arguments mirror [`nuts`](@ref); the
+prior initial state is retried when observations rule it out, and
+`initial_discrete` (a choicemap over site addresses) seeds specific
+discrete values when the prior cannot reach the posterior's support.
 """
 function gibbs(
     model::TeaModel,
@@ -174,6 +182,7 @@ function gibbs(
     step_size::Real=0.1,
     max_tree_depth::Int=10,
     initial_params=nothing,
+    initial_discrete::Union{Nothing,ChoiceMap}=nothing,
     target_accept::Real=0.8,
     adapt_step_size::Bool=true,
     adapt_mass_matrix::Bool=true,
@@ -216,14 +225,47 @@ function gibbs(
         _pushchoice!(merged, site.address, trace.choices[site.address])
     end
 
+    if !isnothing(initial_discrete)
+        for entry in initial_discrete.entries
+            address = first(entry)
+            any(site -> site.address == address, sites) || throw(
+                ArgumentError(
+                    "initial_discrete provides a value for $address, which is not a discovered " *
+                    "Gibbs site (sites: $(Any[site.address for site in sites]))",
+                ),
+            )
+            _pushchoice!(merged, address, last(entry))
+        end
+    end
+
     position = if isnothing(initial_params)
         has_continuous ? transform_to_unconstrained(trace) : Float64[]
     else
         _initial_hmc_position(model, args, merged, initial_params, rng)
     end
     current_logjoint = logjoint_unconstrained(model, position, args, merged)
-    isfinite(current_logjoint) ||
-        throw(ArgumentError("initial gibbs state produced a non-finite unconstrained logjoint"))
+    # observations can rule most prior draws of a discrete site out (a
+    # binomial observation above the drawn trial count, say); retry the prior
+    # seed a bounded number of times before asking for initial_discrete
+    initialization_attempt = 0
+    while !isfinite(current_logjoint) && isnothing(initial_discrete) && initialization_attempt < 100
+        initialization_attempt += 1
+        trace, _ = generate(model, args, constraints; rng=rng)
+        for site in sites
+            _pushchoice!(merged, site.address, trace.choices[site.address])
+        end
+        if isnothing(initial_params) && has_continuous
+            position = transform_to_unconstrained(trace)
+        end
+        current_logjoint = logjoint_unconstrained(model, position, args, merged)
+    end
+    isfinite(current_logjoint) || throw(
+        ArgumentError(
+            "gibbs could not find a finite initial state from the prior after " *
+            "$(initialization_attempt + 1) attempts; pass initial_discrete (and initial_params) " *
+            "to seed a supported state",
+        ),
+    )
 
     nuts_step_size = Float64(step_size)
     nuts_target_accept = Float64(target_accept)
@@ -285,10 +327,12 @@ function gibbs(
             _pushchoice!(merged, site.address, proposed)
             # a proposal the model cannot evaluate is a zero-density region
             # (dynamic support bounds); the CURRENT state's scoring is never
-            # caught, so genuine model errors still surface loudly
+            # caught, and only support/domain failures map to rejection --
+            # interrupts and unrelated errors rethrow
             proposal_logjoint = try
                 logjoint_unconstrained(model, position, args, merged)
-            catch
+            catch err
+                _gibbs_rejectable_error(err) || rethrow()
                 -Inf
             end
             if log(rand(rng)) < proposal_logjoint - current_logjoint
