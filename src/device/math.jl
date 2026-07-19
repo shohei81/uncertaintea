@@ -767,19 +767,56 @@ end
             z_position += 1
             entry = Symbol(:entry_, row, :_, col)
             entry_symbols[packed_index(row, col)] = entry
-            # log1p(-min(s, 1)) matches the CPU log1p(-s) bit-for-bit on the
-            # healthy path and degrades to log(0) = -Inf (never a negative
-            # argument) when tanh saturation pushes s to 1
+            saturated = Symbol(:saturated_, row, :_, col)
+            # tanh saturation (|z| large enough that an earlier w rounds to
+            # +-1) pushes s to exactly 1; the ifelse selects a CONSTANT -Inf /
+            # zero there because the eagerly-evaluated log1p(-1) and sqrt(0)
+            # carry 0/0 derivative NaNs in the dual channel that would poison
+            # every downstream gradient (the value channel alone would be
+            # fine). min() still caps the eager log1p argument at -1 so the
+            # unselected branch never throws a CPU DomainError. On the healthy
+            # path log1p(-s) matches the CPU form bit-for-bit.
+            push!(body, :($saturated = $sum_sym >= one(z[1])))
+            # the /2 stays INSIDE the healthy branch: dividing the constant
+            # dual(-Inf, 0) by 2 forms -Inf * 0 = NaN in the quotient rule
             push!(
                 body,
-                :(lad += _device_log1m_tanh_sq(z[$z_position]) + log1p(-min($sum_sym, one($sum_sym))) / 2),
+                :(
+                    lad +=
+                        _device_log1m_tanh_sq(z[$z_position]) + ifelse(
+                            $saturated,
+                            oftype($sum_sym, -Inf),
+                            log1p(-min($sum_sym, one($sum_sym))) / 2,
+                        )
+                ),
             )
-            push!(body, :($entry = tanh(z[$z_position]) * sqrt(max(one(z[1]) - $sum_sym, zero(z[1])))))
+            push!(
+                body,
+                :(
+                    $entry =
+                        tanh(z[$z_position]) * ifelse(
+                            $saturated,
+                            zero($sum_sym),
+                            sqrt(max(one(z[1]) - $sum_sym, zero(z[1]))),
+                        )
+                ),
+            )
             push!(body, :($sum_sym += $entry * $entry))
         end
         diagonal = Symbol(:entry_, row, :_, row)
         entry_symbols[packed_index(row, row)] = diagonal
-        push!(body, :($diagonal = sqrt(max(one(z[1]) - $sum_sym, zero(z[1])))))
+        row_saturated = Symbol(:saturated_, row, :_, row)
+        push!(body, :($row_saturated = $sum_sym >= one(z[1])))
+        push!(
+            body,
+            :(
+                $diagonal = ifelse(
+                    $row_saturated,
+                    zero($sum_sym),
+                    sqrt(max(one(z[1]) - $sum_sym, zero(z[1]))),
+                )
+            ),
+        )
     end
     return quote
         $(body...)

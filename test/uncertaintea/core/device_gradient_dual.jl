@@ -371,6 +371,15 @@ end
     v2, g2 = device_batched_logjoint_gradient(devg_lkj_obs_model, params_obs, (), cm_obs)
     g2ref = batched_logjoint_gradient_unconstrained(devg_lkj_obs_model, params_obs, (), cm_obs)
     @test g2 ≈ g2ref rtol = 1e-10
+
+    # Float32 tanh saturation (|z| ~ 12 rounds a partial correlation to +-1)
+    # degrades the value to -Inf but must NOT emit NaN gradients: the
+    # eagerly-evaluated log1p(-1) / sqrt(0) duals carry 0/0 derivatives that
+    # the constrain's saturation guards discard (codex review of issue #57)
+    params_sat = Float32.([12.0 12.0; 12.0 0.4; 12.0 -0.6; 0.1 0.1])
+    v_sat, g_sat = device_batched_logjoint_gradient(devg_lkj_group_model, params_sat, (3,), cm; precision=Float32)
+    @test all(==(-Inf32), v_sat)
+    @test !any(isnan, g_sat)
 end
 
 @tea static function devg_mvdense_model(L)
