@@ -107,13 +107,15 @@ end
 # Odd-leaf dyadic U-turn test for one dyadic block ending at the current leaf: for
 # each masked chain, compare the block's start checkpoint (slot `slot`) against the
 # current endpoint. `sign[b] > 0` orients (checkpoint -> current); otherwise the
-# arguments swap. ORs a turn into `turning` (never clears it), so the host can
-# fold multiple blocks by launching this once per block over a zeroed `turning`.
+# arguments swap. Velocities are metric-aware (M^{-1} p, diagonal `inverse_mass`),
+# mirroring the host `_is_turning`/`_turning_velocity_dot`. ORs a turn into
+# `turning` (never clears it), so the host can fold multiple blocks by launching
+# this once per block over a zeroed `turning`.
 @kernel function _device_nuts_dyadic_turning!(
     turning,
     @Const(checkpoint_position), @Const(checkpoint_momentum),
     @Const(current_position), @Const(current_momentum),
-    @Const(mask), @Const(sign), slot::Int, num_params::Int,
+    @Const(mask), @Const(sign), @Const(inverse_mass), slot::Int, num_params::Int,
 )
     b = @index(Global)
     if @inbounds(mask[b]) != 0x00
@@ -125,15 +127,16 @@ end
             cm = @inbounds checkpoint_momentum[pidx, slot, b]
             qp = @inbounds current_position[pidx, b]
             qm = @inbounds current_momentum[pidx, b]
+            im = @inbounds inverse_mass[pidx]
             # forward: left=checkpoint, right=current; backward: swap.
             if forward
                 delta = qp - cp
-                left_dot += delta * cm
-                right_dot += delta * qm
+                left_dot += delta * im * cm
+                right_dot += delta * im * qm
             else
                 delta = cp - qp
-                left_dot += delta * qm
-                right_dot += delta * cm
+                left_dot += delta * im * qm
+                right_dot += delta * im * cm
             end
         end
         if left_dot <= 0 || right_dot <= 0
@@ -143,11 +146,13 @@ end
 end
 
 # Whole-trajectory (merge-level) U-turn over the continuation frontier: for each
-# active chain, delta = right - left, turn if delta.left_mom <= 0 || delta.right_mom <= 0.
+# active chain, delta = right - left, turn if delta.M^{-1}left_mom <= 0 ||
+# delta.M^{-1}right_mom <= 0 (metric-aware, mirrors host _batched_is_turning!).
 @kernel function _device_nuts_frontier_turning!(
     turning,
     @Const(left_position), @Const(right_position),
-    @Const(left_momentum), @Const(right_momentum), @Const(active), num_params::Int,
+    @Const(left_momentum), @Const(right_momentum),
+    @Const(active), @Const(inverse_mass), num_params::Int,
 )
     b = @index(Global)
     if @inbounds(active[b]) != 0x00
@@ -155,8 +160,9 @@ end
         right_dot = zero(eltype(left_position))
         for pidx = 1:num_params
             delta = @inbounds(right_position[pidx, b]) - @inbounds(left_position[pidx, b])
-            left_dot += delta * @inbounds(left_momentum[pidx, b])
-            right_dot += delta * @inbounds(right_momentum[pidx, b])
+            im = @inbounds inverse_mass[pidx]
+            left_dot += delta * im * @inbounds(left_momentum[pidx, b])
+            right_dot += delta * im * @inbounds(right_momentum[pidx, b])
         end
         @inbounds turning[b] = (left_dot <= 0 || right_dot <= 0) ? 0x01 : 0x00
     else
@@ -330,6 +336,14 @@ _download_bits!(host_bits::AbstractVector{Bool}, dev, stage::Vector{UInt8}) = be
     return host_bits
 end
 
+_download_bits_or!(host_bits::AbstractVector{Bool}, dev, stage::Vector{UInt8}) = begin
+    copyto!(stage, dev)
+    @inbounds for i in eachindex(host_bits)
+        host_bits[i] |= stage[i] != 0x00
+    end
+    return host_bits
+end
+
 _download_reals!(host::AbstractVector{Float64}, dev, stage::Vector) = begin
     copyto!(stage, dev)
     @inbounds for i in eachindex(host)
@@ -469,7 +483,10 @@ function _device_advance_cohort_impl!(dws::DeviceNUTSWorkspace{T}, ws, max_delta
     fill!(ws.subtree_copy_left, false)
     fill!(ws.subtree_copy_right, false)
     fill!(ws.subtree_select_proposal, false)
-    fill!(ws.subtree_turning, false)
+    # ws.subtree_turning is NOT cleared here: it is reset once per round by
+    # _reset_batched_nuts_subtree_scratch! and stays sticky across leaf steps
+    # (mirrors _advance_batched_nuts_subtree_cohort!) so the merge gate can
+    # discard a subtree that U-turned on any earlier leaf.
     advanced = dws.advanced_scratch
     checkpoint = dws.checkpoint_scratch
     fill!(advanced, false)
@@ -544,11 +561,12 @@ function _device_advance_cohort_impl!(dws::DeviceNUTSWorkspace{T}, ws, max_delta
                 slot = count_ones(block_start) + 1
                 _device_nuts_dyadic_turning!(be)(
                     dws.turning, dws.checkpoint_position, dws.checkpoint_momentum,
-                    dws.tree_current_position, dws.tree_current_momentum, dws.mask_b, dws.sign, slot, P; ndrange=C,
+                    dws.tree_current_position, dws.tree_current_momentum, dws.mask_b, dws.sign,
+                    dws.inverse_mass, slot, P; ndrange=C,
                 )
             end
             KernelAbstractions.synchronize(be)
-            _download_bits!(ws.subtree_turning, dws.turning, dws.host_u8)
+            _download_bits_or!(ws.subtree_turning, dws.turning, dws.host_u8)
         end
     end
 
@@ -653,6 +671,7 @@ function _device_merge_cohort!(dws::DeviceNUTSWorkspace{T}, ws, rng::AbstractRNG
         dws.left_momentum,
         dws.right_momentum,
         dws.mask_c,
+        dws.inverse_mass,
         P;
         ndrange=C,
     )
@@ -736,6 +755,10 @@ function _device_masked_nuts_doubling_round!(
         ws.control.tree_depths[c] += 1
         if ws.subtree_integration_steps[c] == 0
             ws.control.divergent_step[c] = ws.subtree_divergent[c]
+        elseif ws.subtree_turning[c] || ws.subtree_divergent[c]
+            # Invalid subtree: canonical NUTS discards the whole doubling
+            # (mirrors _masked_nuts_doubling_round!).
+            _discard_invalid_batched_subtree!(ws, c)
         else
             ws.subtree_active[c] = true
             any_merging = true
