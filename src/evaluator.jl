@@ -330,6 +330,23 @@ function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, paramete
     return CompiledLoopPlanStep(step.iterator_slot, _compile_plan_expr(model, layout, step.iterable), body)
 end
 
+# A dynamic-mode model body may contain if/else control flow that the linear
+# execution plan cannot represent (the plan appends BOTH branches' choices and
+# assignments). generate/assess execute the model body directly and stay
+# correct, but every compiled scoring path must refuse the linearized plan.
+function _reject_branchful_compiled_scoring(model::TeaModel)
+    model.branchful || return nothing
+    throw(
+        ArgumentError(
+            "model `$(model.name)` contains branchful control flow (`if`/`else`, ternary, or a " *
+            "short-circuit `&&`/`||` with a choice or assignment inside); the compiled scoring " *
+            "paths (logjoint, gradients, batched and device evaluation) linearize the execution " *
+            "plan and would score both branches unconditionally -- use `generate`/`assess`, which " *
+            "execute the model body directly",
+        ),
+    )
+end
+
 function _compile_execution_plan(model::TeaModel)
     raw_plan = executionplan(model)
     compiled_steps = tuple(
@@ -339,6 +356,7 @@ function _compile_execution_plan(model::TeaModel)
 end
 
 function _compiled_execution_plan(model::TeaModel)
+    _reject_branchful_compiled_scoring(model)
     cached = model.evaluator_cache[]
     if isnothing(cached)
         cached = _compile_execution_plan(model)
@@ -563,8 +581,7 @@ function logjoint(
     compiled_plan = _compiled_execution_plan(model)
     expected = parametervaluecount(plan.parameter_layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
-    length(args) == length(modelspec(model).arguments) ||
-        throw(DimensionMismatch("expected $(length(modelspec(model).arguments)) model arguments, got $(length(args))"))
+    args = _complete_model_args(model, args)
 
     env = PlanEnvironment(plan.environment_layout)
     for (slot, value) in zip(plan.environment_layout.argument_slots, args)
@@ -636,12 +653,7 @@ function _dependent_transform_walk!(
 )
     plan = executionplan(model)
     compiled_plan = _compiled_execution_plan(model)
-    length(args) == length(modelspec(model).arguments) || throw(
-        DimensionMismatch(
-            "transforming a model with reparam=:noncentered latents requires its " *
-            "$(length(modelspec(model).arguments)) model arguments, got $(length(args))",
-        ),
-    )
+    args = _complete_model_args(model, args)
     env = PlanEnvironment(plan.environment_layout)
     for (slot, value) in zip(plan.environment_layout.argument_slots, args)
         _environment_set!(env, slot, value)

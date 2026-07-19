@@ -12,6 +12,7 @@ include("fixtures.jl")
 core_test_files = [
     # (file, group)
     ("dsl_static_model_semantics.jl", "dsl"),
+    ("dsl_contract_guards.jl", "dsl"),
     ("batched_logjoint_and_gradient.jl", "dsl"),
     ("hmc_and_nuts_workspace.jl", "dsl"),
     ("nuts_scheduler_and_backend.jl", "dsl"),
