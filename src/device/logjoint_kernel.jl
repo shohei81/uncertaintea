@@ -213,6 +213,26 @@ end
     return (_device_dirichlet_logpdf(alpha, value), cursor + Int32(length(step.alpha)))
 end
 
+@inline function _device_score_step(
+    step::DeviceLKJCholeskyChoiceStep{D},
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    col,
+    cursor,
+) where {D}
+    eta = _device_eval(step.eta, slots, col)
+    if step.value_source > Int32(0)
+        z = ntuple(i -> @inbounds(params[step.value_source+Int32(i-1), col]), Val((D * (D - 1)) ÷ 2))
+        value, lad = _device_cholesky_corr_constrain(z, Val(D))
+        return (_device_lkjcholesky_logpdf(eta, value, Val(D)) + lad, cursor)
+    end
+    value = ntuple(i -> @inbounds(observed[cursor+Int32(i-1), col]), Val((D * (D + 1)) ÷ 2))
+    return (_device_lkjcholesky_logpdf(eta, value, Val(D)), cursor + Int32((D * (D + 1)) ÷ 2))
+end
+
 @inline function _device_score_step(step::DeviceMvNormalDenseChoiceStep, slots, params, observed, tc, ls, col, cursor)
     mu = _device_eval_args(step.mu, slots, col)
     scale_packed = ntuple(

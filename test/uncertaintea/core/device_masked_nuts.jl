@@ -49,10 +49,12 @@ end
     return mu
 end
 
-# lkjcholesky latent: backend-supported (issue #49) but still not device-lowerable.
-@tea static function dnuts_lkj_model()
-    Omega ~ lkjcholesky(2, 2.0)
-    return Omega
+# marginalize=:enumerate: backend-supported (issue #13) but still not device-lowerable.
+@tea static function dnuts_marginalize_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.3; marginalize=:enumerate)
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
 end
 
 @testset "dnuts_device_masked_conjugate" begin
@@ -116,7 +118,7 @@ end
     )
     # A non-lowerable model raises (pointing at device_lowering_report).
     @test_throws ArgumentError batched_nuts(
-        dnuts_lkj_model, (), choicemap();
+        dnuts_marginalize_model, (), choicemap((:y, 0.3));
         num_chains=2, num_samples=1, tree_strategy=:masked, backend=CPU(),
     )
 end

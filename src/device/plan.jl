@@ -212,6 +212,22 @@ struct DeviceMvNormalDenseChoiceStep{M<:Tuple} <: AbstractDeviceChoiceStep
     binding_slot::Int32
 end
 
+# LKJ prior over a packed correlation Cholesky factor (issue #57, mirroring
+# the CPU-native step from issue #49). `D` is the compile-time dimension (the
+# backend step guarantees a macro-time literal); a latent reads d(d-1)/2
+# unconstrained rows starting at `value_source` and constrains them through
+# the register-resident tanh/stick construction (log-abs-det included), an
+# observation consumes d(d+1)/2 staged packed rows. The binding slot is
+# carried but never written (see DeviceMvNormalChoiceStep).
+struct DeviceLKJCholeskyChoiceStep{D,E} <: AbstractDeviceChoiceStep
+    eta::E
+    value_source::Int32
+    binding_slot::Int32
+end
+
+DeviceLKJCholeskyChoiceStep{D}(eta::E, value_source, binding_slot) where {D,E} =
+    DeviceLKJCholeskyChoiceStep{D,E}(eta, Int32(value_source), Int32(binding_slot))
+
 # Compile-time-unrolled tuple folds multiply the fused kernel body by D (and
 # the gradient kernel again by parameter count); cap the dimension so Metal
 # shader compilation stays inside its budget (see docs/device-vector-latents.md).
@@ -220,6 +236,10 @@ const DEVICE_MAX_VECTOR_DIMENSION = 16
 # The dense forward substitution unrolls d(d+1)/2 fused multiply-adds per step
 # (doubled again in the gradient kernel), so its cap is tighter.
 const DEVICE_MAX_DENSE_DIMENSION = 8
+
+# The unrolled cholesky-correlation constrain and row-norm support checks are
+# likewise quadratic in the kernel body, so lkjcholesky shares the dense cap.
+const DEVICE_MAX_CHOLESKY_DIMENSION = 8
 
 # Truncated families are observed-only on the backend path (latents fall back at
 # backend lowering: the bounded transform is unimplemented there), so the value
@@ -755,6 +775,45 @@ end
 
 function _lower_device_step!(
     out,
+    step::BackendLKJCholeskyChoicePlanStep,
+    backend,
+    layout,
+    ::Type{T},
+    issues,
+    loop_counter,
+    in_loop,
+) where {T}
+    dimension = step.d
+    if dimension > DEVICE_MAX_CHOLESKY_DIMENSION
+        _device_issue!(
+            issues,
+            "device lowering caps lkjcholesky at dimension $DEVICE_MAX_CHOLESKY_DIMENSION (the unrolled constrain is quadratic in the kernel body), got dimension $dimension",
+        )
+        return nothing
+    end
+    if isnothing(step.parameter_slot)
+        value_source = Int32(-1)
+    else
+        if in_loop
+            _device_issue!(issues, "device lowering does not support latent lkjcholesky choices inside a loop")
+            return nothing
+        end
+        slot = layout.slots[step.parameter_slot] # vector steps carry the slot ORDINAL
+        if !(slot.transform isa CholeskyCorrTransform) || slot.dimension != (dimension * (dimension - 1)) ÷ 2 ||
+           slot.value_length != (dimension * (dimension + 1)) ÷ 2
+            _device_issue!(issues, "device lowering could not resolve the lkjcholesky parameter slot")
+            return nothing
+        end
+        value_source = Int32(slot.index)
+    end
+    eta = _lower_device_expr(step.eta, backend.generic_slots, T, issues, "lkjcholesky concentration")
+    isnothing(eta) && return nothing
+    push!(out, DeviceLKJCholeskyChoiceStep{dimension}(eta, value_source, _device_slot32(step.binding_slot)))
+    return nothing
+end
+
+function _lower_device_step!(
+    out,
     step::BackendMvNormalDenseChoicePlanStep,
     backend,
     layout,
@@ -1039,6 +1098,7 @@ _device_step_writes_binding(step::AbstractDevicePlanStep) = true
 _device_step_writes_binding(::DeviceMvNormalChoiceStep) = false
 _device_step_writes_binding(::DeviceDirichletChoiceStep) = false
 _device_step_writes_binding(::DeviceMvNormalDenseChoiceStep) = false
+_device_step_writes_binding(::DeviceLKJCholeskyChoiceStep) = false
 
 function _device_collect_written_slots!(written_by_loop::Dict{Int32,BitSet}, steps, loop_id::Int32)
     written = get!(BitSet, written_by_loop, loop_id)

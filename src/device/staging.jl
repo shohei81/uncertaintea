@@ -144,10 +144,12 @@ end
 
 # A vector observation stages as `value_length` consecutive rows in component
 # order; the kernel-side cursor advances by the step's compile-time dimension,
-# preserving the pre-order alignment invariant with a stride.
+# preserving the pre-order alignment invariant with a stride. lkjcholesky
+# observations stage their packed lower triangle the same way (value_length =
+# d(d+1)/2 rows).
 function _stage_step!(
     rows,
-    step::Union{BackendMvNormalChoicePlanStep,BackendDirichletChoicePlanStep},
+    step::Union{BackendMvNormalChoicePlanStep,BackendDirichletChoicePlanStep,BackendLKJCholeskyChoicePlanStep},
     env,
     constraints,
     dummy_params,

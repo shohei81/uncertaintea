@@ -734,6 +734,139 @@ end
     return ifelse(diag_ok, base, oftype(base, -Inf))
 end
 
+# ---- lkj cholesky correlation ---------------------------------------------------
+
+# Numerically stable log(1 - tanh(z)^2), mirroring the CPU `_log1m_tanh_sq`
+# exactly: 2 * (log(2) - |z| - log1p(exp(-2|z|))), symmetric so exp never
+# overflows. 0.6931471805599453 = log(2).
+@inline function _device_log1m_tanh_sq(z::T) where {T}
+    magnitude = abs(z)
+    return 2 * (T(0.6931471805599453) - magnitude - log1p(exp(-2 * magnitude)))
+end
+
+# Stan's cholesky_corr_constrain over compile-time tuples, mirroring the CPU
+# `_to_constrained_cholesky_corr!` (row-major below-diagonal consumption of the
+# d(d-1)/2 unconstrained entries, column-major packed d(d+1)/2 output), fully
+# unrolled from the dimension in the type like `_device_mvnormaldense_solve`.
+# Returns (packed_tuple, logabsdet). Where the CPU reference would throw a
+# DomainError (a row's square sum reaching 1 up to rounding, only possible when
+# tanh saturates at +-1), the exception-free device contract clamps the sqrt
+# argument at zero and lets log(remaining) degrade the log-abs-det to -Inf.
+@generated function _device_cholesky_corr_constrain(z::NTuple{Q,T}, ::Val{D}) where {Q,T,D}
+    packed_index(row, col) = (col - 1) * D - ((col - 1) * (col - 2)) ÷ 2 + (row - col + 1)
+    entry_symbols = Vector{Symbol}(undef, (D * (D + 1)) ÷ 2)
+    entry_symbols[packed_index(1, 1)] = :unit
+    body = Expr[]
+    push!(body, :(unit = one(z[1])))
+    push!(body, :(lad = zero(z[1])))
+    z_position = 0
+    for row = 2:D
+        sum_sym = Symbol(:sum_sqs_, row)
+        push!(body, :($sum_sym = zero(z[1])))
+        for col = 1:(row-1)
+            z_position += 1
+            entry = Symbol(:entry_, row, :_, col)
+            entry_symbols[packed_index(row, col)] = entry
+            saturated = Symbol(:saturated_, row, :_, col)
+            # tanh saturation (|z| large enough that an earlier w rounds to
+            # +-1) pushes s to exactly 1; the ifelse selects a CONSTANT -Inf /
+            # zero there because the eagerly-evaluated log1p(-1) and sqrt(0)
+            # carry 0/0 derivative NaNs in the dual channel that would poison
+            # every downstream gradient (the value channel alone would be
+            # fine). min() still caps the eager log1p argument at -1 so the
+            # unselected branch never throws a CPU DomainError. On the healthy
+            # path log1p(-s) matches the CPU form bit-for-bit.
+            push!(body, :($saturated = $sum_sym >= one(z[1])))
+            # the /2 stays INSIDE the healthy branch: dividing the constant
+            # dual(-Inf, 0) by 2 forms -Inf * 0 = NaN in the quotient rule
+            push!(
+                body,
+                :(
+                    lad +=
+                        _device_log1m_tanh_sq(z[$z_position]) + ifelse(
+                            $saturated,
+                            oftype($sum_sym, -Inf),
+                            log1p(-min($sum_sym, one($sum_sym))) / 2,
+                        )
+                ),
+            )
+            push!(
+                body,
+                :(
+                    $entry =
+                        tanh(z[$z_position]) * ifelse(
+                            $saturated,
+                            zero($sum_sym),
+                            sqrt(max(one(z[1]) - $sum_sym, zero(z[1]))),
+                        )
+                ),
+            )
+            push!(body, :($sum_sym += $entry * $entry))
+        end
+        diagonal = Symbol(:entry_, row, :_, row)
+        entry_symbols[packed_index(row, row)] = diagonal
+        row_saturated = Symbol(:saturated_, row, :_, row)
+        push!(body, :($row_saturated = $sum_sym >= one(z[1])))
+        push!(
+            body,
+            :(
+                $diagonal = ifelse(
+                    $row_saturated,
+                    zero($sum_sym),
+                    sqrt(max(one(z[1]) - $sum_sym, zero(z[1]))),
+                )
+            ),
+        )
+    end
+    return quote
+        $(body...)
+        (($(entry_symbols...),), lad)
+    end
+end
+
+# Log of the LKJ normalizing constant, mirroring the CPU
+# `_lkj_log_normalizing_constant` with the compile-time dimension unrolling the
+# cvine level loop; eta may be a dual (latent concentration), so every constant
+# is formed in eta's own type. 0.6931471805599453 = log(2).
+@inline function _device_lkj_log_normalizer(eta::T, ::Val{D}) where {T,D}
+    log_c = zero(eta)
+    for k = 1:(D-1)
+        a = eta + (D - 1 - k) * T(0.5)
+        log_beta = _device_loggamma(a) + _device_loggamma(a) - _device_loggamma(2 * a)
+        log_c += (D - k) * ((2 * eta - 2 + (D - k)) * T(0.6931471805599453) + log_beta)
+    end
+    return -log_c
+end
+
+# LKJ log density over a packed correlation Cholesky factor, mirroring the CPU
+# `logpdf(::LKJCholeskyDist, x)`: sum_{row=2..d} (d - row + 2*eta - 2) *
+# log(L[row,row]) plus the normalizer, with the same support acceptance
+# (positive diagonals, row square sums within sqrt(eps)*d*16 of at most one --
+# the tolerance scales with the value precision, matching the CPU f32 support
+# discipline from issue #49). log(abs(...)) keeps the eagerly-evaluated branch
+# GPU-safe; out-of-support values select the -Inf branch instead of throwing.
+@generated function _device_lkjcholesky_logpdf(eta::TE, packed::NTuple{P,T}, ::Val{D}) where {TE,T,P,D}
+    packed_index(row, col) = (col - 1) * D - ((col - 1) * (col - 2)) ÷ 2 + (row - col + 1)
+    body = Expr[]
+    push!(body, :(accumulator = _device_lkj_log_normalizer(eta, Val(D)) + zero(first(packed))))
+    push!(body, :(tolerance = sqrt(eps(typeof(first(packed)))) * $(D * 16)))
+    push!(body, :(in_support = true))
+    for row = 1:D
+        diagonal = :(packed[$(packed_index(row, row))])
+        push!(body, :(in_support &= $diagonal > zero($diagonal)))
+        sum_expr = :($diagonal * $diagonal)
+        for col = 1:(row-1)
+            sum_expr = :($sum_expr + packed[$(packed_index(row, col))] * packed[$(packed_index(row, col))])
+        end
+        push!(body, :(in_support &= ($sum_expr) <= one(first(packed)) + tolerance))
+        row >= 2 && push!(body, :(accumulator += ($(D - row) + 2 * eta - 2) * log(abs($diagonal))))
+    end
+    return quote
+        $(body...)
+        ifelse(in_support, accumulator, oftype(accumulator, -Inf))
+    end
+end
+
 # Parameter transform codes shared by lowering, kernel, and staging.
 const DEVICE_TRANSFORM_IDENTITY = Int32(0)
 const DEVICE_TRANSFORM_LOG = Int32(1)
