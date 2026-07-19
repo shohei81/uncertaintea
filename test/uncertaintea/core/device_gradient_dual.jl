@@ -42,10 +42,12 @@ end
     return p
 end
 
-# lkjcholesky latent: backend-supported (issue #49) but still not device-lowerable.
-@tea static function devg_lkj_model()
-    Omega ~ lkjcholesky(2, 2.0)
-    return Omega
+# marginalize=:enumerate: backend-supported (issue #13) but still not device-lowerable.
+@tea static function devg_marginalize_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.3; marginalize=:enumerate)
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
 end
 
 # issue #12 group 1 mirrors of device_lowering_parity.jl.
@@ -333,6 +335,44 @@ end
     @test g2 ≈ g2ref rtol = 1e-10
 end
 
+# issue #57: lkjcholesky mirrors of device_lowering_parity.jl.
+@tea static function devg_lkj_group_model(n)
+    Omega ~ lkjcholesky(3, 2.0)
+    s ~ gamma(2.0, 2.0)
+    for i = 1:n
+        {:y => i} ~ normal(0.5, s)
+    end
+    return s
+end
+
+@tea static function devg_lkj_obs_model()
+    e ~ gamma(2.0, 1.0)
+    {:L} ~ lkjcholesky(3, e)
+    return e
+end
+
+@testset "devg_gradient_parity_lkjcholesky" begin
+    # duals flow through the register tanh/stick constrain (z-space analytic
+    # gradient + log-abs-det derivative) and through a latent-flowing eta (the
+    # loggamma normalizer chain) on the observed side
+    ys = [0.4, -0.7, 1.1]
+    cm = choicemap((:y => i, ys[i]) for i = 1:3)
+    params = [0.3 -0.5; -0.2 0.4; 0.7 -0.1; 0.1 0.6]
+    v, g = device_batched_logjoint_gradient(devg_lkj_group_model, params, (3,), cm)
+    gref = batched_logjoint_gradient_unconstrained(devg_lkj_group_model, params, (3,), cm)
+    vref = batched_logjoint_unconstrained(devg_lkj_group_model, params, (3,), cm)
+    @test g ≈ gref rtol = 1e-10
+    @test v ≈ vref rtol = 1e-12
+    _, g32 = device_batched_logjoint_gradient(devg_lkj_group_model, Float32.(params), (3,), cm; precision=Float32)
+    @test Float64.(g32) ≈ gref rtol = 1e-3 atol = 1e-3
+
+    cm_obs = choicemap((:L, [1.0, 0.6, 0.3, 0.8, -0.4, sqrt(0.75)]))
+    params_obs = reshape([0.1, -0.4], 1, 2)
+    v2, g2 = device_batched_logjoint_gradient(devg_lkj_obs_model, params_obs, (), cm_obs)
+    g2ref = batched_logjoint_gradient_unconstrained(devg_lkj_obs_model, params_obs, (), cm_obs)
+    @test g2 ≈ g2ref rtol = 1e-10
+end
+
 @tea static function devg_mvdense_model(L)
     state ~ mvnormaldense([0.0, 1.0], L)
     m ~ normal(0.0, 1.0)
@@ -382,7 +422,7 @@ end
 
 @testset "devg_unsupported_throws" begin
     err = try
-        device_batched_logjoint_gradient(devg_lkj_model, reshape([0.1], 1, 1), ())
+        device_batched_logjoint_gradient(devg_marginalize_model, reshape([0.1], 1, 1), ())
         nothing
     catch e
         e

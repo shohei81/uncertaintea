@@ -28,14 +28,17 @@ Supported today:
   bindings are carried but not materialized, so reads of one are rejected).
   `mixture` (of normals, scalar value, up to 16 components) lowers through a
   max-shifted log-sum-exp; latent-simplex weights stay a backend fallback.
-  Still unsupported on the device: `lkjcholesky` (backend-native
-  lowering/scoring/gradients landed with issue #49; the device mirror of the
-  packed cholesky step is a follow-up) — the plan-layout design for vector
+  `lkjcholesky` (issue #57, up to dimension 8: the quadratic unrolled
+  constrain shares the dense cap) constrains its d(d-1)/2 unconstrained rows
+  through a register-resident tanh/stick construction; observed packed
+  factors stage d(d+1)/2 rows. Still unsupported on the device:
+  `marginalize=:enumerate` choices (issue #13; the device mirror of the
+  marginalize step is a follow-up) — the plan-layout design for vector
   latents is docs/device-vector-latents.md.
 - **Latent parameter transforms:** `Identity`, `Log`, `Logit` (scalar), and
-  `VectorIdentity`/`Simplex` through the diagonal `mvnormal`/`dirichlet` steps
-  (register-resident, no slots-matrix rows). `CholeskyCorr` (`lkjcholesky`
-  latents) is CPU-backend-native but reported as device-unsupported.
+  `VectorIdentity`/`Simplex`/`CholeskyCorr` through the diagonal
+  `mvnormal`/`dirichlet`/`lkjcholesky` steps (register-resident, no
+  slots-matrix rows).
 - **Structure:** scalar latent priors, numeric deterministic assignments, and
   single (non-nested) unit-range loops with observed choices. Observed values are
   resolved on the host into a dense `observed[row, col]` matrix during one-time

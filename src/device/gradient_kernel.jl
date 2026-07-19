@@ -260,6 +260,36 @@ end
 end
 
 @inline function _device_grad_score_step(
+    step::DeviceLKJCholeskyChoiceStep{D},
+    slots,
+    params,
+    observed,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+) where {D}
+    T = _device_dual_basetype(eltype(slots))
+    eta = _device_grad_eval(step.eta, slots, pidx, b)
+    if step.value_source > Int32(0)
+        z = ntuple(Val((D * (D - 1)) ÷ 2)) do i
+            row = step.value_source + Int32(i - 1)
+            raw = @inbounds params[row, b]
+            DeviceDual{T}(convert(T, raw), ifelse(row == Int32(pidx), one(T), zero(T)))
+        end
+        # duals flow through the register tanh/stick constrain, reproducing
+        # the CPU analytic z-space gradient and log-abs-det derivative
+        value, lad = _device_cholesky_corr_constrain(z, Val(D))
+        return (_device_lkjcholesky_logpdf(eta, value, Val(D)) + lad, cursor)
+    end
+    value = ntuple(Val((D * (D + 1)) ÷ 2)) do i
+        DeviceDual{T}(convert(T, @inbounds(observed[cursor+Int32(i-1), b])), zero(T))
+    end
+    return (_device_lkjcholesky_logpdf(eta, value, Val(D)), cursor + Int32((D * (D + 1)) ÷ 2))
+end
+
+@inline function _device_grad_score_step(
     step::DeviceMvNormalDenseChoiceStep,
     slots,
     params,

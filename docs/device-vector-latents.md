@@ -146,7 +146,8 @@ component promotes independently inside the fold, no whole-tuple promote.
   above a conservative cap (start at `K ≤ 16`; revisit against measured Metal
   compile times) with a message naming the cap.
 - **`lkjcholesky`** (backend lowering/scoring/gradients landed with issue #49;
-  only the device mirror of the packed cholesky step is still pending) and
+  the device mirror landed with issue #57 — a register-resident tanh/stick
+  constrain sharing the dense dimension cap) and
   **`mixture`** weights-as-latents (already backend-rejected). Note the mixture VALUE is scalar: lowering
   `BackendMixtureNormalChoicePlanStep` to the device is a group-1-shaped
   addition (a weights/mus/sigmas tuple step with a log-sum-exp fold), *not* a
@@ -199,7 +200,7 @@ MTLCompilerService is a finding, not an inconvenience).
 ## Non-goals
 
 - `lkjcholesky` device support (the backend prerequisite landed with issue
-  #49; the device mirror remains a separate follow-up).
+  #49; the device mirror has since landed with issue #57).
 - Vector `binding_slot` materialization in the kernel slots matrix.
 - Dynamic (runtime-sized) vector dimensions — everything here rides on the
   static sizes the frontend already requires for slot creation.

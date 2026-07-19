@@ -38,11 +38,13 @@ end
     return p
 end
 
-# lkjcholesky latent: backend-supported (issue #49) but device step lowering
-# still rejects it, so the device report stays honest-unsupported.
-@tea static function dev_lkj_model()
-    Omega ~ lkjcholesky(2, 2.0)
-    return Omega
+# marginalize=:enumerate (issue #13 track 1): backend-supported but device step
+# lowering still rejects it, so the device report stays honest-unsupported.
+@tea static function dev_marginalize_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.3; marginalize=:enumerate)
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
 end
 
 # issue #12 group 1 (continuous): studentt (identity latent), inversegamma and
@@ -90,10 +92,10 @@ end
     supported_bern, _ = device_lowering_report(dev_bernoulli_model)
     @test supported_bern
 
-    lkj_supported, lkj_issues = device_lowering_report(dev_lkj_model)
-    @test !lkj_supported
-    @test !isempty(lkj_issues)
-    @test any(occursin("lkjcholesky", lowercase(issue)) for issue in lkj_issues)
+    marg_supported, marg_issues = device_lowering_report(dev_marginalize_model)
+    @test !marg_supported
+    @test !isempty(marg_issues)
+    @test any(occursin("marginalize", lowercase(issue)) for issue in marg_issues)
 end
 
 @testset "dev_plan_isbits" begin
@@ -633,6 +635,76 @@ end
     @test all(==(-Inf), batched_logjoint_unconstrained(dev_dirichlet_obs_model, params_obs, (), cm_neg))
 end
 
+# issue #57: lkjcholesky. A latent constrains d(d-1)/2 unconstrained rows
+# through the register-resident tanh/stick construction; the scalar latent
+# AFTER the packed factor exercises the issue #36 placement freedom.
+@tea static function dev_lkj_group_model(n)
+    Omega ~ lkjcholesky(3, 2.0)
+    s ~ gamma(2.0, 2.0)
+    for i = 1:n
+        {:y => i} ~ normal(0.5, s)
+    end
+    return s
+end
+
+# observed packed factor with a latent-flowing concentration.
+@tea static function dev_lkj_obs_model()
+    e ~ gamma(2.0, 1.0)
+    {:L} ~ lkjcholesky(3, e)
+    return e
+end
+
+# over the quadratic-unroll dimension cap
+@tea static function dev_lkj_big_model()
+    Omega ~ lkjcholesky(9, 2.0)
+    return Omega
+end
+
+# packed column-major lower triangle of a valid d=3 correlation cholesky
+# factor: rows (1), (0.6, 0.8), (0.3, -0.4, sqrt(0.75)) all unit-norm.
+dev_lkj_packed() = [1.0, 0.6, 0.3, 0.8, -0.4, sqrt(0.75)]
+
+@testset "dev_numerical_parity_lkjcholesky" begin
+    supported, issues = device_lowering_report(dev_lkj_group_model)
+    @test supported
+    @test isempty(issues)
+
+    ys = [0.4, -0.7, 1.1]
+    cm = choicemap((:y => i, ys[i]) for i = 1:3)
+    params = [0.3 -0.5; -0.2 0.4; 0.7 -0.1; 0.1 0.6] # Omega (3 unconstrained rows) + s
+    dev = device_batched_logjoint(dev_lkj_group_model, params, (3,), cm)
+    ref = batched_logjoint_unconstrained(dev_lkj_group_model, params, (3,), cm)
+    @test dev ≈ ref rtol = 1e-12
+    dev32 = device_batched_logjoint(dev_lkj_group_model, Float32.(params), (3,), cm; precision=Float32)
+    @test dev_check_float32(dev32, ref)
+
+    cm_obs = choicemap((:L, dev_lkj_packed()))
+    params_obs = reshape([0.1, -0.4], 1, 2)
+    dev_obs = device_batched_logjoint(dev_lkj_obs_model, params_obs, (), cm_obs)
+    ref_obs = batched_logjoint_unconstrained(dev_lkj_obs_model, params_obs, (), cm_obs)
+    @test dev_obs ≈ ref_obs rtol = 1e-12
+
+    # a non-positive diagonal rejects through the support check, not a throw in
+    # the eagerly-evaluated log (the dirichlet log(abs) discipline)
+    bad_diag = dev_lkj_packed()
+    bad_diag[4] = -0.8 # L[2,2]
+    cm_bad = choicemap((:L, bad_diag))
+    @test all(==(-Inf), device_batched_logjoint(dev_lkj_obs_model, params_obs, (), cm_bad))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_lkj_obs_model, params_obs, (), cm_bad))
+
+    # a row with norm > 1 lands on -Inf on both paths
+    long_row = dev_lkj_packed()
+    long_row[3] = 0.9 # L[3,1]: row 3 square sum now exceeds one
+    cm_long = choicemap((:L, long_row))
+    @test all(==(-Inf), device_batched_logjoint(dev_lkj_obs_model, params_obs, (), cm_long))
+    @test all(==(-Inf), batched_logjoint_unconstrained(dev_lkj_obs_model, params_obs, (), cm_long))
+
+    # the dimension cap rejects with a message naming it
+    big_supported, big_issues = device_lowering_report(dev_lkj_big_model)
+    @test !big_supported
+    @test any(occursin("caps lkjcholesky", issue) for issue in big_issues)
+end
+
 # issue #12 group 3 phase 3: mvnormaldense. The constant scale_tril factor
 # rides the observation buffer as d(d+1)/2 packed rows ahead of any value rows.
 @tea static function dev_mvdense_model(L)
@@ -796,7 +868,7 @@ end
 @testset "dev_unsupported_fallback" begin
     # A device-unsupported model must raise a clear error pointing at the report.
     err = try
-        device_batched_logjoint(dev_lkj_model, reshape([0.1], 1, 1), ())
+        device_batched_logjoint(dev_marginalize_model, reshape([0.1], 1, 1), ())
         nothing
     catch e
         e

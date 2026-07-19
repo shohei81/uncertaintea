@@ -27,10 +27,12 @@ end
     return mu
 end
 
-# lkjcholesky latent: backend-supported (issue #49) but still not device-lowerable.
-@tea static function devh_lkj_model()
-    Omega ~ lkjcholesky(2, 2.0)
-    return Omega
+# marginalize=:enumerate: backend-supported (issue #13) but still not device-lowerable.
+@tea static function devh_marginalize_model()
+    mu ~ normal(0.0, 1.0)
+    z ~ bernoulli(0.3; marginalize=:enumerate)
+    {:y} ~ normal(mu + z, 1.0)
+    return mu
 end
 
 @testset "devh_hmc_conjugate" begin
@@ -146,18 +148,18 @@ end
         per_chain_adaptation=true,
         backend=backend,
     )
-    # An unsupported (lkjcholesky latent) model raises the lowering ArgumentError.
-    lkj_error = try
-        batched_hmc(devh_lkj_model, (), choicemap(); num_chains=2, num_samples=10, backend=backend)
+    # An unsupported (marginalized choice) model raises the lowering ArgumentError.
+    marg_error = try
+        batched_hmc(devh_marginalize_model, (), choicemap((:y, 0.4)); num_chains=2, num_samples=10, backend=backend)
         nothing
     catch err
         err
     end
-    @test lkj_error isa ArgumentError
-    @test occursin("device_lowering_report", sprint(showerror, lkj_error))
+    @test marg_error isa ArgumentError
+    @test occursin("device_lowering_report", sprint(showerror, marg_error))
 
     advi_error = try
-        batched_advi(devh_lkj_model, (), choicemap(); num_steps=10, backend=backend)
+        batched_advi(devh_marginalize_model, (), choicemap((:y, 0.4)); num_steps=10, backend=backend)
         nothing
     catch err
         err

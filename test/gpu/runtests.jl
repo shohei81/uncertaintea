@@ -349,6 +349,43 @@ end
     @test gpu_check_float32(vec(Float64.(g)), vec(gref))
 end
 
+# --- issue #57: lkjcholesky smoke ------------------------------------------------
+
+@tea static function gpu_lkj_model(n)
+    Omega ~ lkjcholesky(3, 2.0)
+    s ~ gamma(2.0, 2.0)
+    for i = 1:n
+        {:y => i} ~ normal(0.5, s)
+    end
+    return s
+end
+
+@testset "device Metal GPU lkjcholesky smoke" begin
+    if !Metal.functional()
+        @info "Metal GPU not functional; skipping GPU lkjcholesky smoke test."
+        @test true
+        return
+    end
+
+    backend = Metal.MetalBackend()
+    ys = [0.4, -0.7, 1.1]
+    cm = choicemap((:y => i, ys[i]) for i = 1:3)
+    params = [0.3 -0.5; -0.2 0.4; 0.7 -0.1; 0.1 0.6]
+    ref = batched_logjoint_unconstrained(gpu_lkj_model, params, (3,), cm)
+    dev = device_batched_logjoint(gpu_lkj_model, Float32.(params), (3,), cm; backend=backend, precision=Float32)
+    @test gpu_check_float32(dev, ref)
+    gref = batched_logjoint_gradient_unconstrained(gpu_lkj_model, params, (3,), cm)
+    _, g = device_batched_logjoint_gradient(
+        gpu_lkj_model,
+        Float32.(params),
+        (3,),
+        cm;
+        backend=backend,
+        precision=Float32,
+    )
+    @test gpu_check_float32(vec(Float64.(g)), vec(gref))
+end
+
 # --- device-resident batched HMC / ADVI smoke (PR 46) ------------------------
 # Mirrors test/uncertaintea/core/device_hmc_advi.jl on a Metal.MetalBackend at Float32.
 # RNG stays host-side, so results are statistically (not bitwise) equivalent to the

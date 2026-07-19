@@ -9,7 +9,7 @@
 #
 # Only the operations exercised by the device logjoint (see `math.jl` and
 # `_device_transform`) are implemented: +, -, *, /, ^ (integer & real powers),
-# exp, log, log1p, sqrt, abs, min, max, clamp, sin, cos, round, and value-based comparisons.
+# exp, log, log1p, sqrt, abs, min, max, clamp, sin, cos, tanh, round, and value-based comparisons.
 # `DeviceDual` is a `Number`, so mixed arithmetic with a plain real scalar is resolved
 # by Julia's promotion fallback (`+(::Number, ::Number) = +(promote(...)...)`) once we
 # register `promote_rule` / `convert` below.
@@ -108,6 +108,10 @@ end
 end
 @inline function Base.cos(a::DeviceDual{T}) where {T}
     DeviceDual{T}(cos(a.value), -sin(a.value) * a.deriv)
+end
+@inline function Base.tanh(a::DeviceDual{T}) where {T}
+    t = tanh(a.value)
+    DeviceDual{T}(t, (one(T) - t * t) * a.deriv)
 end
 
 # ---- min / max / clamp (value-selected branches) --------------------------------
