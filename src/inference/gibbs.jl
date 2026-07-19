@@ -318,7 +318,10 @@ function _gibbs_propose(rng::AbstractRNG, site::GibbsSite, value, discrete_tail:
     # direction)
     step = 1
     if discrete_tail > 0 && rand(rng) < discrete_tail
-        step += floor(Int, log(rand(rng)) / log(0.5))
+        # clamp the uniform away from zero (as the geometric sampler does) so
+        # a valid rand(rng) == 0.0 cannot floor(Int, Inf)
+        threshold = max(rand(rng), floatmin(Float64))
+        step += floor(Int, log(threshold) / log(0.5))
     end
     return Int(value) + rand(rng, (-1, 1)) * step
 end
