@@ -224,25 +224,84 @@ function _std_t_cdf(z, nu)
     return zz > zero(zz) ? one(zz) - regularized / 2 : regularized / 2
 end
 
-# log(T_cdf(z; nu)) computed WITHOUT the `1 - regularized/2` cancellation: the
-# regularized incomplete beta is small in the lower tail and arrives with
-# relative accuracy, so its log stays finite where the plain CDF rounds to 0
-# (or its complement rounds to 1); the upper side goes through log1p. This is
-# the CPU port of the device `_device_std_t_log_cdf` (issue #43).
+# Lentz continued fraction for the regularized incomplete beta (the Numerical
+# Recipes form, mirroring `_device_betacf`); called with plain reals only --
+# the ForwardDiff overloads of `_std_t_cdf`/`_std_t_log_cdf` differentiate via
+# the analytic d/dz = t-pdf(z) instead.
+function _beta_inc_cf(a::T, b::T, x::T) where {T<:AbstractFloat}
+    qab = a + b
+    qap = a + one(T)
+    qam = a - one(T)
+    fpmin = T(1e-30)
+    c = one(T)
+    d = one(T) - qab * x / qap
+    abs(d) < fpmin && (d = fpmin)
+    d = one(T) / d
+    h = d
+    for m = 1:200
+        mf = T(m)
+        m2 = 2 * mf
+        aa = mf * (b - mf) * x / ((qam + m2) * (a + m2))
+        d = one(T) + aa * d
+        abs(d) < fpmin && (d = fpmin)
+        c = one(T) + aa / c
+        abs(c) < fpmin && (c = fpmin)
+        d = one(T) / d
+        h *= d * c
+        aa = -(a + mf) * (qab + mf) * x / ((a + m2) * (qap + m2))
+        d = one(T) + aa * d
+        abs(d) < fpmin && (d = fpmin)
+        c = one(T) + aa / c
+        abs(c) < fpmin && (c = fpmin)
+        d = one(T) / d
+        delta = d * c
+        h *= delta
+        abs(delta - one(T)) <= T(4) * eps(T) && break
+    end
+    return h
+end
+
+# log I_x(a, b) computed IN LOG SPACE on the direct branch (x small), so a tail
+# probability that underflows as a plain value (light Student-t tails at large
+# nu -- issue #97) still yields a finite log. The symmetric branch is the
+# complement of a small quantity and is safe as log1p. `x` and `y` are the
+# caller-computed pair with x + y == 1 in exact arithmetic, keeping each
+# accurate near its own zero. CPU port of the device
+# `_device_log_beta_inc_reg_parts`.
+function _log_beta_inc_reg(a::T, b::T, x::T, y::T) where {T<:AbstractFloat}
+    x <= zero(T) && return T(-Inf)
+    y <= zero(T) && return zero(T)
+    logx = x < T(0.5) ? log(x) : log1p(-y)
+    logy = y < T(0.5) ? log(y) : log1p(-x)
+    log_front = a * logx + b * logy + loggamma(a + b) - loggamma(a) - loggamma(b)
+    if x < (a + one(T)) / (a + b + 2)
+        return log_front + log(_beta_inc_cf(a, b, x)) - log(a)
+    end
+    return log1p(-exp(log_front) * _beta_inc_cf(b, a, y) / b)
+end
+
+# log(T_cdf(z; nu)) computed WITHOUT the `1 - regularized/2` cancellation and
+# with the incomplete beta itself formed in log space (issue #97): the
+# regularized incomplete beta is small in the lower tail, so its LOG stays
+# finite past the point where the plain value underflows to 0 (light tails at
+# large nu, z beyond ~39 at Float64); the upper side goes through log1p. This
+# is the CPU port of the device `_device_std_t_log_cdf` (issues #43/#97).
 function _std_t_log_cdf(z, nu)
     zz = float(z)
     isinf(zz) && return zz > zero(zz) ? zero(zz) : oftype(zz, -Inf)
     zz == zero(zz) && return -log(oftype(zz, 2))
-    # compute in at least Float64: a Float32 tail underflows the VALUE-space
-    # incomplete beta (beta_inc -> 0.0f0) long before its log leaves the
-    # Float32 range, so widen, take the log, and narrow the result
+    # compute in at least Float64: a Float32 tail loses the incomplete beta's
+    # exponent range long before its log leaves the Float32 range, so widen,
+    # take the log, and narrow the result
     W = promote_type(typeof(zz), Float64)
     zw = W(zz)
     nuw = W(nu)
-    x = nuw / (nuw + zw * zw)
-    regularized = beta_inc(nuw / 2, one(nuw) / 2, x)[1]
-    zw < zero(zw) && return oftype(zz, log(regularized) - log(W(2)))
-    return oftype(zz, log1p(-regularized / 2))
+    denominator = nuw + zw * zw
+    x = nuw / denominator
+    y = zw * zw / denominator # accurate complement of x
+    log_regularized = _log_beta_inc_reg(nuw / 2, W(0.5), x, y)
+    zw < zero(zw) && return oftype(zz, log_regularized - log(W(2)))
+    return oftype(zz, log1p(-exp(log_regularized) / 2))
 end
 
 # log(T_cdf(zb) - T_cdf(za)): one-sided normalizers use the symmetry

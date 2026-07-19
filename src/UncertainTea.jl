@@ -4,7 +4,7 @@ using ForwardDiff
 using KernelAbstractions
 using LinearAlgebra
 using Random
-using SpecialFunctions: digamma, loggamma, erf, erfc, erfinv, beta_inc, gamma_inc
+using SpecialFunctions: digamma, loggamma, erf, erfc, erfcx, erfinv, erfcinv, logerfc, beta_inc, gamma_inc
 
 export @tea
 export AddressSpec, ChoiceSpec, ModelSpec
