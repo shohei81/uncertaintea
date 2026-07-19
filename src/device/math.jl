@@ -880,7 +880,13 @@ const DEVICE_TRANSFORM_LOGIT = Int32(2)
         return (exp(u), u)
     elseif tcode == DEVICE_TRANSFORM_LOGIT
         c = inv(one(T) + exp(-u))
-        return (c, log(c) + log1p(-c))
+        # Exact log-Jacobian -|u| - 2*log1p(exp(-|u|)) mirroring the CPU
+        # `_logit_logabsdetjac`: finite for every u, where log(c) + log1p(-c)
+        # collapses to -Inf once c rounds to 1 (u ~ 16.6 in Float32). abs,
+        # exp, and log1p all carry the DeviceDual derivative channel, so the
+        # gradient (-tanh(u/2)) stays finite as well.
+        magnitude = abs(u)
+        return (c, -magnitude - 2 * log1p(exp(-magnitude)))
     else # DEVICE_TRANSFORM_IDENTITY
         return (u, zero(T))
     end

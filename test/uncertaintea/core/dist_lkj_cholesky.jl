@@ -305,3 +305,55 @@ end
     )
     @test lkj_sc_g ≈ [0.0, 0.6] atol = 1e-12
 end
+
+# --- tanh saturation: -Inf rejection instead of DomainError (issue #99) ------
+# Unconstrained space is all of R^n; when tanh(z) saturates to exactly +-1 a
+# row's square sum can reach (or pass) 1 and the transform must reject with a
+# -Inf log-abs-det like the device kernel, never throw.
+@testset "lkj_tanh_saturation" begin
+    @tea function lkj_sat_model()
+        L ~ lkjcholesky(3, 1.5)
+        {:y} ~ normal(L[2], 1.0)
+    end
+    lkj_sat_z = [0.0, -0.1636303098944617, 21.76268802388644]
+    lkj_sat_obs = choicemap(:y => 0.2)
+    @test logjoint_unconstrained(lkj_sat_model, lkj_sat_z, (), lkj_sat_obs) == -Inf
+    lkj_sat_g = logjoint_gradient_unconstrained(lkj_sat_model, lkj_sat_z, (), lkj_sat_obs)
+    @test length(lkj_sat_g) == 3
+    # Here saturation lands on the diagonal: the entry clamps to 0 (rejected by
+    # the lkj density above), the log-abs-det of the below-diagonal map stays
+    # finite, and nothing throws — exactly the device kernel's contract.
+    lkj_sat_packed = UncertainTea.to_constrained(CholeskyCorrTransform(3), lkj_sat_z)
+    @test all(isfinite, lkj_sat_packed)
+    @test lkj_sat_packed[lkj_pack_index(3, 3, 3)] == 0.0
+    @test isfinite(UncertainTea.logabsdetjac(CholeskyCorrTransform(3), lkj_sat_z))
+    # Saturating a below-diagonal step degrades the log-abs-det itself to -Inf.
+    @test UncertainTea.logabsdetjac(CholeskyCorrTransform(3), [0.0, 21.0, 0.5]) == -Inf
+
+    # d = 5 variant (the log1p(-1.0000000000000002) crash from the issue).
+    lkj_sat_t5 = CholeskyCorrTransform(5)
+    lkj_sat_z5 = fill(25.0, 10)
+    lkj_sat_dest5 = zeros(15)
+    lkj_sat_lad5 = UncertainTea._to_constrained_cholesky_corr!(lkj_sat_dest5, lkj_sat_t5, lkj_sat_z5)
+    @test lkj_sat_lad5 == -Inf
+    @test all(isfinite, lkj_sat_dest5)
+
+    # Fuzz: extreme-|z| draws (scales up to 40) never throw; the log-abs-det is
+    # finite or -Inf and the packed factor stays finite.
+    lkj_sat_rng = MersenneTwister(4910)
+    lkj_sat_bad = 0
+    for lkj_sat_trial = 1:2000
+        lkj_sat_d = isodd(lkj_sat_trial) ? 3 : 5
+        lkj_sat_scale = 40.0 * rand(lkj_sat_rng)
+        lkj_sat_draw = lkj_sat_scale .* randn(lkj_sat_rng, (lkj_sat_d * (lkj_sat_d - 1)) ÷ 2)
+        lkj_sat_dest = zeros((lkj_sat_d * (lkj_sat_d + 1)) ÷ 2)
+        lkj_sat_lad = UncertainTea._to_constrained_cholesky_corr!(
+            lkj_sat_dest,
+            CholeskyCorrTransform(lkj_sat_d),
+            lkj_sat_draw,
+        )
+        (lkj_sat_lad == -Inf || isfinite(lkj_sat_lad)) && all(isfinite, lkj_sat_dest) ||
+            (lkj_sat_bad += 1)
+    end
+    @test lkj_sat_bad == 0
+end

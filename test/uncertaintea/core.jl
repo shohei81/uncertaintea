@@ -30,6 +30,7 @@ core_test_files = [
     ("dist_mixture.jl", "dist"),
     ("dist_mvnormal_dense.jl", "dist"),
     ("dist_lkj_cholesky.jl", "dist"),
+    ("transform_logit_saturation.jl", "dist"),
     ("vector_backend_sampler.jl", "backend-device"),
     ("batched_scoring_eltype_f32.jl", "backend-device"),
     ("vectorized_obs_iid_latents.jl", "backend-device"),
