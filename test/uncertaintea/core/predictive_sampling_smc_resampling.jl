@@ -80,6 +80,44 @@
     @test length(pred_sir_post) == 200
     @test all(isfinite, Float64.(pred_sir_post[:y]))
 
+    # predict on SIRResult uses the SIR-selected particles and defaults to
+    # num_samples draws (issue #90: it used to re-resample all importance
+    # particles and default to the importance particle count).
+    pred_sir_small = batched_sir(
+        pred_conjugate_model,
+        (),
+        pred_constraints;
+        num_particles=40,
+        num_samples=3,
+        rng=MersenneTwister(1),
+    )
+    pred_sir_small_post = predict(pred_conjugate_model, (), pred_sir_small; rng=MersenneTwister(2))
+    @test length(pred_sir_small_post) == numsamples(pred_sir_small) == 3
+    pred_sir_capped = predict(pred_conjugate_model, (), pred_sir_small; num_draws=2, rng=MersenneTwister(3))
+    @test length(pred_sir_capped) == 2
+
+    # With a near-deterministic observation the predictive draws must track the
+    # SIR-selected latents, not the wider importance population.
+    @tea static function pred_sir_tight_model()
+        mu ~ normal(0.0f0, 1.0f0)
+        {:y} ~ normal(mu, 1.0f-4)
+        return mu
+    end
+    pred_sir_tight = batched_sir(
+        pred_sir_tight_model,
+        (),
+        choicemap((:y, 0.3f0));
+        num_particles=60,
+        num_samples=4,
+        rng=MersenneTwister(31),
+    )
+    pred_sir_tight_post = predict(pred_sir_tight_model, (), pred_sir_tight; rng=MersenneTwister(32))
+    pred_sir_tight_selected = vec(Float64.(pred_sir_tight.constrained_samples))
+    @test length(pred_sir_tight_post) == 4
+    for tight_value in Float64.(pred_sir_tight_post[:y])
+        @test minimum(abs.(tight_value .- pred_sir_tight_selected)) < 1e-2
+    end
+
     # Weighted predict from a batched SMC result.
     pred_smc = batched_smc(pred_conjugate_model, (), pred_constraints; num_particles=200, rng=MersenneTwister(4))
     pred_smc_post = predict(pred_conjugate_model, (), pred_smc; num_draws=100, rng=MersenneTwister(2))

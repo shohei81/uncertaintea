@@ -430,7 +430,8 @@ function _batched_tempered_target!(
     proposal_log_scale::AbstractVector,
     beta::Float64,
 )
-    _batched_logjoint_and_gradient_unconstrained!(logjoint_values, cache, particles)
+    _, gradient = _batched_logjoint_and_gradient_unconstrained!(logjoint_values, cache, particles)
+    gradient === logjoint_gradient || copyto!(logjoint_gradient, gradient)
     _gaussian_logdensity_from_particles!(
         logproposal_values,
         particles,

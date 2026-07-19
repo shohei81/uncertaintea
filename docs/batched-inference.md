@@ -124,6 +124,9 @@ The current reference inference layer now includes:
   ...)` produce posterior-predictive `PredictiveDraws`; `predict(model, args;
   ...)` produces prior-predictive draws. These use the dynamic `generate` path
   and are CPU-only by design
+- `predict(model, args, ::SIRResult; ...)` draws from the particles the SIR
+  step already selected (`num_samples` of them by default) instead of
+  re-resampling the importance population
 
 The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:
