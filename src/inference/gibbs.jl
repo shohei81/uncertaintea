@@ -304,7 +304,7 @@ end
 # Everything else (interrupts, genuine model bugs) rethrows diagnostically.
 _gibbs_rejectable_error(err) = err isa Union{ArgumentError,DomainError,BoundsError,InexactError}
 
-function _gibbs_propose(rng::AbstractRNG, site::GibbsSite, value)
+function _gibbs_propose(rng::AbstractRNG, site::GibbsSite, value, discrete_tail::Float64)
     if site.kind === :flip
         current = value isa Bool ? value : value != 0
         return !current
@@ -312,7 +312,44 @@ function _gibbs_propose(rng::AbstractRNG, site::GibbsSite, value)
         shifted = Int(value) + rand(rng, 1:(site.categories-1))
         return shifted > site.categories ? shifted - site.categories : shifted
     end
-    return Int(value) + rand(rng, (-1, 1))
+    # symmetric integer walk; with probability discrete_tail the step gets a
+    # geometric tail (s = 1 + Geometric(1/2)) so large-count posteriors mix
+    # without breaking symmetry (the magnitude is drawn independently of the
+    # direction)
+    step = 1
+    if discrete_tail > 0 && rand(rng) < discrete_tail
+        step += floor(Int, log(rand(rng)) / log(0.5))
+    end
+    return Int(value) + rand(rng, (-1, 1)) * step
+end
+
+# Whether a concrete address is a discrete latent Gibbs site of `model`
+# (slotless, unmarginalized, discrete family). Used by the SBC harness to
+# keep auto-detected observation sets from swallowing Gibbs sites.
+function _gibbs_is_discrete_latent_address(model::TeaModel, address::Tuple)
+    choice_steps = _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
+    for step in choice_steps
+        (_gibbs_step_matches(step, address; exact=true) || _gibbs_step_matches(step, address; exact=false)) ||
+            continue
+        step.rhs isa DistributionSpec || return false
+        isnothing(step.parameter_slot) || return false
+        step.rhs.marginalize === :enumerate && return false
+        return step.rhs.family in _GIBBS_DISCRETE_FAMILIES
+    end
+    return false
+end
+
+"""
+    discrete_ess(chain::GibbsChain)
+
+Split-chain effective sample sizes of the discrete sites, aligned with
+`chain.discrete_addresses`.
+"""
+function discrete_ess(chain::GibbsChain)
+    return [
+        _split_ess(reshape(Float64.(view(chain.discrete_samples, site_index, :)), 1, :)) for
+        site_index = 1:length(chain.discrete_addresses)
+    ]
 end
 
 """
@@ -350,9 +387,12 @@ function gibbs(
     mass_matrix_regularization::Real=1e-3,
     mass_matrix_min_samples::Int=10,
     metric::Symbol=:diag,
+    discrete_tail::Real=0.0,
     rng::AbstractRNG=Random.default_rng(),
 )
     metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
+    0 <= discrete_tail < 1 || throw(ArgumentError("discrete_tail must be in [0, 1)"))
+    discrete_tail_probability = Float64(discrete_tail)
     num_params = parametercount(parameterlayout(model))
     constrained_num_params = parametervaluecount(parameterlayout(model))
     has_continuous = num_params > 0
@@ -512,7 +552,7 @@ function gibbs(
         for (site_index, site) in enumerate(sites)
             site.kind === :fixed && continue
             current_value = merged[site.address]
-            proposed = _gibbs_propose(rng, site, current_value)
+            proposed = _gibbs_propose(rng, site, current_value, discrete_tail_probability)
             # static-lower-bound pre-rejection (the compiled scorer would
             # bind the invalid value and a suffix consumer may throw)
             site.kind === :walk && proposed < site.lower && continue

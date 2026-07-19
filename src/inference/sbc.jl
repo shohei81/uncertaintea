@@ -98,8 +98,10 @@ function sbc(
     warn_threshold::Real=1e-3,
     rng::AbstractRNG=Random.default_rng(),
     observation_addresses::Union{Nothing,AbstractVector}=nothing,
+    sampler::Symbol=:nuts,
     nuts_kwargs...,
 )
+    sampler in (:nuts, :gibbs) || throw(ArgumentError("sbc sampler must be :nuts or :gibbs, got :$sampler"))
     num_simulations > 0 || throw(ArgumentError("sbc requires num_simulations > 0"))
     num_posterior_draws > 0 || throw(ArgumentError("sbc requires num_posterior_draws > 0"))
     thin > 0 || throw(ArgumentError("sbc requires thin > 0"))
@@ -120,19 +122,37 @@ function sbc(
             data_addresses = Any[
                 first(entry) for entry in prior_trace.choices.entries if !haskey(latent_map, first(entry))
             ]
+            if sampler === :gibbs
+                # a discrete latent Gibbs site is not data: it must stay free
+                # for the sampler, and the ranks below only cover the
+                # continuous slots either way
+                filter!(address -> !_gibbs_is_discrete_latent_address(model, address), data_addresses)
+            end
             isempty(data_addresses) &&
                 throw(ArgumentError("sbc requires at least one observation address to condition on"))
         end
         data = choicemap((address, prior_trace[address]) for address in data_addresses)
-        chain = nuts(
-            model,
-            args,
-            data;
-            num_samples=num_posterior_draws * thin,
-            num_warmup=num_warmup,
-            rng=rng,
-            nuts_kwargs...,
-        )
+        chain = if sampler === :gibbs
+            gibbs(
+                model,
+                args,
+                data;
+                num_samples=num_posterior_draws * thin,
+                num_warmup=num_warmup,
+                rng=rng,
+                nuts_kwargs...,
+            )
+        else
+            nuts(
+                model,
+                args,
+                data;
+                num_samples=num_posterior_draws * thin,
+                num_warmup=num_warmup,
+                rng=rng,
+                nuts_kwargs...,
+            )
+        end
         draws = view(chain.constrained_samples, :, thin:thin:(num_posterior_draws*thin))
         for value_index = 1:num_values
             ranks[value_index, simulation] = count(<(truth[value_index]), view(draws, value_index, :))
