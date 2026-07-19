@@ -168,7 +168,7 @@ function dirichlet(alpha::AbstractVector)
 end
 
 function dirichlet(alpha::Vararg{Real})
-    return DirichletDist(collect(promote(alpha...)))
+    return DirichletDist(collect(promote(map(float, alpha)...)))
 end
 
 function _mvnormal_vector(values)
@@ -283,9 +283,19 @@ function scale_cholesky(scales::AbstractVector, packed_corr_chol::AbstractVector
     return result
 end
 
+# `map(identity, collect(...))` narrows a `Vector{Any}` (the compiled
+# evaluator's materialization of a vector-literal weights argument, issue #75)
+# to the promoted element type, mirroring `mvnormaldense` and `scale_cholesky`;
+# heterogeneous weights are then promoted to a common Real type.
 function mixture(weights, components...)
     isempty(components) && throw(ArgumentError("mixture requires at least one component"))
-    return MixtureDist(collect(weights), components)
+    weight_values = map(identity, collect(weights))
+    isempty(weight_values) && throw(
+        ArgumentError(
+            "mixture requires one weight per component (got 0 weights for $(length(components)) components)",
+        ),
+    )
+    return MixtureDist(collect(promote(weight_values...)), components)
 end
 
 function Random.rand(rng::AbstractRNG, dist::DirichletDist)
@@ -351,7 +361,20 @@ function Random.rand(rng::AbstractRNG, dist::LKJCholeskyDist)
     return packed
 end
 
+# The scoring path validates the scale through the `normal` builder; the
+# sampling path must enforce the same constraint on every element (issue #87).
+_broadcast_normal_validate_sigma(sigma::Real) =
+    sigma > zero(sigma) ? nothing : throw(ArgumentError("normal requires sigma > 0"))
+
+function _broadcast_normal_validate_sigma(sigma::AbstractVector)
+    for value in sigma
+        value > zero(value) || throw(ArgumentError("normal requires sigma > 0"))
+    end
+    return nothing
+end
+
 function Random.rand(rng::AbstractRNG, dist::BroadcastNormalDist)
+    _broadcast_normal_validate_sigma(dist.sigma)
     n = _broadcast_normal_length(dist.mu, dist.sigma)
     isnothing(n) && throw(
         ArgumentError(
@@ -457,7 +480,8 @@ end
 # correlation Cholesky factor:
 #   lpdf = sum_{i=2..d} (d - i + 2*eta - 2) * log(L[i,i]) + log(1 / c_d(eta)).
 # Support: packed length d*(d+1)/2, strictly positive diagonal entries, and
-# every row of the unpacked factor a unit-or-shorter vector (else -Inf).
+# every row of the unpacked factor a unit vector within tolerance (else -Inf) --
+# the Cholesky factor of a correlation matrix has unit-norm rows (issue #78).
 function logpdf(dist::LKJCholeskyDist, x)
     values = x isa Tuple ? collect(x) : x
     values isa AbstractVector || throw(ArgumentError("lkjcholesky logpdf expects a vector or tuple value"))
@@ -475,7 +499,7 @@ function logpdf(dist::LKJCholeskyDist, x)
             entry = values[_packed_lower_index(d, row, col)]
             sum_sqs += entry * entry
         end
-        sum_sqs <= 1 + tolerance || return oftype(accumulator, -Inf)
+        abs(sum_sqs - one(sum_sqs)) <= tolerance || return oftype(accumulator, -Inf)
         if row >= 2
             accumulator += (d - row + 2 * dist.eta - 2) * log(diagonal)
         end
