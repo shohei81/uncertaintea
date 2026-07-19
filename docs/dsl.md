@@ -424,6 +424,45 @@ end
   the step as unsupported.
 - See docs/discrete-enumeration.md for the staged design.
 
+## Discrete Latents via MH-within-Gibbs
+
+Unbounded or large-support discrete latents (poisson, geometric,
+negativebinomial, binomial) cannot be enumerated; the `gibbs` sampler
+alternates symmetric single-site Metropolis-Hastings updates on them with
+NUTS transitions on the continuous block:
+
+```julia
+@tea (static) function count_model()
+    rate_log ~ normal(1.0, 0.5)
+    z ~ poisson(exp(rate_log))
+    {:y} ~ normal(1.0 * z, 0.8)
+    return z
+end
+
+chain = gibbs(count_model, (), choicemap((:y, 6.2)); num_samples=2000, num_warmup=500)
+chain.discrete_samples      # sites x samples, addresses in chain.discrete_addresses
+discrete_ess(chain)         # split-chain ESS per discrete site
+```
+
+- Sites are discovered automatically: every non-observed choice without a
+  parameter slot that is not `marginalize=:enumerate`. Bernoulli sites flip,
+  literal-probability categoricals propose uniformly over the other
+  categories, and the count families take a ±1 integer walk
+  (`discrete_tail=p` mixes in a geometric-tailed step for large-count
+  posteriors). A model without discrete sites reduces to plain NUTS; one
+  without continuous slots to pure single-site MH.
+- Models where the SET of latent choices depends on a sampled value
+  (latent-bound loops or addresses) are trans-dimensional and rejected at
+  construction; marginalize the controlling site instead.
+- Difficult initializations retry the prior and accept explicit seeds
+  (`initial_discrete`, `initial_params`); NUTS keyword arguments are
+  mirrored from [`nuts`](@ref).
+- `sbc(model; sampler=:gibbs, observation_addresses=[...], ...)` runs the
+  calibration harness with the Gibbs kernel; the observed addresses must be
+  named explicitly so the discrete sites stay latent (the default would
+  condition every non-slot choice).
+- See docs/mh-within-gibbs.md for the design.
+
 ## User-Defined Distributions
 
 A distribution defined outside the package participates in `@tea` models on

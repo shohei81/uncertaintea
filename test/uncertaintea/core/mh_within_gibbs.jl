@@ -782,6 +782,66 @@ end
         @test all(value -> value in (0, 1), gibbs_hostile_chain.discrete_samples)
     end
 
+    @testset "gibbs_polish" begin
+        # the geometric-tailed walk stays a correct symmetric proposal: the
+        # pure-discrete posterior still matches the enumeration oracle
+        gibbs_tail_lp = [
+            UncertainTea.logpdf(poisson(3.0), k) + UncertainTea.logpdf(normal(1.0 * k, 0.5), 4.2) for
+            k = 0:60
+        ]
+        gibbs_tail_weights = exp.(gibbs_tail_lp .- maximum(gibbs_tail_lp))
+        gibbs_tail_weights ./= sum(gibbs_tail_weights)
+        gibbs_tail_oracle = sum((0:60) .* gibbs_tail_weights)
+        gibbs_tail_chain = gibbs(
+            gibbs_pure_poisson_model,
+            (),
+            choicemap((:y, 4.2));
+            num_samples=3000,
+            num_warmup=500,
+            discrete_tail=0.3,
+            rng=MersenneTwister(81),
+        )
+        @test gibbs_mean(gibbs_tail_chain.discrete_samples[1, :]) ≈ gibbs_tail_oracle atol = 0.15
+        @test_throws ArgumentError gibbs(
+            gibbs_pure_poisson_model,
+            (),
+            choicemap((:y, 4.2));
+            num_samples=10,
+            discrete_tail=1.5,
+            rng=MersenneTwister(83),
+        )
+
+        # per-site split-chain ESS aligns with the addresses
+        gibbs_ess_values = discrete_ess(gibbs_tail_chain)
+        @test length(gibbs_ess_values) == 1
+        @test all(value -> isfinite(value) && value > 0, gibbs_ess_values)
+
+        # the SBC harness runs with the Gibbs kernel: the caller names the
+        # observed data so :z stays a latent Gibbs site, and the continuous
+        # ranks calibrate; without observation_addresses the default would
+        # condition every non-slot choice (no free sites), so it must throw
+        @test_throws ArgumentError sbc(
+            gibbs_indicator_model;
+            num_simulations=2,
+            num_posterior_draws=4,
+            num_warmup=10,
+            sampler=:gibbs,
+            rng=MersenneTwister(84),
+        )
+        gibbs_sbc_result = sbc(
+            gibbs_indicator_model;
+            num_simulations=40,
+            num_posterior_draws=24,
+            num_warmup=60,
+            sampler=:gibbs,
+            observation_addresses=[(:y,)],
+            rng=MersenneTwister(85),
+        )
+        @test size(gibbs_sbc_result.ranks) == (2, 40)
+        @test all(0 .<= gibbs_sbc_result.ranks .<= 24)
+        @test all(pvalue -> pvalue > 1e-3, gibbs_sbc_result.pvalues)
+    end
+
     @testset "gibbs_nuts_option_parity" begin
         # the mirrored NUTS options validate like nuts itself
         @test_throws ArgumentError gibbs(
