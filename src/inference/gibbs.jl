@@ -323,22 +323,6 @@ function _gibbs_propose(rng::AbstractRNG, site::GibbsSite, value, discrete_tail:
     return Int(value) + rand(rng, (-1, 1)) * step
 end
 
-# Whether a concrete address is a discrete latent Gibbs site of `model`
-# (slotless, unmarginalized, discrete family). Used by the SBC harness to
-# keep auto-detected observation sets from swallowing Gibbs sites.
-function _gibbs_is_discrete_latent_address(model::TeaModel, address::Tuple)
-    choice_steps = _gibbs_collect_choice_steps!(ChoicePlanStep[], executionplan(model).steps)
-    for step in choice_steps
-        (_gibbs_step_matches(step, address; exact=true) || _gibbs_step_matches(step, address; exact=false)) ||
-            continue
-        step.rhs isa DistributionSpec || return false
-        isnothing(step.parameter_slot) || return false
-        step.rhs.marginalize === :enumerate && return false
-        return step.rhs.family in _GIBBS_DISCRETE_FAMILIES
-    end
-    return false
-end
-
 """
     discrete_ess(chain::GibbsChain)
 
@@ -346,10 +330,14 @@ Split-chain effective sample sizes of the discrete sites, aligned with
 `chain.discrete_addresses`.
 """
 function discrete_ess(chain::GibbsChain)
-    return [
-        _split_ess(reshape(Float64.(view(chain.discrete_samples, site_index, :)), 1, :)) for
-        site_index = 1:length(chain.discrete_addresses)
-    ]
+    return map(1:length(chain.discrete_addresses)) do site_index
+        draws = Float64.(view(chain.discrete_samples, site_index, :))
+        # _split_ess expects rows that ARE the split chains: hand it the two
+        # halves so first-vs-second-half nonstationarity registers
+        half = length(draws) ÷ 2
+        half >= 1 || return Float64(length(draws))
+        _split_ess(permutedims(reshape(draws[1:(2*half)], half, 2)))
+    end
 end
 
 """

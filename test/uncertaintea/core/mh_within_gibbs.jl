@@ -816,15 +816,25 @@ end
         @test length(gibbs_ess_values) == 1
         @test all(value -> isfinite(value) && value > 0, gibbs_ess_values)
 
-        # the SBC harness runs with the Gibbs kernel: discrete sites stay
-        # latent in the auto-detected observation set and the continuous
-        # ranks calibrate
+        # the SBC harness runs with the Gibbs kernel: the caller names the
+        # observed data so :z stays a latent Gibbs site, and the continuous
+        # ranks calibrate; without observation_addresses the default would
+        # condition every non-slot choice (no free sites), so it must throw
+        @test_throws ArgumentError sbc(
+            gibbs_indicator_model;
+            num_simulations=2,
+            num_posterior_draws=4,
+            num_warmup=10,
+            sampler=:gibbs,
+            rng=MersenneTwister(84),
+        )
         gibbs_sbc_result = sbc(
             gibbs_indicator_model;
             num_simulations=40,
             num_posterior_draws=24,
             num_warmup=60,
             sampler=:gibbs,
+            observation_addresses=[(:y,)],
             rng=MersenneTwister(85),
         )
         @test size(gibbs_sbc_result.ranks) == (2, 40)

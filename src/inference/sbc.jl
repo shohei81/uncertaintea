@@ -82,8 +82,11 @@ the kept draws. Correct inference makes each rank uniform on
 `warn_threshold` produce warnings (see `has_warnings`).
 
 `observation_addresses` defaults to every choice address in a prior trace
-that is not a latent parameter slot. Remaining keyword arguments are
-forwarded to [`nuts`](@ref). Runtime scales with
+that is not a latent parameter slot. `sampler=:gibbs` runs [`gibbs`](@ref)
+instead of [`nuts`](@ref) and requires explicit `observation_addresses` —
+under the default every discrete choice would be conditioned as data,
+leaving no Gibbs sites free. Remaining keyword arguments are forwarded to
+the chosen sampler. Runtime scales with
 `num_simulations * (num_warmup + num_posterior_draws * thin)`; keep the fast
 suite variant small and use `bench/sbc_validation.jl` for release-grade runs.
 """
@@ -102,6 +105,16 @@ function sbc(
     nuts_kwargs...,
 )
     sampler in (:nuts, :gibbs) || throw(ArgumentError("sbc sampler must be :nuts or :gibbs, got :$sampler"))
+    # the default observation set is EVERY non-slot choice, which would
+    # condition all discrete latents as data and leave no Gibbs sites; SBC
+    # cannot guess which discrete choices are data, so the caller must say
+    sampler === :gibbs && isnothing(observation_addresses) &&
+        throw(
+            ArgumentError(
+                "sbc with sampler=:gibbs requires explicit observation_addresses (the default " *
+                "observes every non-slot choice, leaving no discrete Gibbs sites free)",
+            ),
+        )
     num_simulations > 0 || throw(ArgumentError("sbc requires num_simulations > 0"))
     num_posterior_draws > 0 || throw(ArgumentError("sbc requires num_posterior_draws > 0"))
     thin > 0 || throw(ArgumentError("sbc requires thin > 0"))
@@ -122,12 +135,6 @@ function sbc(
             data_addresses = Any[
                 first(entry) for entry in prior_trace.choices.entries if !haskey(latent_map, first(entry))
             ]
-            if sampler === :gibbs
-                # a discrete latent Gibbs site is not data: it must stay free
-                # for the sampler, and the ranks below only cover the
-                # continuous slots either way
-                filter!(address -> !_gibbs_is_discrete_latent_address(model, address), data_addresses)
-            end
             isempty(data_addresses) &&
                 throw(ArgumentError("sbc requires at least one observation address to condition on"))
         end

@@ -457,9 +457,10 @@ discrete_ess(chain)         # split-chain ESS per discrete site
 - Difficult initializations retry the prior and accept explicit seeds
   (`initial_discrete`, `initial_params`); NUTS keyword arguments are
   mirrored from [`nuts`](@ref).
-- `sbc(model; sampler=:gibbs, ...)` runs the calibration harness with the
-  Gibbs kernel (discrete sites stay latent in the auto-detected
-  observation set).
+- `sbc(model; sampler=:gibbs, observation_addresses=[...], ...)` runs the
+  calibration harness with the Gibbs kernel; the observed addresses must be
+  named explicitly so the discrete sites stay latent (the default would
+  condition every non-slot choice).
 - See docs/mh-within-gibbs.md for the design.
 
 ## User-Defined Distributions
