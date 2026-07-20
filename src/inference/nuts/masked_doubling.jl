@@ -29,7 +29,9 @@
 #      expand mask, in chain order (skipped while the running subtree log
 #      weight is -Inf, exactly as in _advance_tree_leaf).
 #   4. per merge: one draw per merging chain in chain order, consumed only
-#      when that chain's subtree log weight is finite (_merge_subtree_stats).
+#      when that chain's subtree is valid (no internal U-turn or divergence --
+#      invalid subtrees are discarded whole and never merge) and its log
+#      weight is finite (_merge_subtree_stats).
 
 function _batched_nuts_proposals_masked!(
     workspace::BatchedNUTSWorkspace,
@@ -131,6 +133,10 @@ function _masked_nuts_doubling_round!(
         if workspace.subtree_integration_steps[chain_index] == 0
             workspace.control.divergent_step[chain_index] =
                 workspace.subtree_divergent[chain_index]
+        elseif workspace.subtree_turning[chain_index] ||
+               workspace.subtree_divergent[chain_index]
+            # Invalid subtree: canonical NUTS discards the whole doubling.
+            _discard_invalid_batched_subtree!(workspace, chain_index)
         else
             workspace.subtree_active[chain_index] = true
             any_merging = true

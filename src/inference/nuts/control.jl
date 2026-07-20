@@ -208,6 +208,7 @@ end
 function _update_single_batched_continuation_turning!(
     workspace::BatchedNUTSWorkspace,
     chain_index::Int,
+    inverse_mass_matrix::Union{AbstractVector,AbstractMatrix},
 )
     active = _single_chain_mask!(workspace.subtree_active, chain_index)
     _batched_is_turning!(
@@ -216,6 +217,7 @@ function _update_single_batched_continuation_turning!(
         workspace.right_position,
         workspace.left_momentum,
         workspace.right_momentum,
+        inverse_mass_matrix,
         active,
     )
     workspace.subtree_active[chain_index] = false
@@ -362,8 +364,13 @@ function _batched_nuts_merge_masks(
             workspace.subtree_integration_steps[chain_index] > 0 ||
             workspace.subtree_divergent[chain_index]
         started_chains[chain_index] = started
+        # An invalid subtree (internal U-turn or divergence) never merges:
+        # canonical multinomial NUTS discards the entire final doubling.
         merge_active[chain_index] =
-            started && workspace.subtree_integration_steps[chain_index] > 0
+            started &&
+            workspace.subtree_integration_steps[chain_index] > 0 &&
+            !workspace.subtree_turning[chain_index] &&
+            !workspace.subtree_divergent[chain_index]
     end
     return started_chains, merge_active
 end

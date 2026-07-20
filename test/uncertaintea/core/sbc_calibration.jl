@@ -49,16 +49,22 @@ end
     end
 
     @testset "sbc_transformed_parameter" begin
+        # 128 simulations: the rank-uniformity chi-square p-value is high
+        # variance at 50 simulations, so the metric-aware U-turn / invalid-
+        # subtree fixes (which shifted the seeded posterior draws) tipped one
+        # marginal p-value below the 0.01 false-alarm guard on the 1.10 CI
+        # entry. More simulations stabilize the histogram; both parameters
+        # clear 0.01 with margin on 1.10 and latest.
         result = sbc(
             sbc_scale_model;
-            num_simulations=50,
-            num_posterior_draws=20,
-            num_warmup=50,
+            num_simulations=128,
+            num_posterior_draws=24,
+            num_warmup=80,
             thin=2,
             rng=MersenneTwister(7),
         )
-        @test size(result.ranks) == (2, 50)
-        @test all(0 .<= result.ranks .<= 20)
+        @test size(result.ranks) == (2, 128)
+        @test all(0 .<= result.ranks .<= 24)
         @test all(result.pvalues .> 0.01)
         @test !has_warnings(result)
     end
