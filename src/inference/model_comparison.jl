@@ -140,13 +140,16 @@ function _psis_smooth(log_ratios::AbstractVector)
     tail_positions = perm[(n-tail_len+1):n]  # indices of the largest tail_len ratios
     cutoff = lw[perm[n-tail_len]]              # largest value below the tail
     tail_values = lw[tail_positions]             # ascending (perm was sorted)
-    exp_cutoff = exp(cutoff)
-    exceedances = exp.(tail_values) .- exp_cutoff
+    # Exponentiate relative to the largest log ratio so the smoothing is
+    # invariant to a common offset and cannot overflow (issue #82).
+    shift = lw[perm[n]]
+    exp_cutoff = exp(cutoff - shift)
+    exceedances = exp.(tail_values .- shift) .- exp_cutoff
 
     k, sigma = _gpd_fit(exceedances)
     if isfinite(k) && sigma > 0
         probs = [(i - 0.5) / tail_len for i = 1:tail_len]
-        smoothed = log.(_gpd_inv(probs, k, sigma) .+ exp_cutoff)
+        smoothed = log.(_gpd_inv(probs, k, sigma) .+ exp_cutoff) .+ shift
         for (idx, pos) in enumerate(tail_positions)
             lw[pos] = smoothed[idx]
         end

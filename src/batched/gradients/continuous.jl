@@ -168,6 +168,17 @@ function _accumulate_weibull_gradient!(
         scale = scale_values[batch_index]
         totals[batch_index] += _backend_weibull_logpdf(shape, scale, value)
         if !(value > 0)
+            # At the x == 0, shape == 1 boundary the logpdf is -log(scale)
+            # (see logpdf(::WeibullDist, x)), so the scale partial is finite
+            # while the value/shape channels stay zero as in the CPU
+            # ForwardDiff path (issue #86).
+            if value == 0 && shape == 1
+                dscale_boundary = -1 / scale
+                for parameter_index in axes(gradients, 1)
+                    gradients[parameter_index, batch_index] +=
+                        dscale_boundary * scale_gradients[parameter_index, batch_index]
+                end
+            end
             continue
         end
         log_ratio = log(value) - log(scale)
