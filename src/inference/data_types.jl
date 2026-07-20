@@ -614,7 +614,7 @@ function BatchedHMCWorkspace(
 )
     num_params, num_chains = size(position)
     constrained_num_params = parametervaluecount(parameterlayout(model))
-    batch_args = _validate_batched_args(args, num_chains)
+    batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     length(inverse_mass_matrix) == num_params ||
         throw(DimensionMismatch("expected inverse mass matrix of length $num_params, got $(length(inverse_mass_matrix))"))
@@ -652,7 +652,7 @@ function BatchedNUTSWorkspace(
     num_params, num_chains = size(position)
     checkpoint_columns = max(max_tree_depth + 1, 1)
     constrained_num_params = parametervaluecount(parameterlayout(model))
-    batch_args = _validate_batched_args(args, num_chains)
+    batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
     tree_current_position = Matrix{Float64}(undef, num_params, num_chains)

@@ -33,6 +33,17 @@ end
 
 function choice(ctx::RuntimeContext, address, dist::AbstractTeaDistribution)
     full_address = _join_address(ctx.prefix, address)
+    # In-model duplicate recording must error: a ChoiceMap-style update here
+    # would silently drop the earlier random choice (and leave the recorded
+    # log-weight inconsistent with the trace). User-side ChoiceMap updates
+    # outside a model execution are unaffected.
+    isnothing(_choice_index_normalized(ctx.choices, full_address)) || throw(
+        ArgumentError(
+            "duplicate choice address $(full_address) in model execution: every random choice " *
+            "needs a unique address, but this address was already recorded earlier in the same " *
+            "execution (the second choice would silently overwrite the first)",
+        ),
+    )
     if haskey(ctx.overrides, full_address)
         value = ctx.overrides[full_address]
         ctx.log_weight += Float64(logpdf(dist, value))

@@ -72,7 +72,7 @@ function batched_nuts(
             backend=backend, precision=device_precision, args=args, constraints=constraints,
         )
 
-    batch_args = _validate_batched_args(args, num_chains)
+    batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     position = _initial_batched_hmc_positions(
         model,

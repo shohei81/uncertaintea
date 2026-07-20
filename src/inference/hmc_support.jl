@@ -152,7 +152,7 @@ function _initial_batched_hmc_positions(
     constrained_num_params::Int,
     num_chains::Int,
 )
-    batch_args = _validate_batched_args(args, num_chains)
+    batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
     positions = Matrix{Float64}(undef, num_params, num_chains)
     seeds = rand(rng, UInt, num_chains)
