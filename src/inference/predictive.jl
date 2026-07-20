@@ -108,14 +108,21 @@ function predict(
     return predict(model, args, result.importance; num_draws=num_draws, rng=rng)
 end
 
+# Posterior predictive from SIR results: the SIR step already resampled
+# `num_samples` particles (`result.ancestors`), so draw from those selected
+# particles instead of re-resampling the importance population.
 function predict(
     model::TeaModel,
     args::Tuple,
     result::SIRResult;
-    num_draws::Int=size(result.importance.constrained_particles, 2),
+    num_draws::Int=size(result.constrained_samples, 2),
     rng::AbstractRNG=Random.default_rng(),
 )
-    return predict(model, args, result.importance; num_draws=num_draws, rng=rng)
+    num_draws > 0 || throw(ArgumentError("predict requires num_draws > 0"))
+    total = size(result.constrained_samples, 2)
+    indices = _even_draw_indices(total, num_draws)
+    columns = (view(result.constrained_samples, :, index) for index in indices)
+    return _predictive_from_param_columns(model, args, columns, rng)
 end
 
 # Prior predictive: unconstrained `generate` per draw, keeping ALL addresses.

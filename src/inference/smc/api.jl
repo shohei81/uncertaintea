@@ -267,14 +267,19 @@ function batched_smc(
             ),
         )
 
-        # SMC invokes the callback once per stage; callback_every is ignored.
-        isnothing(callback) || callback((
-            phase=:stage,
-            iteration=stage_index,
-            total=max_stages,
-            step_size=NaN,
-            divergences=0,
-        ))
+        # Shared callback contract: fire every `callback_every` stages and on
+        # the final stage (schedule reached beta = 1 or max_stages exhausted).
+        final_stage = beta_next >= 1.0 - 1e-12 || stage_index == max_stages
+        if !isnothing(callback) &&
+           ((callback_every > 0 && stage_index % callback_every == 0) || final_stage)
+            callback((
+                phase=:stage,
+                iteration=stage_index,
+                total=max_stages,
+                step_size=NaN,
+                divergences=0,
+            ))
+        end
 
         beta = beta_next
         beta >= 1.0 - 1e-12 && break
