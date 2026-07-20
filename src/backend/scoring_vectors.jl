@@ -104,7 +104,7 @@ function _backend_lkjcholesky_logpdf(d::Int, eta, x)
             entry = x[_packed_lower_index(d, row, col)]
             sum_sqs += entry * entry
         end
-        sum_sqs <= 1 + tolerance || return oftype(accumulator, -Inf)
+        abs(sum_sqs - one(sum_sqs)) <= tolerance || return oftype(accumulator, -Inf)
         if row >= 2
             accumulator += (d - row + 2 * eta - 2) * log(diagonal)
         end

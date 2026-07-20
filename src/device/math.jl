@@ -121,8 +121,13 @@ end
     return ifelse(x > zero(T), base, ifelse(x == zero(T), at_zero, _device_neginf(T)))
 end
 
+# Support mirrors the CPU `_bernoulli_value` normalization (issue #85): only
+# values equal to 0 or 1 are in support; anything else scores -Inf instead of
+# throwing (exception-free device contract).
 @inline function _device_bernoulli_logpdf(p::T, x::T) where {T}
-    return ifelse(x > T(0.5), log(p), log1p(-p))
+    base = ifelse(x > T(0.5), log(p), log1p(-p))
+    in_support = (x == zero(T)) | (x == one(T))
+    return ifelse(in_support, base, _device_neginf(T))
 end
 
 # Nonnegative exact-integer support check shared by the count families; mirrors the
@@ -685,13 +690,23 @@ end
 @inline _device_exp_shift_sum(t::Tuple{A}, shift) where {A} = exp(t[1] - shift)
 @inline _device_exp_shift_sum(t::Tuple, shift) = exp(first(t) - shift) + _device_exp_shift_sum(Base.tail(t), shift)
 
+@inline _device_tuple_all_nonneg(t::Tuple{A}) where {A} = t[1] >= zero(t[1])
+@inline _device_tuple_all_nonneg(t::Tuple) =
+    (first(t) >= zero(first(t))) & _device_tuple_all_nonneg(Base.tail(t))
+
 # Max-shifted log-sum-exp over compile-time component tuples, mirroring the CPU
-# `_backend_mixture_normal_logpdf` (all components -Inf -> -Inf).
+# `_backend_mixture_normal_logpdf` (all components -Inf -> -Inf). The weight
+# validation the CPU scorer enforces by throwing (nonnegative, summing to 1
+# within 1e-8, issue #76) degrades to -Inf under the exception-free device
+# contract.
 @inline function _device_mixture_normal_logpdf(weights::Tuple, mus::Tuple, sigmas::Tuple, x)
     terms = _device_mixture_terms(weights, mus, sigmas, x)
     shift = _device_tuple_max(terms)
     result = shift + log(_device_exp_shift_sum(terms, shift))
-    return ifelse(isfinite(shift), result, oftype(result, -Inf))
+    total = _device_tuple_sum(weights)
+    weights_ok =
+        _device_tuple_all_nonneg(weights) & (abs(total - one(total)) <= oftype(total, 1e-8))
+    return ifelse(weights_ok & isfinite(shift), result, oftype(result, -Inf))
 end
 
 # ---- dense multivariate normal ------------------------------------------------
@@ -841,9 +856,10 @@ end
 # LKJ log density over a packed correlation Cholesky factor, mirroring the CPU
 # `logpdf(::LKJCholeskyDist, x)`: sum_{row=2..d} (d - row + 2*eta - 2) *
 # log(L[row,row]) plus the normalizer, with the same support acceptance
-# (positive diagonals, row square sums within sqrt(eps)*d*16 of at most one --
-# the tolerance scales with the value precision, matching the CPU f32 support
-# discipline from issue #49). log(abs(...)) keeps the eagerly-evaluated branch
+# (positive diagonals, row square sums within sqrt(eps)*d*16 of one -- unit
+# rows, issue #78; the tolerance scales with the value precision, matching the
+# CPU f32 support discipline from issue #49). log(abs(...)) keeps the
+# eagerly-evaluated branch
 # GPU-safe; out-of-support values select the -Inf branch instead of throwing.
 @generated function _device_lkjcholesky_logpdf(eta::TE, packed::NTuple{P,T}, ::Val{D}) where {TE,T,P,D}
     packed_index(row, col) = (col - 1) * D - ((col - 1) * (col - 2)) ÷ 2 + (row - col + 1)
@@ -858,7 +874,7 @@ end
         for col = 1:(row-1)
             sum_expr = :($sum_expr + packed[$(packed_index(row, col))] * packed[$(packed_index(row, col))])
         end
-        push!(body, :(in_support &= ($sum_expr) <= one(first(packed)) + tolerance))
+        push!(body, :(in_support &= abs(($sum_expr) - one(first(packed))) <= tolerance))
         row >= 2 && push!(body, :(accumulator += ($(D - row) + 2 * eta - 2) * log(abs($diagonal))))
     end
     return quote

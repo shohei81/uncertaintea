@@ -135,7 +135,7 @@ function _accumulate_lkjcholesky_gradient!(
                 entry = value_values[_packed_lower_index(d, row, col)][batch_index]
                 sum_sqs += entry * entry
             end
-            sum_sqs <= 1 + tolerance || begin
+            abs(sum_sqs - one(T)) <= tolerance || begin
                 valid = false
                 break
             end

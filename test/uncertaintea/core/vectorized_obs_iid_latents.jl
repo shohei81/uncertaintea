@@ -205,3 +205,29 @@ end
         @test isapprox(slope_mean, true_slope; atol=0.3)
     end
 end
+
+# Issue #87: the broadcast normal sampling path validates the scale like the
+# scoring path already does, including every element of a vector sigma.
+@testset "bc_broadcast_sampling_sigma_validation" begin
+    @tea static function bc_neg_sigma_model()
+        {:y} ~ normal.([0.0, 0.0], -1.0)
+    end
+    @test_throws ArgumentError generate(bc_neg_sigma_model; rng=MersenneTwister(1))
+
+    @tea static function bc_neg_sigma_vec_model()
+        {:y} ~ normal.([0.0, 0.0], [1.0, -1.0])
+    end
+    @test_throws ArgumentError generate(bc_neg_sigma_vec_model; rng=MersenneTwister(1))
+
+    @test_throws ArgumentError rand(
+        MersenneTwister(1),
+        UncertainTea.BroadcastNormalDist([0.0, 0.0], -1.0),
+    )
+    @test_throws ArgumentError rand(
+        MersenneTwister(1),
+        UncertainTea.BroadcastNormalDist([0.0, 0.0], [1.0, 0.0]),
+    )
+    bc_valid_draws = rand(MersenneTwister(1), UncertainTea.BroadcastNormalDist([0.0, 0.0], 1.0))
+    @test length(bc_valid_draws) == 2
+    @test all(isfinite, bc_valid_draws)
+end

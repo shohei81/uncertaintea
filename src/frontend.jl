@@ -816,6 +816,62 @@ function _return_expr_expr(body)
     return QuoteNode(nothing)
 end
 
+# True when `expr` contains a `~` choice or an assignment anywhere inside.
+function _contains_choice_or_assignment(expr)
+    expr isa Expr || return false
+    expr.head == :(=) && return true
+    expr.head == :call && !isempty(expr.args) && expr.args[1] === :~ && return true
+    return any(_contains_choice_or_assignment, expr.args)
+end
+
+# Find the first branchful control-flow expression in a model body: any
+# `if`/`elseif`/`else` block or ternary `?:` (both parse to `Expr(:if, ...)`),
+# and any short-circuit `&&`/`||` that contains a `~` choice or an assignment.
+# The linear execution plan has no IR for branches -- it would append BOTH
+# branches' choices and assignments to the same plan and silently miscompile
+# logjoint -- so static models must reject these at macro expansion, and
+# dynamic models must refuse compiled scoring (generate/assess execute the
+# real body and stay correct).
+function _first_branchful_expr(expr)
+    expr isa Expr || return nothing
+    (expr.head == :if || expr.head == :elseif) && return expr
+    if (expr.head == :&& || expr.head == :||) && _contains_choice_or_assignment(expr)
+        return expr
+    end
+    for arg in expr.args
+        found = _first_branchful_expr(arg)
+        isnothing(found) || return found
+    end
+    return nothing
+end
+
+function _reject_static_branchful(body)
+    found = _first_branchful_expr(body)
+    isnothing(found) && return nothing
+    if found.head == :&& || found.head == :||
+        throw(
+            ArgumentError(
+                "@tea static models do not support short-circuit `&&`/`||` containing a `~` choice " *
+                "or an assignment (found `$(found)`): the static execution plan linearizes the model " *
+                "body, so the conditionally-executed choice/assignment would be recorded and scored " *
+                "unconditionally, silently corrupting logjoint. Supported instead: deterministic " *
+                "computation (including `ifelse(cond, a, b)` for value selection), static `for` loops, " *
+                "and moving data-dependent branching outside the model (pass the result as a model argument).",
+            ),
+        )
+    end
+    throw(
+        ArgumentError(
+            "@tea static models do not support `if`/`elseif`/`else` blocks or the ternary `?:` " *
+            "operator: the static execution plan linearizes the model body, so the choices and " *
+            "assignments of BOTH branches would be recorded and scored unconditionally, silently " *
+            "corrupting logjoint. Supported instead: deterministic computation (including " *
+            "`ifelse(cond, a, b)` for value selection), static `for` loops, and moving " *
+            "data-dependent branching outside the model (pass the result as a model argument).",
+        ),
+    )
+end
+
 function _expand_tea(mode_expr, definition)
     definition isa Expr && definition.head == :function ||
         throw(ArgumentError("@tea expects a function definition"))
@@ -829,6 +885,13 @@ function _expand_tea(mode_expr, definition)
     name = signature.args[1]
     name isa Symbol || throw(ArgumentError("@tea expects a plain function name"))
 
+    # Branchful control flow cannot be represented by the linear execution
+    # plan. Static models reject it outright; dynamic models keep the correct
+    # runtime (generate/assess) behavior but are flagged so compiled scoring
+    # refuses to silently linearize both branches.
+    branchful = !isnothing(_first_branchful_expr(body))
+    mode_expr === :static && _reject_static_branchful(body)
+
     ctxsym = gensym(:tea_ctx)
     impl_name = gensym(name)
     impl_signature = Expr(:call, impl_name, ctxsym, signature.args[2:end]...)
@@ -836,9 +899,28 @@ function _expand_tea(mode_expr, definition)
     mode = _tea_mode(mode_expr)
     spec_expr = _model_spec_expr(mode_expr, signature, body)
     function_definition = Expr(:function, impl_signature, rewritten_body)
-    binding_definition = :($name = $(_qualify(:TeaModel))($mode, $(QuoteNode(name)), $impl_name, $spec_expr))
 
-    return esc(Expr(:block, function_definition, binding_definition))
+    # Argument filler: a function with the model's exact signature (defaults
+    # included) that returns the completed argument tuple, so the compiled
+    # scoring APIs fill missing trailing arguments with Julia's own
+    # default-argument semantics and agree with `generate`.
+    filler_name = gensym(Symbol(name, :_argfill))
+    filler_signature = Expr(:call, filler_name, map(deepcopy, signature.args[2:end])...)
+    filler_body = Expr(:tuple, [_argument_name(arg) for arg in signature.args[2:end]]...)
+    filler_definition = Expr(:function, filler_signature, filler_body)
+
+    binding_definition = :(
+        $name = $(_qualify(:TeaModel))(
+            $mode,
+            $(QuoteNode(name)),
+            $impl_name,
+            $spec_expr;
+            argument_filler=($filler_name),
+            branchful=($branchful),
+        )
+    )
+
+    return esc(Expr(:block, function_definition, filler_definition, binding_definition))
 end
 
 macro tea(args...)

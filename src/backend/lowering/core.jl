@@ -799,6 +799,21 @@ end
 
 function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     target === :gpu || throw(ArgumentError("only :gpu backend lowering is currently supported"))
+    if model.branchful
+        # a (dynamic-mode) body with if/else control flow: the linear plan
+        # holds both branches, so no backend lowering of it can be trusted
+        report = BackendLoweringReport(
+            target,
+            false,
+            [
+                "model contains branchful control flow (if/else); the linear execution plan " *
+                "cannot represent it -- use generate/assess",
+            ],
+            copy(GPU_BACKEND_SUPPORTED_DISTRIBUTIONS),
+            copy(GPU_BACKEND_SUPPORTED_PRIMITIVES),
+        )
+        return BackendLoweringResult(report, nothing)
+    end
     plan = executionplan(model)
     issues = String[]
     steps = _backend_lower_steps(model, plan.environment_layout, plan.steps, issues)

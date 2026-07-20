@@ -73,8 +73,7 @@ end
 function _record_execution!(records, model::TeaModel, params::AbstractVector, args::Tuple, constraints::ChoiceMap)
     plan = executionplan(model)
     compiled_plan = _compiled_execution_plan(model)
-    length(args) == length(modelspec(model).arguments) ||
-        throw(DimensionMismatch("expected $(length(modelspec(model).arguments)) model arguments, got $(length(args))"))
+    args = _complete_model_args(model, args)
 
     env = PlanEnvironment(plan.environment_layout)
     for (slot, value) in zip(plan.environment_layout.argument_slots, args)

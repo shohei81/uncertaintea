@@ -198,7 +198,12 @@ end
     for lkj_h_chain in lkj_h_chains.chains
         @test all(isfinite, lkj_h_chain.constrained_samples)
     end
-    @test all(<(1.3), rhat(lkj_h_chains))
+    # The (1,1) entry of a Cholesky correlation factor is structurally 1.0, so
+    # its Rhat is NaN by the Stan/posterior constant-chain convention (issue
+    # #103); every genuinely sampled value must still mix well.
+    lkj_h_rhats = rhat(lkj_h_chains)
+    @test count(isnan, lkj_h_rhats) == 1
+    @test all(<(1.3), filter(isfinite, lkj_h_rhats))
     # Posterior mean of the (2,1) correlation (packed value index 2) keeps the
     # strongly positive sign the data were generated with.
     lkj_h_rho = vcat((chain.constrained_samples[2, :] for chain in lkj_h_chains.chains)...)
@@ -356,4 +361,30 @@ end
             (lkj_sat_bad += 1)
     end
     @test lkj_sat_bad == 0
+end
+
+# Issue #78: a packed factor is only in support when every row has UNIT norm
+# within tolerance (a Cholesky factor of a correlation matrix); factors with
+# shorter rows used to score finitely. CPU, backend, and device paths agree.
+@testset "lkj_unit_row_support" begin
+    lkj_short_row = [1.0, 0.0, 0.5] # second row has norm 0.5
+    lkj_unit_rows = [1.0, 0.6, 0.8]
+    lkj_short_diag = [0.9, 0.6, 0.8] # first row has norm 0.9
+
+    @test UncertainTea.logpdf(lkjcholesky(2, 1.0), lkj_short_row) == -Inf
+    @test UncertainTea.logpdf(lkjcholesky(2, 1.0), lkj_short_diag) == -Inf
+    @test UncertainTea.logpdf(lkjcholesky(2, 1.0), lkj_unit_rows) ≈ -log(2.0) atol = 1e-12
+
+    @test UncertainTea._backend_lkjcholesky_logpdf(2, 1.0, lkj_short_row) == -Inf
+    @test UncertainTea._backend_lkjcholesky_logpdf(2, 1.0, lkj_short_diag) == -Inf
+    @test UncertainTea._backend_lkjcholesky_logpdf(2, 1.0, lkj_unit_rows) ≈ -log(2.0) atol = 1e-12
+
+    @test UncertainTea._device_lkjcholesky_logpdf(1.0, (lkj_short_row...,), Val(2)) == -Inf
+    @test UncertainTea._device_lkjcholesky_logpdf(1.0, (lkj_short_diag...,), Val(2)) == -Inf
+    @test UncertainTea._device_lkjcholesky_logpdf(1.0, (lkj_unit_rows...,), Val(2)) ≈ -log(2.0) atol = 1e-8
+
+    # sampler output and transform output stay in support
+    lkj_unit_dist = lkjcholesky(3, 1.5)
+    lkj_unit_packed = rand(MersenneTwister(4), lkj_unit_dist)
+    @test isfinite(UncertainTea.logpdf(lkj_unit_dist, lkj_unit_packed))
 end

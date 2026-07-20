@@ -12,6 +12,7 @@ include("fixtures.jl")
 core_test_files = [
     # (file, group)
     ("dsl_static_model_semantics.jl", "dsl"),
+    ("dsl_contract_guards.jl", "dsl"),
     ("batched_logjoint_and_gradient.jl", "dsl"),
     ("hmc_and_nuts_workspace.jl", "dsl"),
     ("nuts_scheduler_and_backend.jl", "dsl"),
@@ -31,6 +32,8 @@ core_test_files = [
     ("dist_mvnormal_dense.jl", "dist"),
     ("dist_lkj_cholesky.jl", "dist"),
     ("transform_logit_saturation.jl", "dist"),
+    ("dist_integer_params.jl", "dist"),
+    ("dist_bernoulli.jl", "dist"),
     ("vector_backend_sampler.jl", "backend-device"),
     ("batched_scoring_eltype_f32.jl", "backend-device"),
     ("vectorized_obs_iid_latents.jl", "backend-device"),

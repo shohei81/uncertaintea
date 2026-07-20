@@ -533,7 +533,9 @@ end
 function _split_rhat(draws::AbstractMatrix)
     _, _, within_variance, _, var_plus = _chain_draw_statistics(draws)
     if within_variance == 0
-        return var_plus == 0 ? 1.0 : Inf
+        # All draws identical (stuck sampler): Rhat is undefined; NaN follows
+        # the Stan/posterior convention so diagnostics flag it as a warning.
+        return var_plus == 0 ? NaN : Inf
     end
 
     return sqrt(max(var_plus / within_variance, 1.0))
@@ -554,7 +556,9 @@ function _split_ess(draws::AbstractMatrix)
     total_draws = num_chains * num_samples
 
     if within_variance == 0 && var_plus == 0
-        return Float64(total_draws)
+        # All draws identical (stuck sampler): ESS is undefined; NaN follows
+        # the Stan/posterior convention so diagnostics flag it as a warning.
+        return NaN
     elseif var_plus <= 0
         return 0.0
     end

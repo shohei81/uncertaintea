@@ -99,7 +99,7 @@ function BatchedLogjointGradientCache(
     constraints=choicemap(),
 )
     batch_size = _validate_batched_unconstrained_params(model, params)
-    batch_args = _validate_batched_args(args, batch_size)
+    batch_args = _validate_batched_args(model, args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     parameter_count = size(params, 1)
     gradient_buffer = Matrix{float(eltype(params))}(undef, parameter_count, batch_size)
@@ -289,7 +289,7 @@ function batched_logjoint(
     constraints=choicemap(),
 )
     batch_size = _validate_batched_constrained_params(model, params)
-    batch_args = _validate_batched_args(args, batch_size)
+    batch_args = _validate_batched_args(model, args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return float(eltype(params))[]
 
@@ -315,7 +315,7 @@ function batched_logjoint_unconstrained(
     constraints=choicemap(),
 )
     batch_size = _validate_batched_unconstrained_params(model, params)
-    batch_args = _validate_batched_args(args, batch_size)
+    batch_args = _validate_batched_args(model, args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return float(eltype(params))[]
 

@@ -30,7 +30,13 @@ function choicemap(entries...)
     return cm
 end
 
-_is_choice_entry(entry) = entry isa Pair || (entry isa Tuple && length(entry) == 2)
+# A single `(address, value)` entry. A 2-tuple whose elements are BOTH Pairs
+# is NOT one entry: `(:a => 1.0, :b => 2.0)` is a collection of two
+# `address => value` entries (matching vectors of pairs and longer tuples of
+# pairs); treating it as one entry would silently flatten the first pair into
+# a corrupted address and drop both constraints.
+_is_choice_entry(entry) =
+    entry isa Pair || (entry isa Tuple && length(entry) == 2 && !(entry[1] isa Pair && entry[2] isa Pair))
 
 function normalize_address(address)
     return (address,)
@@ -64,6 +70,15 @@ end
 
 function _pushchoice!(cm::ChoiceMap, entry::Tuple)
     length(entry) == 2 || throw(ArgumentError("choice entries must have exactly two elements"))
+    if entry[1] isa Pair && entry[2] isa Pair
+        throw(
+            ArgumentError(
+                "ambiguous choice entry $(entry): a 2-tuple of Pairs looks like a collection of " *
+                "`address => value` entries, not a single `(address, value)` entry; pass the pairs " *
+                "directly, e.g. `choicemap(:a => 1.0, :b => 2.0)`",
+            ),
+        )
+    end
     return _pushchoice!(cm, entry[1], entry[2])
 end
 

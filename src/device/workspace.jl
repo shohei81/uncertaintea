@@ -65,6 +65,11 @@ function DeviceBatchedWorkspace(
     constraints=choicemap(),
 )
     _check_device_precision(backend, precision)
+    # fill missing trailing model arguments from the model's defaults, so the
+    # device path agrees with generate and the CPU scoring entry points
+    args =
+        args isa Tuple ? _complete_model_args(model, args) :
+        Tuple[_complete_model_args(model, batch_args) for batch_args in args]
     T = precision
     issues, plan = _lower_device_plan(model, T)
     isnothing(plan) && throw(ArgumentError(_device_unsupported_message(model, issues)))

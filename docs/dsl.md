@@ -168,6 +168,16 @@ The minimal conditioning model should follow Gen's style:
 - data is supplied through constraints
 - the runtime provides `choicemap`, `generate`, `assess`, and replay
 
+`choicemap` accepts single entries (`:y => 0.3`, `(:y, 0.3)`,
+`(:y => i, ys[i])`) as separate arguments or one collection of entries (a
+vector, tuple, generator, or Dict of pairs). A 2-tuple whose elements are
+both `Pair`s is parsed as a collection of two `address => value` entries —
+`choicemap((:a => 1.0, :b => 2.0))` yields the entries `(:a,) => 1.0` and
+`(:b,) => 2.0`, consistent with the vector and longer-tuple forms (it is
+never one entry whose address is the flattened first pair). Passing such a
+tuple as ONE entry among several arguments is ambiguous and throws an
+`ArgumentError`.
+
 Possible future sugar:
 
 - `condition(model, constraints)`
@@ -199,6 +209,71 @@ Rejected or sent to CPU fallback:
 - runtime-generated address structure
 - variable-length latent structure
 - dynamic control flow that changes which choices exist
+
+### Branchful Control Flow Is Rejected in Static Models
+
+The linear execution plan has no IR for branches, so `@tea static` REJECTS
+branchful control flow at macro expansion time with an `ArgumentError`:
+
+- `if` / `elseif` / `else` blocks and the ternary `?:` operator, anywhere in
+  the body (including nested inside loops and `begin` blocks)
+- short-circuit `&&` / `||` whose subtree contains a `~` choice or an
+  assignment (a value-level `a && b` with neither stays accepted)
+
+Silently accepting them would linearize BOTH branches into one plan and
+miscompile `logjoint` (while `generate`/`assess` execute the real branch), so
+the two APIs could disagree without any error. Supported alternatives:
+
+- `ifelse(cond, a, b)` for deterministic value selection (both sides are
+  evaluated; the set of choices does not change)
+- moving the data-dependent branch outside the model and passing its result
+  in as a model argument
+- static `for` loops for repeated structure
+
+Dynamic-mode models (`@tea function ...` without `static`) may contain
+`if`/`else`: `generate` and `assess` execute the model body directly and
+score the branch that actually runs. The compiled scoring paths (`logjoint`,
+gradients, batched and device evaluation) refuse such models with an
+`ArgumentError`, and `backend_report` reports them as unsupported, because
+the linearized plan cannot represent the branch.
+
+### Duplicate Choice Addresses Are Rejected
+
+Every random choice needs a unique address per execution. Two choices landing
+on the same address would silently overwrite the earlier one (and leave the
+recorded log-weight inconsistent with the trace), so:
+
+- fully static address collisions (including collisions produced by inlining
+  generative submodel calls) throw an `ArgumentError` at model construction
+- loop-generated (template-address) collisions throw an `ArgumentError` when
+  the model executes (`generate`/`assess`)
+
+User-side `ChoiceMap` updates keep their update semantics: constructing
+`choicemap((:y, 0.1), (:y, 0.2))` still yields one entry with the later
+value; only in-model duplicate recording during a single execution errors.
+
+### Default Argument Values
+
+`@tea` model arguments may declare default values, and the defaults work
+uniformly across the API: `generate`/`assess` (which execute the model body)
+and the compiled scoring entry points (`logjoint`,
+`logjoint_unconstrained`, gradients, the batched and device paths,
+`pointwise_loglikelihood`, ...) all fill missing TRAILING arguments from the
+declared defaults, using Julia's own default-argument semantics (a default
+may reference earlier arguments):
+
+```julia
+@tea static function scaled(mu = 2.0)
+    x ~ normal(mu, 1.0)
+end
+
+(trace, _) = generate(scaled)          # samples with mu = 2.0
+logjoint(scaled, [trace[:x]])          # scores with mu = 2.0 (same density)
+logjoint(scaled, [trace[:x]], (2.0,))  # identical
+```
+
+Passing fewer arguments than the non-defaulted prefix requires (or more than
+the full signature) throws a `DimensionMismatch`.
 
 ## Address Rules
 

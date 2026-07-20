@@ -65,22 +65,25 @@ struct PoissonDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+# Builders normalize parameters through `float` so integer (or other non-float
+# real) literals reach the samplers as float storage (issue #73); `float` keeps
+# ForwardDiff Duals intact.
 function bernoulli(p)
-    return BernoulliDist(p)
+    return BernoulliDist(float(p))
 end
 
 function geometric(p)
-    return GeometricDist(p)
+    return GeometricDist(float(p))
 end
 
 function binomial(trials, p)
     count = _binomial_trials(trials)
     isnothing(count) && throw(ArgumentError("binomial requires integer trials >= 0"))
-    return BinomialDist(count, p)
+    return BinomialDist(count, float(p))
 end
 
 function negativebinomial(successes, p)
-    promoted_successes, promoted_probability = promote(successes, p)
+    promoted_successes, promoted_probability = promote(float(successes), float(p))
     return NegativeBinomialDist(promoted_successes, promoted_probability)
 end
 
@@ -90,12 +93,12 @@ function categorical(probabilities::AbstractVector)
 end
 
 function categorical(probabilities::Vararg{Real})
-    promoted = collect(promote(probabilities...))
+    promoted = collect(promote(map(float, probabilities)...))
     return CategoricalDist(promoted)
 end
 
 function poisson(lambda)
-    return PoissonDist(lambda)
+    return PoissonDist(float(lambda))
 end
 
 function Random.rand(rng::AbstractRNG, dist::BernoulliDist)
@@ -135,9 +138,41 @@ function Random.rand(rng::AbstractRNG, dist::CategoricalDist)
     return length(dist.probabilities)
 end
 
+# Knuth's product-of-uniforms sampler needs exp(-lambda) to stay above zero, so
+# it only serves small rates; above the threshold the transformed rejection
+# sampler with squeeze (PTRS, Hoermann 1993) takes over (issue #74).
+const _POISSON_KNUTH_MAX_LAMBDA = 30.0
+
+# PTRS: valid for lambda >= 10; the acceptance test compares against the exact
+# log-pmf (via loggamma), so draws are unbiased for arbitrarily large rates.
+function _rand_poisson_ptrs(rng::AbstractRNG, lambda::Float64)
+    b = 0.931 + 2.53 * sqrt(lambda)
+    a = -0.059 + 0.02483 * b
+    inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
+    v_r = 0.9277 - 3.6224 / (b - 2.0)
+    log_lambda = log(lambda)
+    while true
+        u = rand(rng) - 0.5
+        v = rand(rng)
+        us = 0.5 - abs(u)
+        k = floor(Int, (2.0 * a / us + b) * u + lambda + 0.43)
+        if us >= 0.07 && v <= v_r
+            return k
+        end
+        if k < 0 || (us < 0.013 && v > us)
+            continue
+        end
+        if log(v) + log(inv_alpha) - log(a / (us * us) + b) <=
+           k * log_lambda - lambda - loggamma(k + 1.0)
+            return k
+        end
+    end
+end
+
 function Random.rand(rng::AbstractRNG, dist::PoissonDist)
     lambda = float(dist.lambda)
     lambda == zero(lambda) && return 0
+    lambda > _POISSON_KNUTH_MAX_LAMBDA && return _rand_poisson_ptrs(rng, Float64(lambda))
     limit = exp(-lambda)
     product = one(lambda)
     count = 0
@@ -148,8 +183,15 @@ function Random.rand(rng::AbstractRNG, dist::PoissonDist)
     return count - 1
 end
 
+# Bernoulli support: `Bool`, or a real that compares equal to 0 or 1 (issue #85);
+# anything else scores -Inf. Shared by the CPU logpdf and the backend scorer.
+_bernoulli_value(x::Bool) = x
+_bernoulli_value(x::Real) = x == zero(x) ? false : (x == one(x) ? true : nothing)
+_bernoulli_value(@nospecialize(x)) = nothing
+
 function logpdf(dist::BernoulliDist, x)
-    value = x isa Bool ? x : x != 0
+    value = _bernoulli_value(x)
+    isnothing(value) && return oftype(float(dist.p), -Inf)
     return value ? log(dist.p) : log1p(-dist.p)
 end
 

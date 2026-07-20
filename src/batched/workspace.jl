@@ -140,9 +140,9 @@ function _validate_batched_constrained_params(model::TeaModel, params::AbstractM
     return size(params, 2)
 end
 
-function _validate_batched_args(args::Tuple, batch_size::Int)
-    return args
-end
+# Validation-only variant (no model in scope): checks the container shape but
+# does not complete default arguments.
+_validate_batched_args(args::Tuple, batch_size::Int) = args
 
 function _validate_batched_args(args::AbstractVector, batch_size::Int)
     length(args) == batch_size || throw(DimensionMismatch("expected $batch_size batched argument tuples, got $(length(args))"))
@@ -150,6 +150,20 @@ function _validate_batched_args(args::AbstractVector, batch_size::Int)
         batch_args isa Tuple || throw(ArgumentError("batched args must be a tuple or a vector of tuples"))
     end
     return args
+end
+
+function _validate_batched_args(model::TeaModel, args::Tuple, batch_size::Int)
+    return _complete_model_args(model, args)
+end
+
+function _validate_batched_args(model::TeaModel, args::AbstractVector, batch_size::Int)
+    length(args) == batch_size || throw(DimensionMismatch("expected $batch_size batched argument tuples, got $(length(args))"))
+    completed = Vector{Tuple}(undef, length(args))
+    for (index, batch_args) in enumerate(args)
+        batch_args isa Tuple || throw(ArgumentError("batched args must be a tuple or a vector of tuples"))
+        completed[index] = _complete_model_args(model, batch_args)
+    end
+    return completed
 end
 
 function _validate_batched_constraints(constraints::ChoiceMap, batch_size::Int)

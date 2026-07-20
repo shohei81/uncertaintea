@@ -933,6 +933,33 @@ function _reject_loop_scoped_marginalize(steps, in_loop::Bool)
     return nothing
 end
 
+# Duplicate choice addresses would silently overwrite earlier choices at
+# runtime (and double-score in the compiled plan). Fully static addresses are
+# detectable at model construction: two distinct plan steps sharing one
+# collide whenever both execute, so reject them here. Loop-generated
+# (template) addresses are checked at execution time by the runtime `choice`
+# recording instead.
+function _reject_duplicate_static_addresses(name::Symbol, steps, seen)
+    for step in steps
+        if step isa LoopPlanStep
+            _reject_duplicate_static_addresses(name, step.body, seen)
+        elseif step isa ChoicePlanStep && isstaticaddress(step.address)
+            address = normalize_address(tuple((part.value for part in step.address.parts)...))
+            if address in seen
+                throw(
+                    ArgumentError(
+                        "duplicate choice address $(address) in model `$(name)`: every random " *
+                        "choice needs a unique address, but two choices in the model use this one " *
+                        "(the second would silently overwrite the first)",
+                    ),
+                )
+            end
+            push!(seen, address)
+        end
+    end
+    return nothing
+end
+
 function build_execution_plan(
     name::Symbol,
     arguments::Vector{Symbol},
@@ -946,6 +973,7 @@ function build_execution_plan(
     end
 
     steps = _inline_plan_steps(raw_steps)
+    _reject_duplicate_static_addresses(name, steps, Set{Any}())
     _reject_loop_scoped_marginalize(steps, false)
     parameterized_steps, parameterized_layout = _assign_parameter_layout(steps)
     environment_layout = _build_environment_layout(arguments, parameterized_steps)
