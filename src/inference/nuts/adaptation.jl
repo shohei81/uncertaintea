@@ -327,7 +327,8 @@ function _find_reasonable_batched_step_size(
         inverse_mass_matrix,
     )
 
-    for _ = 0:20
+    direction = 0.0
+    for trial_index = 0:20
         _, proposal_momentum, proposed_logjoint, _, valid = _batched_leapfrog!(
             workspace,
             model,
@@ -363,14 +364,18 @@ function _find_reasonable_batched_step_size(
 
         accept_prob = _batched_acceptance_probability!(workspace.accept_prob, log_accept_ratio)
         mean_accept_prob = _mean_batched_adaptation_probability(accept_prob, divergent_step)
-        direction = mean_accept_prob > target_accept ? 1.0 : -1.0
-        next_step_size = reasonable_step_size * (2.0 ^ direction)
-        if next_step_size < min_step_size || next_step_size > max_step_size
+        # Keep the direction chosen on the first trial and stop as soon as the
+        # acceptance rate crosses the target (mirrors the per-chain variant);
+        # recomputing the direction each trial made the crossing condition
+        # unreachable and the search oscillated to the iteration cap.
+        if trial_index == 0
+            direction = mean_accept_prob > target_accept ? 1.0 : -1.0
+        elseif (direction > 0 && mean_accept_prob <= target_accept) ||
+               (direction < 0 && mean_accept_prob >= target_accept)
             break
         end
-
-        if (direction > 0 && mean_accept_prob <= target_accept) ||
-           (direction < 0 && mean_accept_prob >= target_accept)
+        next_step_size = reasonable_step_size * (2.0 ^ direction)
+        if next_step_size < min_step_size || next_step_size > max_step_size
             break
         end
         reasonable_step_size = next_step_size

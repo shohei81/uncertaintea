@@ -212,6 +212,7 @@
     UncertainTea._update_single_batched_continuation_turning!(
         gaussian_copy_nuts_workspace,
         1,
+        [1.0],
     )
     @test !gaussian_copy_nuts_workspace.subtree_merged_turning[1]
     @test !any(gaussian_copy_nuts_workspace.subtree_active)
@@ -287,7 +288,7 @@
         scalar_tree_workspace,
         -0.5,
     )
-    UncertainTea._merge_nuts_continuation_turning!(scalar_continuation, true)
+    UncertainTea._merge_nuts_continuation_turning!(scalar_continuation, true, [1.0])
     @test scalar_continuation.integration_steps == 3
     @test scalar_continuation.accept_stat_sum == 0.75
     @test scalar_continuation.accept_stat_count == 2
@@ -302,6 +303,7 @@
         reshape([1.0, -1.0, 2.0], 1, 3),
         reshape([1.0, 1.0, 1.0], 1, 3),
         reshape([1.0, -1.0, -1.0], 1, 3),
+        [1.0],
         BitVector([true, true, false]),
     ) == BitVector([false, true, false])
     gaussian_nuts_tree_current = gaussian_nuts_workspace.column_tree_workspaces[1].current
@@ -430,6 +432,7 @@
         gaussian_shared_nuts_workspace.right_position,
         gaussian_shared_nuts_workspace.left_momentum,
         gaussian_shared_nuts_workspace.right_momentum,
+        [1.0],
         trues(length(gaussian_shared_nuts_workspace.subtree_merged_turning)),
     )
     gaussian_single_shared_params = gaussian_batch_params[:, 1:1]
