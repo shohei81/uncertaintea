@@ -92,4 +92,24 @@
     # show smoke tests.
     @test !isempty(sprint(show, mc_waic))
     @test !isempty(sprint(show, mc_loo))
+
+    # issue #82: PSIS smoothing exponentiates relative to the largest log
+    # ratio, so a large common offset must change neither the normalized
+    # weights nor the fitted Pareto k (previously exp overflow made k NaN).
+    mc_shift_x = collect(range(-2.0, 2.0; length=100))
+    mc_w_base, mc_k_base = UncertainTea._psis_smooth(mc_shift_x)
+    @test isfinite(mc_k_base)
+    for mc_offset in (1000.0, -1000.0, 700.0)
+        mc_w_shift, mc_k_shift = UncertainTea._psis_smooth(mc_shift_x .+ mc_offset)
+        @test maximum(abs.(mc_w_base .- mc_w_shift)) < 1e-10
+        @test mc_k_shift ≈ mc_k_base atol=1e-10
+        @test !isnan(mc_k_shift)
+    end
+
+    # ... and PSIS-LOO's elpd shifts by exactly the log-likelihood offset.
+    mc_shift_ll = reshape(-mc_shift_x, 100, 1)
+    mc_loo_shifted = psis_loo(mc_shift_ll .- 1000)
+    mc_loo_unshifted = psis_loo(mc_shift_ll)
+    @test mc_loo_shifted.elpd - mc_loo_unshifted.elpd ≈ -1000.0 atol=1e-8
+    @test mc_loo_shifted.pareto_k ≈ mc_loo_unshifted.pareto_k atol=1e-10
 end
