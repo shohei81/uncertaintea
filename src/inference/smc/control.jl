@@ -234,7 +234,7 @@ function _execute_tempered_nuts_cohort_scheduler!(
     scheduler.active_depth_count = ir.active_depth_count
     copyto!(scheduler.cohort_active, descriptor.active_particles)
     copyto!(workspace.control.active, descriptor.active_particles)
-    _merge_tempered_nuts_depth_cohort!(workspace, continuations, rng)
+    _merge_tempered_nuts_depth_cohort!(workspace, continuations, inverse_mass_matrix, rng)
     _begin_tempered_nuts_cohort_scheduler!(workspace, continuations, max_tree_depth, rng)
     return scheduler.phase
 end

@@ -356,6 +356,7 @@ function _expand_tempered_nuts_depth_cohort!(
                     view(next_position, :, particle_index),
                     view(next_momentum, :, particle_index),
                     directions[particle_index],
+                    inverse_mass_matrix,
                 )
             end
             subtree_active[particle_index] = !subtree_turning[particle_index]
@@ -373,6 +374,7 @@ end
 function _merge_tempered_nuts_depth_cohort!(
     workspace::TemperedNUTSMoveWorkspace,
     continuations::AbstractVector{<:NUTSContinuationState},
+    inverse_mass_matrix::AbstractVector,
     rng::AbstractRNG,
 )
     cohort_workspace = workspace.cohort
@@ -405,6 +407,18 @@ function _merge_tempered_nuts_depth_cohort!(
         continuation = continuations[particle_index]
         continuation.tree_depth += 1
         if subtree_integration_steps[particle_index] == 0
+            continuation.divergent = subtree_divergent[particle_index]
+            continue
+        end
+        if subtree_turning[particle_index] || subtree_divergent[particle_index]
+            # Canonical multinomial NUTS discards an invalid final doubling
+            # (internal U-turn or divergence) entirely: no weight merge, no
+            # proposal swap, no frontier update. Only accounting and the
+            # termination flags carry over.
+            continuation.integration_steps += subtree_integration_steps[particle_index]
+            continuation.accept_stat_sum += subtree_accept_stat_sum[particle_index]
+            continuation.accept_stat_count += subtree_accept_stat_count[particle_index]
+            continuation.turning = subtree_turning[particle_index]
             continuation.divergent = subtree_divergent[particle_index]
             continue
         end
@@ -451,7 +465,11 @@ function _merge_tempered_nuts_depth_cohort!(
             continuation.log_weight = merge.combined_log_weight
         end
         continuation.divergent = subtree_divergent[particle_index]
-        _merge_nuts_continuation_turning!(continuation, subtree_turning[particle_index])
+        _merge_nuts_continuation_turning!(
+            continuation,
+            subtree_turning[particle_index],
+            inverse_mass_matrix,
+        )
     end
 
     return continuations

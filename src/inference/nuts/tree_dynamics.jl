@@ -80,6 +80,7 @@ function _build_nuts_subtree(
             current.position,
             current.momentum,
             direction,
+            inverse_mass_matrix,
         )
             summary.turning = true
             break
@@ -126,6 +127,19 @@ function _continue_nuts_proposal!(
             break
         end
 
+        if subtree.turning || subtree.divergent
+            # Canonical multinomial NUTS (Stan base_nuts) discards the entire
+            # final doubling when the new subtree is invalid (internal U-turn
+            # or divergence): no weight merge, no proposal swap, no frontier
+            # update. Only the leapfrog/accept-stat accounting carries over.
+            continuation.integration_steps += subtree.integration_steps
+            continuation.accept_stat_sum += subtree.accept_stat_sum
+            continuation.accept_stat_count += subtree.accept_stat_count
+            continuation.turning = subtree.turning
+            continuation.divergent = subtree.divergent
+            break
+        end
+
         _copy_nuts_continuation_frontier_from_tree!(
             continuation,
             tree_workspace,
@@ -151,7 +165,11 @@ function _continue_nuts_proposal!(
             tree_workspace,
             combined_log_weight,
         )
-        _merge_nuts_continuation_turning!(continuation, tree_workspace.summary.turning)
+        _merge_nuts_continuation_turning!(
+            continuation,
+            tree_workspace.summary.turning,
+            inverse_mass_matrix,
+        )
     end
     return continuation
 end
@@ -204,6 +222,13 @@ function _continue_batched_nuts_proposal!(
             break
         end
 
+        if subtree.turning || subtree.divergent
+            # Invalid final doubling: discard it entirely (see the scalar
+            # continuation above), keeping only the accounting and flags.
+            _discard_invalid_batched_subtree!(workspace, chain_index)
+            break
+        end
+
         _copy_single_batched_continuation_frontier_from_tree!(
             workspace,
             chain_index,
@@ -240,7 +265,7 @@ function _continue_batched_nuts_proposal!(
                 )
             end
         end
-        _update_single_batched_continuation_turning!(workspace, chain_index)
+        _update_single_batched_continuation_turning!(workspace, chain_index, inverse_mass_matrix)
         _merge_batched_subtree_summary!(workspace, chain_index)
     end
     return workspace

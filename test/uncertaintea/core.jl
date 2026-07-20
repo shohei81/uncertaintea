@@ -45,6 +45,7 @@ core_test_files = [
     ("proposal_diagnostics_overflow.jl", "inference"),
     ("integrator_nuts_proposal.jl", "inference"),
     ("nuts_uturn_turning.jl", "inference"),
+    ("nuts_fixed_step_moments.jl", "inference"),
     ("warmup_driver_regression.jl", "inference"),
     ("mcmc_diagnostics_ess_mcse.jl", "inference"),
     ("predictive_sampling_smc_resampling.jl", "inference"),

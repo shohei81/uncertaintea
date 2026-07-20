@@ -9,7 +9,10 @@ function _advance_batched_nuts_subtree_cohort!(
     fill!(access.copy_left, false)
     fill!(access.copy_right, false)
     fill!(access.select_proposal, false)
-    fill!(access.turning, false)
+    # access.turning (workspace.subtree_turning) is NOT cleared here: it is
+    # reset once per subtree by _reset_batched_nuts_subtree_scratch! and must
+    # stay sticky across leaf steps so the merge gate can discard a subtree
+    # that U-turned on any earlier leaf.
     for chain_index in eachindex(workspace.subtree_active)
         workspace.subtree_active[chain_index] || continue
         tree_workspace = workspace.column_tree_workspaces[chain_index]
@@ -79,6 +82,7 @@ function _advance_batched_nuts_subtree_cohort!(
             tree_workspace.current.position,
             tree_workspace.current.momentum,
             workspace.control.step_direction[chain_index],
+            _chain_inverse_mass(inverse_mass_matrix, chain_index),
         )
             access.turning[chain_index] = true
         end
@@ -147,7 +151,13 @@ function _activate_batched_nuts_subtree_merge_cohort!(
 
         workspace.control.tree_depths[chain_index] += 1
         if !block.merge_active[chain_index]
-            workspace.control.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
+            if workspace.subtree_integration_steps[chain_index] == 0
+                workspace.control.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
+            else
+                # Invalid subtree with completed leaves: discard the doubling
+                # entirely, keeping only accounting and termination flags.
+                _discard_invalid_batched_subtree!(workspace, chain_index)
+            end
             continue
         end
 
@@ -178,6 +188,7 @@ function _merge_batched_nuts_subtree_cohort!(
         access.right_position,
         access.left_momentum,
         access.right_momentum,
+        inverse_mass_matrix,
         workspace.subtree_active,
     )
 
