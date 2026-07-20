@@ -561,25 +561,30 @@ end
         # issue #13 acceptance: the explicit-indicator spelling recovers the
         # same posterior as the mixture spelling via NUTS. Pool a few seeded
         # chains per spelling and compare the continuous-parameter means.
+        # Pools 5 seeds x 600 draws: the bimodal m1/m2 posterior is weakly
+        # identified, so a 3x300 pool estimates the means at only ~1 sigma and
+        # the metric-aware U-turn / invalid-subtree fixes (which shifted the
+        # seeded trajectories) tipped the m1 difference past atol on the 1.10
+        # CI entry; the larger pool agrees within tolerance on 1.10 and latest.
         denc_ind_m1 = Float64[]
         denc_ind_m2 = Float64[]
         denc_mix_m1 = Float64[]
         denc_mix_m2 = Float64[]
-        for denc_seed = 1:3
+        for denc_seed = 1:5
             denc_ind_chain = nuts(
                 denc_indicator_model,
                 (),
                 denc_constraints;
-                num_samples=300,
-                num_warmup=200,
+                num_samples=600,
+                num_warmup=400,
                 rng=MersenneTwister(700 + denc_seed),
             )
             denc_mix_chain = nuts(
                 denc_mixture_model,
                 (),
                 denc_constraints;
-                num_samples=300,
-                num_warmup=200,
+                num_samples=600,
+                num_warmup=400,
                 rng=MersenneTwister(800 + denc_seed),
             )
             @test all(isfinite, denc_ind_chain.constrained_samples)

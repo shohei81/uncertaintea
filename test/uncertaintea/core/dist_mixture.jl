@@ -84,14 +84,19 @@ end
     ]
     @test mix_batched ≈ mix_percol atol = 1e-6
 
-    # NUTS runs finite and mixes across chains.
+    # NUTS runs finite and mixes across chains. The mu posterior is bimodal
+    # (y = 1.3 is consistent with mu ~ 3.3 or mu ~ -0.7), so a short 3x150 run
+    # is rhat-unstable -- one chain sticking in the far mode inflates rhat past
+    # the threshold on some Julia versions / RNG streams. A slightly larger
+    # 4x400 budget with a longer warmup mixes robustly on both the 1.10 and
+    # latest CI matrix entries.
     mix_chains = nuts_chains(
         mix_obs_model,
         (),
         mix_obs;
-        num_chains=3,
-        num_samples=150,
-        num_warmup=150,
+        num_chains=4,
+        num_samples=400,
+        num_warmup=300,
         rng=MersenneTwister(13),
     )
     @test all(isfinite, rhat(mix_chains))
