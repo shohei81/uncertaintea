@@ -29,9 +29,10 @@ function _summary_tail_ess(chains::HMCChains, parameter_index::Int, space::Symbo
 end
 
 # MCSE of each requested quantile via the practical order-statistic approach
-# used by posterior/ArviZ: form the interval q +/- 1.96*sqrt(q(1-q)/ess_q) on
-# the probability scale (ess_q = split-ESS of I(x <= theta_q)), read the two
-# order statistics off the sorted pooled draws, and report half their spread.
+# used by posterior/ArviZ: form the +/- one-SE interval q +/- sqrt(q(1-q)/ess_q)
+# on the probability scale (ess_q = split-ESS of I(x <= theta_q)), read the two
+# order statistics off the sorted pooled draws, and report half their spread as
+# one standard error.
 function _summary_mcse_quantiles(
     chains::HMCChains,
     parameter_index::Int,
@@ -48,7 +49,7 @@ function _summary_mcse_quantiles(
             mcse_values[index] = NaN
             continue
         end
-        spread = 1.96 * sqrt(probability * (1 - probability) / ess_q)
+        spread = sqrt(probability * (1 - probability) / ess_q)
         lower_probability = clamp(probability - spread, 0.0, 1.0)
         upper_probability = clamp(probability + spread, 0.0, 1.0)
         lower_value = _quantile(sorted_draws, lower_probability)

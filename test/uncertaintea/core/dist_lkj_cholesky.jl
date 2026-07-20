@@ -198,7 +198,12 @@ end
     for lkj_h_chain in lkj_h_chains.chains
         @test all(isfinite, lkj_h_chain.constrained_samples)
     end
-    @test all(<(1.3), rhat(lkj_h_chains))
+    # The (1,1) entry of a Cholesky correlation factor is structurally 1.0, so
+    # its Rhat is NaN by the Stan/posterior constant-chain convention (issue
+    # #103); every genuinely sampled value must still mix well.
+    lkj_h_rhats = rhat(lkj_h_chains)
+    @test count(isnan, lkj_h_rhats) == 1
+    @test all(<(1.3), filter(isfinite, lkj_h_rhats))
     # Posterior mean of the (2,1) correlation (packed value index 2) keeps the
     # strongly positive sign the data were generated with.
     lkj_h_rho = vcat((chain.constrained_samples[2, :] for chain in lkj_h_chains.chains)...)

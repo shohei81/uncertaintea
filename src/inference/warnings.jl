@@ -23,12 +23,15 @@ function _treedepth_hits(chain::HMCChain)
     return count(==(chain.max_tree_depth), chain.tree_depths)
 end
 
+# Default threshold below which a chain's E-BFMI counts as a warning.
+const _EBFMI_WARNING_THRESHOLD = 0.3
+
 function check_diagnostics(
     chains::HMCChains;
     space::Symbol=:constrained,
     rhat_threshold::Real=1.01,
     ess_threshold::Real=100.0,
-    ebfmi_threshold::Real=0.3,
+    ebfmi_threshold::Real=_EBFMI_WARNING_THRESHOLD,
 )
     num_divergent = Int[count(identity, chain.divergent) for chain in chains.chains]
     ebfmi = Float64[_ebfmi(chain.energies) for chain in chains.chains]
@@ -54,15 +57,19 @@ function check_diagnostics(
         end
     end
 
-    return SamplerWarnings(num_divergent, ebfmi, treedepth_hits, low_ess_parameters, high_rhat_parameters)
+    return SamplerWarnings(
+        num_divergent,
+        ebfmi,
+        treedepth_hits,
+        low_ess_parameters,
+        high_rhat_parameters,
+        Float64(ebfmi_threshold),
+    )
 end
-
-# Threshold used when deciding whether the E-BFMI section should be reported.
-const _EBFMI_WARNING_THRESHOLD = 0.3
 
 function has_warnings(warnings::SamplerWarnings)
     any(count -> count > 0, warnings.num_divergent) && return true
-    any(value -> isfinite(value) && value < _EBFMI_WARNING_THRESHOLD, warnings.ebfmi) && return true
+    any(value -> isfinite(value) && value < warnings.ebfmi_threshold, warnings.ebfmi) && return true
     any(count -> count > 0, warnings.treedepth_hits) && return true
     isempty(warnings.low_ess_parameters) || return true
     isempty(warnings.high_rhat_parameters) || return true
@@ -76,9 +83,9 @@ function _show_sampler_warnings(io::IO, warnings::SamplerWarnings; indent::Abstr
     if total_divergent > 0
         println(io, indent, "  divergences: ", total_divergent, " total ", warnings.num_divergent)
     end
-    low_ebfmi = [value for value in warnings.ebfmi if isfinite(value) && value < _EBFMI_WARNING_THRESHOLD]
+    low_ebfmi = [value for value in warnings.ebfmi if isfinite(value) && value < warnings.ebfmi_threshold]
     if !isempty(low_ebfmi)
-        println(io, indent, "  low E-BFMI (< ", _EBFMI_WARNING_THRESHOLD, "): ", warnings.ebfmi)
+        println(io, indent, "  low E-BFMI (< ", warnings.ebfmi_threshold, "): ", warnings.ebfmi)
     end
     total_treedepth = sum(warnings.treedepth_hits)
     if total_treedepth > 0

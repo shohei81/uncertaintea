@@ -122,6 +122,9 @@ struct SamplerWarnings
     treedepth_hits::Vector{Int}
     low_ess_parameters::Vector{String}
     high_rhat_parameters::Vector{String}
+    # Threshold below which a chain's E-BFMI counts as a warning; recorded so
+    # `has_warnings`/`show` honor the `check_diagnostics` kwarg.
+    ebfmi_threshold::Float64
 end
 
 struct HMCSummary
