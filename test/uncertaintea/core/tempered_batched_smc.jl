@@ -526,6 +526,38 @@
         @test stage.move_acceptance_rate > 0.8
     end
 
+    # Tempered SMC with NUTS moves recovers the same closed-form log evidence
+    # now that the canonical multinomial NUTS move is unbiased (issue #94 plus
+    # the #93 subtree fix). Pool across a few seeds so the estimator stays well
+    # inside tolerance regardless of platform floating-point accumulation.
+    nn_nuts_log_evidences = Float64[]
+    nn_nuts_min_acceptance = 1.0
+    for nn_nuts_seed in (230, 231, 232, 233)
+        nn_nuts_smc = batched_smc(
+            smc_conjugate_nn_model,
+            (),
+            nn_constraints;
+            num_particles=512,
+            proposal_loc=[0.5],
+            proposal_log_scale=log(1.2),
+            target_ess_ratio=0.7,
+            max_stages=64,
+            move_kernel=:nuts,
+            move_steps=2,
+            move_step_size=0.1,
+            move_max_tree_depth=5,
+            rng=MersenneTwister(nn_nuts_seed),
+        )
+        push!(nn_nuts_log_evidences, nn_nuts_smc.importance.log_evidence_estimate)
+        for stage in nn_nuts_smc.stages
+            stage.move_steps > 0 || continue
+            nn_nuts_min_acceptance = min(nn_nuts_min_acceptance, stage.move_acceptance_rate)
+        end
+    end
+    nn_nuts_pooled = sum(nn_nuts_log_evidences) / length(nn_nuts_log_evidences)
+    @test nn_nuts_pooled ≈ nn_true_log_evidence atol=0.1
+    @test nn_nuts_min_acceptance > 0.8
+
     # batched_smc honors callback_every (issue #91): the callback fires on
     # stage multiples of callback_every plus the final stage.
     smc_callback_events = NamedTuple[]
