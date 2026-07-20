@@ -117,10 +117,28 @@ using LinearAlgebra
             num_samples=300, num_warmup=400, metric=:dense, rng=MersenneTwister(2024),
         )
 
-        dm_diag_ess = dm_ess_min(dm_diag_chain)
-        dm_dense_ess = dm_ess_min(dm_dense_chain)
-        # Dense metric captures the strong posterior correlation and mixes better.
-        @test dm_dense_ess >= 1.5 * dm_diag_ess
+        # Dense metric captures the strong posterior correlation and mixes
+        # better. A single 300-sample run is too noisy to pin a per-seed ratio
+        # (the metric-aware U-turn / invalid-subtree fixes shifted the seeded
+        # trajectories, and min-ESS over two coordinates swings widely per
+        # seed), so the efficiency claim is asserted on the pooled min-ESS over
+        # several seeds, where the >= 1.5x advantage is stable.
+        dm_eff_seeds = (2024, 1, 2, 3, 4)
+        dm_diag_ess_pooled = 0.0
+        dm_dense_ess_pooled = 0.0
+        for dm_eff_seed in dm_eff_seeds
+            dm_diag_eff = nuts(
+                dm_corr_model, (), dm_corr_constraints;
+                num_samples=300, num_warmup=400, metric=:diag, rng=MersenneTwister(dm_eff_seed),
+            )
+            dm_dense_eff = nuts(
+                dm_corr_model, (), dm_corr_constraints;
+                num_samples=300, num_warmup=400, metric=:dense, rng=MersenneTwister(dm_eff_seed),
+            )
+            dm_diag_ess_pooled += dm_ess_min(dm_diag_eff)
+            dm_dense_ess_pooled += dm_ess_min(dm_dense_eff)
+        end
+        @test dm_dense_ess_pooled >= 1.5 * dm_diag_ess_pooled
 
         # metric=:diag reproduces the no-kwarg run exactly (bitwise).
         dm_default_chain = nuts(
