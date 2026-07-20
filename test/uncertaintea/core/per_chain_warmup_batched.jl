@@ -79,14 +79,18 @@
     @test pca_mass_wide > pca_mass_tight
 
     # Statistical sanity: per-chain mode on the shared gaussian recovers the
-    # posterior mean (0.15) and mixes (rhat < 1.2) over 2 chains x 200 draws.
+    # posterior mean (0.15) and mixes (rhat < 1.2). Uses 4 chains x 500 draws:
+    # a 2x200 run estimates the mean at only ~1 sigma, so the metric-aware
+    # U-turn / invalid-subtree fixes (which shifted the seeded trajectories)
+    # tipped it past atol on the 1.10 CI entry; the larger budget recovers the
+    # mean within tolerance on both the 1.10 and latest matrix entries.
     pca_stat = batched_nuts(
         pca_gaussian_model,
         (),
         pca_gaussian_constraints;
-        num_chains=2,
-        num_samples=200,
-        num_warmup=200,
+        num_chains=4,
+        num_samples=500,
+        num_warmup=300,
         per_chain_adaptation=true,
         rng=MersenneTwister(20260705),
     )

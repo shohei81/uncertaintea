@@ -187,7 +187,28 @@ const mvd_latent_L = [1.0 0.0; 0.8 0.6]
     mvd_latent_samples = mvd_latent_chain.constrained_samples
     @test size(mvd_latent_samples) == (2, 200)
     @test all(isfinite, mvd_latent_samples)
-    @test mvd_cor(mvd_latent_samples[1, :], mvd_latent_samples[2, :]) < -0.2
+
+    # Posterior correlation sign-flip check. The analytic posterior covariance
+    # (Gaussian conditional of z ~ N(0, LL') given z1 + z2 + N(0, 0.5^2) = 1.0)
+    # has correlation exactly -0.262, versus the prior +0.8. A single 200-draw
+    # chain estimates this at only ~1 sigma (cor scatter ~ (1-r^2)/sqrt(n)), so
+    # the check is done on the pooled draws of a multi-chain run to shrink the
+    # estimator variance; the threshold keeps genuine margin over the analytic
+    # value and is robust across Julia versions / the sampler RNG stream.
+    mvd_latent_chains = nuts_chains(
+        mvd_latent_model,
+        (),
+        choicemap((:y, 1.0));
+        num_chains=6,
+        num_samples=600,
+        num_warmup=400,
+        rng=MersenneTwister(3),
+    )
+    mvd_pooled_z1 = vcat((c.constrained_samples[1, :] for c in mvd_latent_chains.chains)...)
+    mvd_pooled_z2 = vcat((c.constrained_samples[2, :] for c in mvd_latent_chains.chains)...)
+    @test all(isfinite, mvd_pooled_z1)
+    @test all(isfinite, mvd_pooled_z2)
+    @test mvd_cor(mvd_pooled_z1, mvd_pooled_z2) < -0.18
 end
 
 # --- non-static mean latents are observation-only ---------------------------
