@@ -244,7 +244,12 @@ function _accumulate_geometric_gradient!(
         totals[batch_index] += _backend_geometric_logpdf(probability, value)
         count = _poisson_count(value)
         isnothing(count) && continue
-        derivative = 1 / probability - count / (1 - probability)
+        # The count == 0 contribution of the -count / (1 - p) term is exactly
+        # zero; skipping it keeps the gradient finite at p == 1 (issue #77).
+        derivative = 1 / probability
+        if count > 0
+            derivative -= count / (1 - probability)
+        end
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] += derivative * probability_gradients[parameter_index, batch_index]
         end
@@ -269,7 +274,12 @@ function _accumulate_negativebinomial_gradient!(
         count = _poisson_count(value)
         isnothing(count) && continue
         dsuccesses = digamma(count + successes) - digamma(successes) + log(probability)
-        dprobability = successes / probability - count / (1 - probability)
+        # As in the geometric case, skip the exactly-zero count == 0 term so
+        # p == 1 stays finite (issue #77).
+        dprobability = successes / probability
+        if count > 0
+            dprobability -= count / (1 - probability)
+        end
         for parameter_index in axes(gradients, 1)
             gradients[parameter_index, batch_index] +=
                 dsuccesses * successes_gradients[parameter_index, batch_index] +
