@@ -497,6 +497,138 @@
         return w
     end
 
+    # ------------------------------------------------------------------
+    # Boundary regressions (issues #77 and #86): the manual analytic
+    # gradients must stay finite and match the CPU/ForwardDiff path at
+    # support/parameter boundaries, on the batched CPU backend (Float64 and
+    # Float32) and on the device dual mirror.
+    # ------------------------------------------------------------------
+
+    @tea static function gxc_geometric_boundary(pv)
+        x ~ normal(0.0, 1.0)
+        {:y} ~ geometric(pv)
+    end
+
+    @tea static function gxc_negbin_boundary(pv)
+        x ~ normal(0.0, 1.0)
+        {:y} ~ negativebinomial(2.0, pv)
+    end
+
+    # latent-dependent probability: p = logistic(x + off) reaches exactly 1
+    # at large off (the Float32 clamp/logistic pipeline rounds to 1 easily)
+    @tea static function gxc_geometric_boundary_latent(off)
+        x ~ normal(0.0, 1.0)
+        probability = 1.0 / (1.0 + exp(-x - off))
+        {:y} ~ geometric(probability)
+    end
+
+    @tea static function gxc_negbin_boundary_latent(off)
+        x ~ normal(0.0, 1.0)
+        probability = 1.0 / (1.0 + exp(-x - off))
+        {:y} ~ negativebinomial(2.0, probability)
+    end
+
+    @testset "gxc_count_probability_boundary" begin
+        gxc_b_cm = choicemap(:y => 0)
+        gxc_b_point = reshape([0.0], 1, 1)
+        for gxc_b_model in (gxc_geometric_boundary, gxc_negbin_boundary)
+            # issue #77: p == 1 with count == 0 used to evaluate 0 / (1 - p)
+            # and return NaN from the manual gradient; CPU gives 0.0
+            for gxc_b_p in (1.0, 1.0 - 1e-12, 0.999)
+                gxc_b_cpu = logjoint_gradient_unconstrained(gxc_b_model, [0.0], (gxc_b_p,), gxc_b_cm)
+                gxc_b_bat =
+                    batched_logjoint_gradient_unconstrained(gxc_b_model, gxc_b_point, (gxc_b_p,), gxc_b_cm)
+                gxc_b_bat32 = batched_logjoint_gradient_unconstrained(
+                    gxc_b_model, Float32.(gxc_b_point), (gxc_b_p,), gxc_b_cm,
+                )
+                @test !any(isnan, gxc_b_bat)
+                @test gxc_b_bat[:, 1] ≈ gxc_b_cpu atol = 1e-12
+                @test !any(isnan, gxc_b_bat32)
+                @test Float64.(gxc_b_bat32[:, 1]) ≈ gxc_b_cpu atol = 1e-6
+            end
+            # the device dual mirror is NaN-free and matches at p == 1 too
+            gxc_b_v, gxc_b_dev =
+                device_batched_logjoint_gradient(gxc_b_model, gxc_b_point, (1.0,), gxc_b_cm)
+            @test collect(gxc_b_dev)[:, 1] ≈ [0.0] atol = 1e-12
+            gxc_b_v32, gxc_b_dev32 = device_batched_logjoint_gradient(
+                gxc_b_model, Float32.(gxc_b_point), (1.0f0,), gxc_b_cm; precision=Float32,
+            )
+            @test !any(isnan, collect(gxc_b_dev32))
+        end
+
+        # latent-flowing probability: gradients must agree with CPU/ForwardDiff
+        # near the boundary (p = 0.999 gives a nonzero derivative) and stay
+        # finite when the logistic saturates to exactly 1 (off = 800)
+        for gxc_b_model in (gxc_geometric_boundary_latent, gxc_negbin_boundary_latent)
+            for gxc_b_off in (log(0.999 / 0.001), 30.0, 800.0)
+                gxc_b_cpu = logjoint_gradient_unconstrained(gxc_b_model, [0.0], (gxc_b_off,), gxc_b_cm)
+                gxc_b_bat = batched_logjoint_gradient_unconstrained(
+                    gxc_b_model, gxc_b_point, (gxc_b_off,), gxc_b_cm,
+                )
+                @test !any(isnan, gxc_b_bat)
+                @test gxc_b_bat[:, 1] ≈ gxc_b_cpu atol = 1e-12
+                gxc_b_bat32 = batched_logjoint_gradient_unconstrained(
+                    gxc_b_model, Float32.(gxc_b_point), (gxc_b_off,), gxc_b_cm,
+                )
+                @test !any(isnan, gxc_b_bat32)
+            end
+        end
+    end
+
+    @tea static function gxc_weibull_boundary(shp)
+        x ~ normal(0.0, 1.0)
+        s = exp(x)
+        {:y} ~ weibull(shp, s)
+    end
+
+    @testset "gxc_weibull_zero_boundary" begin
+        # issue #86: at x == 0 with shape == 1 the logpdf is -log(scale), so
+        # the scale partial is -1/scale; the manual gradient used to drop it
+        # via an early continue (CPU -1.0 vs batched 0.0)
+        gxc_w_cm = choicemap(:y => 0)
+        gxc_w_point = reshape([0.0], 1, 1)
+        gxc_w_cpu = logjoint_gradient_unconstrained(gxc_weibull_boundary, [0.0], (1.0,), gxc_w_cm)
+        @test gxc_w_cpu ≈ [-1.0] atol = 1e-12
+        gxc_w_bat =
+            batched_logjoint_gradient_unconstrained(gxc_weibull_boundary, gxc_w_point, (1.0,), gxc_w_cm)
+        @test gxc_w_bat[:, 1] ≈ [-1.0] atol = 1e-12
+        gxc_w_bat32 = batched_logjoint_gradient_unconstrained(
+            gxc_weibull_boundary, Float32.(gxc_w_point), (1.0,), gxc_w_cm,
+        )
+        @test Float64.(gxc_w_bat32[:, 1]) ≈ [-1.0] atol = 1e-6
+
+        # device dual mirror hits the same boundary value
+        gxc_w_v, gxc_w_dev =
+            device_batched_logjoint_gradient(gxc_weibull_boundary, gxc_w_point, (1.0,), gxc_w_cm)
+        @test collect(gxc_w_dev)[:, 1] ≈ [-1.0] atol = 1e-12
+        gxc_w_v32, gxc_w_dev32 = device_batched_logjoint_gradient(
+            gxc_weibull_boundary, Float32.(gxc_w_point), (1.0f0,), gxc_w_cm; precision=Float32,
+        )
+        @test Float64.(collect(gxc_w_dev32)[:, 1]) ≈ [-1.0] atol = 1e-5
+
+        # just inside the support the analytic formulas take over smoothly
+        gxc_w_near_cm = choicemap(:y => 1e-8)
+        gxc_w_near_cpu =
+            logjoint_gradient_unconstrained(gxc_weibull_boundary, [0.0], (1.0,), gxc_w_near_cm)
+        gxc_w_near_bat = batched_logjoint_gradient_unconstrained(
+            gxc_weibull_boundary, gxc_w_point, (1.0,), gxc_w_near_cm,
+        )
+        @test gxc_w_near_bat[:, 1] ≈ gxc_w_near_cpu atol = 1e-10
+        @test gxc_w_near_bat[:, 1] ≈ [-1.0] atol = 1e-6
+
+        # shape != 1 at x == 0 keeps the zero contribution (logpdf is +-Inf,
+        # matching the CPU path's zero derivative through the branch)
+        for gxc_w_shape in (2.0, 0.5)
+            gxc_w_off_cpu =
+                logjoint_gradient_unconstrained(gxc_weibull_boundary, [0.0], (gxc_w_shape,), gxc_w_cm)
+            gxc_w_off_bat = batched_logjoint_gradient_unconstrained(
+                gxc_weibull_boundary, gxc_w_point, (gxc_w_shape,), gxc_w_cm,
+            )
+            @test !any(isnan, gxc_w_off_bat)
+            @test gxc_w_off_bat[:, 1] ≈ gxc_w_off_cpu atol = 1e-12
+        end
+    end
+
     @testset "gxc_latent_vector_binding_fallback" begin
         for (gxc_fb_index, (gxc_fb_model, gxc_fb_constraints)) in enumerate([
             (gxc_lkjcholesky_bound_consumed, choicemap((:y, Float32[0.9, 0.3, 0.8]))),
