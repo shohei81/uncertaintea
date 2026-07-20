@@ -405,4 +405,193 @@
         @test stage.move_steps == 1
         @test 0.0 <= stage.move_acceptance_rate <= 1.0
     end
+
+    # Tempered target gradient regression (issue #94): the tempered gradient
+    # must combine the freshly computed model gradient, not an undef buffer.
+    @tea static function smc_conjugate_nn_model()
+        mu ~ normal(0.5, 1.2)
+        {:y => 1} ~ normal(mu, 0.7)
+        {:y => 2} ~ normal(mu, 0.7)
+        {:y => 3} ~ normal(mu, 0.7)
+        {:y => 4} ~ normal(mu, 0.7)
+        return mu
+    end
+
+    nn_y = [1.3, 0.2, 0.9, 1.8]
+    nn_constraints =
+        choicemap((:y => 1, nn_y[1]), (:y => 2, nn_y[2]), (:y => 3, nn_y[3]), (:y => 4, nn_y[4]))
+    nn_particles = reshape([-1.0, 0.0, 1.0, 2.0], 1, 4)
+    nn_cache = UncertainTea.BatchedLogjointGradientCache(smc_conjugate_nn_model, nn_particles, (), nn_constraints)
+    nn_proposal_loc = [0.0]
+    nn_proposal_log_scale = [0.0]
+    nn_model_gradient =
+        copy(UncertainTea.batched_logjoint_gradient_unconstrained(nn_cache, nn_particles))
+    nn_proposal_gradient = similar(nn_model_gradient)
+    UncertainTea._gaussian_gradient_from_particles!(
+        nn_proposal_gradient,
+        nn_particles,
+        nn_proposal_loc,
+        nn_proposal_log_scale,
+    )
+
+    for beta in (1.0, 0.5)
+        nn_target = UncertainTea.BatchedTemperedDensityTarget(
+            smc_conjugate_nn_model,
+            (),
+            nn_constraints,
+            nn_cache,
+            nn_proposal_loc,
+            nn_proposal_log_scale,
+            beta,
+            1,
+            4,
+        )
+        nn_values = zeros(4)
+        nn_gradient = zeros(1, 4)
+        UncertainTea.batched_target_logdensity_and_gradient!(nn_values, nn_gradient, nn_target, nn_particles)
+        @test nn_gradient ≈ beta .* nn_model_gradient .+ (1.0 - beta) .* nn_proposal_gradient atol=1e-12
+    end
+
+    # With the true tempered force, a well-tuned beta = 0.5 HMC move kernel on
+    # the conjugate model accepts nearly always (was ~0.01 with the undef
+    # gradient, issue #94).
+    nn_move_rng = MersenneTwister(219)
+    nn_move_particles = 0.5 .+ 1.2 .* randn(nn_move_rng, 1, 256)
+    nn_move_logjoint = Vector{Float64}(undef, 256)
+    copyto!(
+        nn_move_logjoint,
+        batched_logjoint_unconstrained(smc_conjugate_nn_model, nn_move_particles, (), nn_constraints),
+    )
+    nn_move_noise = similar(nn_move_particles)
+    nn_move_logproposal = Vector{Float64}(undef, 256)
+    nn_move_loc = [0.5]
+    nn_move_log_scale = [log(1.2)]
+    UncertainTea._gaussian_logdensity_from_particles!(
+        nn_move_logproposal,
+        nn_move_particles,
+        nn_move_loc,
+        nn_move_log_scale,
+        nn_move_noise,
+    )
+    nn_move_log_ratio = nn_move_logjoint .- nn_move_logproposal
+    nn_move_acceptance = UncertainTea._batched_hmc_move!(
+        nn_move_particles,
+        nn_move_logjoint,
+        nn_move_logproposal,
+        nn_move_log_ratio,
+        smc_conjugate_nn_model,
+        (),
+        nn_constraints,
+        nn_move_loc,
+        nn_move_log_scale,
+        0.5,
+        0.1,
+        8,
+        [1.0],
+        nn_move_rng,
+    )
+    @test nn_move_acceptance > 0.9
+
+    # Tempered SMC with HMC moves recovers the closed-form log evidence of the
+    # conjugate normal-normal model (issue #94 left log evidence noisy and the
+    # move kernel paralyzed).
+    nn_prior_var = 1.2^2
+    nn_obs_var = 0.7^2
+    nn_count = length(nn_y)
+    nn_mean = sum(nn_y) / nn_count
+    nn_ss = sum((nn_y .- nn_mean) .^ 2)
+    nn_marginal_var = nn_prior_var + nn_obs_var / nn_count
+    nn_true_log_evidence =
+        -nn_count / 2 * log(2pi * nn_obs_var) - nn_ss / (2 * nn_obs_var) +
+        0.5 * log(2pi * nn_obs_var / nn_count) - 0.5 * log(2pi * nn_marginal_var) -
+        (nn_mean - 0.5)^2 / (2 * nn_marginal_var)
+    nn_smc = batched_smc(
+        smc_conjugate_nn_model,
+        (),
+        nn_constraints;
+        num_particles=512,
+        proposal_loc=[0.5],
+        proposal_log_scale=log(1.2),
+        target_ess_ratio=0.7,
+        max_stages=64,
+        move_kernel=:hmc,
+        move_steps=2,
+        move_step_size=0.1,
+        move_num_leapfrog_steps=8,
+        rng=MersenneTwister(220),
+    )
+    @test nn_smc.importance.log_evidence_estimate ≈ nn_true_log_evidence atol=0.1
+    for stage in nn_smc.stages
+        stage.move_steps > 0 || continue
+        @test stage.move_acceptance_rate > 0.8
+    end
+
+    # Tempered SMC with NUTS moves recovers the same closed-form log evidence
+    # now that the canonical multinomial NUTS move is unbiased (issue #94 plus
+    # the #93 subtree fix). Pool across a few seeds so the estimator stays well
+    # inside tolerance regardless of platform floating-point accumulation.
+    nn_nuts_log_evidences = Float64[]
+    nn_nuts_min_acceptance = 1.0
+    for nn_nuts_seed in (230, 231, 232, 233)
+        nn_nuts_smc = batched_smc(
+            smc_conjugate_nn_model,
+            (),
+            nn_constraints;
+            num_particles=512,
+            proposal_loc=[0.5],
+            proposal_log_scale=log(1.2),
+            target_ess_ratio=0.7,
+            max_stages=64,
+            move_kernel=:nuts,
+            move_steps=2,
+            move_step_size=0.1,
+            move_max_tree_depth=5,
+            rng=MersenneTwister(nn_nuts_seed),
+        )
+        push!(nn_nuts_log_evidences, nn_nuts_smc.importance.log_evidence_estimate)
+        for stage in nn_nuts_smc.stages
+            stage.move_steps > 0 || continue
+            nn_nuts_min_acceptance = min(nn_nuts_min_acceptance, stage.move_acceptance_rate)
+        end
+    end
+    nn_nuts_pooled = sum(nn_nuts_log_evidences) / length(nn_nuts_log_evidences)
+    @test nn_nuts_pooled ≈ nn_true_log_evidence atol=0.1
+    @test nn_nuts_min_acceptance > 0.8
+
+    # batched_smc honors callback_every (issue #91): the callback fires on
+    # stage multiples of callback_every plus the final stage.
+    smc_callback_events = NamedTuple[]
+    smc_callback_result = batched_smc(
+        smc_conjugate_nn_model,
+        (),
+        nn_constraints;
+        num_particles=128,
+        proposal_loc=[0.0],
+        proposal_log_scale=log(3.0),
+        target_ess_ratio=0.9,
+        max_stages=64,
+        callback=info -> push!(smc_callback_events, info),
+        callback_every=3,
+        rng=MersenneTwister(221),
+    )
+    smc_callback_stages = numstages(smc_callback_result)
+    smc_expected_iterations = sort(unique(vcat(collect(3:3:smc_callback_stages), smc_callback_stages)))
+    @test [event.iteration for event in smc_callback_events] == smc_expected_iterations
+    @test all(event.phase === :stage for event in smc_callback_events)
+
+    smc_every_stage_events = NamedTuple[]
+    batched_smc(
+        smc_conjugate_nn_model,
+        (),
+        nn_constraints;
+        num_particles=128,
+        proposal_loc=[0.0],
+        proposal_log_scale=log(3.0),
+        target_ess_ratio=0.9,
+        max_stages=64,
+        callback=info -> push!(smc_every_stage_events, info),
+        callback_every=1,
+        rng=MersenneTwister(221),
+    )
+    @test [event.iteration for event in smc_every_stage_events] == collect(1:smc_callback_stages)
 end
