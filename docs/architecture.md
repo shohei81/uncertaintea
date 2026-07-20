@@ -212,6 +212,16 @@ Current backend-lowering subset:
   batched tree kernel, and subtree expansion now returns metadata while leaving
   mutable frontier state in that scratch workspace; the continuation loop
   itself now mutates an explicit reusable continuation-state object
+- NUTS trajectory selection now follows canonical multinomial NUTS (Stan
+  `base_nuts`) semantics on every path (scalar, batched hybrid/masked, tempered
+  SMC moves, device masked): a final doubling whose subtree contains an
+  internal U-turn or divergence is discarded whole -- no weight merge, no
+  proposal swap, no frontier update -- keeping only leapfrog/accept-stat
+  accounting and the termination flags; U-turn checks (frontier, batched, and
+  dyadic checkpoint) are metric-aware, projecting momenta through the inverse
+  mass matrix (`M^{-1} p` velocities) for diagonal and dense metrics; and the
+  shared batched reasonable-step-size search keeps its initially chosen
+  direction so it stops at the first crossing of the 0.5 acceptance target
 - supported backend numeric expressions now evaluate over the whole batch using
   reusable scratch vectors, reducing per-column recursive interpretation on the
   batched path

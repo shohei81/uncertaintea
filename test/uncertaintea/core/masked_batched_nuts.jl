@@ -34,14 +34,17 @@ end
     return mu
 end
 
-function mnuts_run(model, constraints, strategy, seed; kwargs...)
+function mnuts_run(
+    model, constraints, strategy, seed;
+    num_chains=4, num_samples=300, num_warmup=200, kwargs...,
+)
     return batched_nuts(
         model,
         (),
         constraints;
-        num_chains=4,
-        num_samples=300,
-        num_warmup=200,
+        num_chains=num_chains,
+        num_samples=num_samples,
+        num_warmup=num_warmup,
         tree_strategy=strategy,
         rng=MersenneTwister(seed),
         kwargs...,
@@ -50,8 +53,14 @@ end
 
 @testset "mnuts_conjugate_gauss_hybrid_vs_masked" begin
     constraints = choicemap((:y, 0.3))
-    hybrid = mnuts_run(mnuts_conjugate_gauss, constraints, :hybrid, 481)
-    masked = mnuts_run(mnuts_conjugate_gauss, constraints, :masked, 481)
+    # 4 chains x 1500 draws: the masked-vs-hybrid mean-agreement check compares
+    # two independent samplers, so its estimator scatter is larger than a
+    # single posterior mean. At 4x300 the metric-aware U-turn / invalid-subtree
+    # fixes (which shifted both samplers' seeded trajectories) pushed the mean
+    # difference past 0.1 on the 1.10 CI entry; the larger budget converges
+    # both means to the posterior mean (0.15) with margin on 1.10 and latest.
+    hybrid = mnuts_run(mnuts_conjugate_gauss, constraints, :hybrid, 481; num_samples=1500, num_warmup=500)
+    masked = mnuts_run(mnuts_conjugate_gauss, constraints, :masked, 481; num_samples=1500, num_warmup=500)
 
     hybrid_draws = posterior_array(hybrid)
     masked_draws = posterior_array(masked)

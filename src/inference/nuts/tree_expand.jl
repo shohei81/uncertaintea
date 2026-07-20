@@ -76,8 +76,9 @@ end
 
 # Odd-leaf dyadic U-turn test: for each dyadic block ending at `leaf_index`,
 # compare the block's start checkpoint against the current endpoint. `direction`
-# selects the argument orientation (>0 forward, <0 backward). Returns true as
-# soon as any block turns. Caller must ensure `isodd(leaf_index)`.
+# selects the argument orientation (>0 forward, <0 backward). Turn tests use
+# metric-aware velocities M^{-1} p. Returns true as soon as any block turns.
+# Caller must ensure `isodd(leaf_index)`.
 function _dyadic_turning(
     checkpoint_positions::AbstractMatrix,
     checkpoint_momenta::AbstractMatrix,
@@ -85,6 +86,7 @@ function _dyadic_turning(
     position::AbstractVector,
     momentum::AbstractVector,
     direction::Int,
+    inverse_mass_matrix::Union{AbstractVector,MassMetric},
 )
     for k = 1:trailing_ones(leaf_index)
         block_start = leaf_index - (1 << k) + 1
@@ -92,9 +94,9 @@ function _dyadic_turning(
         ckpt_position = view(checkpoint_positions, :, slot)
         ckpt_momentum = view(checkpoint_momenta, :, slot)
         turned = if direction > 0
-            _is_turning(ckpt_position, position, ckpt_momentum, momentum)
+            _is_turning(ckpt_position, position, ckpt_momentum, momentum, inverse_mass_matrix)
         else
-            _is_turning(position, ckpt_position, momentum, ckpt_momentum)
+            _is_turning(position, ckpt_position, momentum, ckpt_momentum, inverse_mass_matrix)
         end
         turned && return true
     end
@@ -103,7 +105,9 @@ end
 
 # Per-particle subtree-into-continuation merge: combined log weight and the
 # proposal swap decision (one rand draw, consumed only when the subtree log
-# weight is finite).
+# weight is finite). Callers must only invoke this for VALID subtrees --
+# canonical multinomial NUTS discards a subtree with an internal U-turn or
+# divergence entirely, so no merge (and no rand draw) happens for it.
 function _merge_subtree_stats(
     continuation_log_weight::Float64,
     subtree_log_weight::Float64,

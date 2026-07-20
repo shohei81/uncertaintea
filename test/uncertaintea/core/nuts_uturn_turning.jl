@@ -1,3 +1,5 @@
+using LinearAlgebra
+
 @testset "nuts_uturn_turning" begin
     @tea static function dyadic_model()
         x ~ normal(0.0f0, 1.0f0)
@@ -221,6 +223,7 @@
         [-1.0, 0.0],
         [1.0, 0.0],
         1,
+        [1.0, 1.0],
     ) == UncertainTea._is_turning([0.0, 0.0], [-1.0, 0.0], [1.0, 0.0], [1.0, 0.0])
     @test UncertainTea._dyadic_turning(
         dyadicb_ckpt_pos,
@@ -229,6 +232,7 @@
         [-1.0, 0.0],
         [1.0, 0.0],
         1,
+        [1.0, 1.0],
     )
     # Forward-progressing endpoint: no U-turn.
     @test !UncertainTea._dyadic_turning(
@@ -238,6 +242,143 @@
         [1.0, 0.0],
         [1.0, 0.0],
         1,
+        [1.0, 1.0],
+    )
+
+    # metricturn_: metric-aware U-turn criterion (issue #69). The trajectory
+    # velocity is M^{-1} p, so a non-identity inverse mass matrix must enter
+    # every turning helper.
+    metricturn_ql = [0.0, 0.0]
+    metricturn_qr = [1.0, 1.0]
+    metricturn_p = [1.0, -0.5]
+    metricturn_imm = [0.1, 10.0]
+    # Raw-momentum criterion says "not turning" (dot = 0.5) while the
+    # metric-aware velocity dot is 0.1*1.0 + 10.0*(-0.5) = -4.9 <= 0: turning.
+    @test !UncertainTea._is_turning(metricturn_ql, metricturn_qr, metricturn_p, metricturn_p)
+    @test UncertainTea._is_turning(
+        metricturn_ql,
+        metricturn_qr,
+        metricturn_p,
+        metricturn_p,
+        metricturn_imm,
+    )
+    # Mirrored counterexample: raw says turning (dot = -0.5), the metric-aware
+    # velocity dot is 0.1*(-1.0) + 10.0*0.5 = 4.9 > 0: not turning.
+    metricturn_p_mirror = [-1.0, 0.5]
+    @test UncertainTea._is_turning(
+        metricturn_ql,
+        metricturn_qr,
+        metricturn_p_mirror,
+        metricturn_p_mirror,
+    )
+    @test !UncertainTea._is_turning(
+        metricturn_ql,
+        metricturn_qr,
+        metricturn_p_mirror,
+        metricturn_p_mirror,
+        metricturn_imm,
+    )
+    # Identity metric reduces to the raw criterion.
+    for metricturn_case_p in ([1.0, -0.5], [-1.0, 0.5], [1.0, 1.0], [-0.2, -0.1])
+        @test UncertainTea._is_turning(
+            metricturn_ql,
+            metricturn_qr,
+            metricturn_case_p,
+            metricturn_case_p,
+            [1.0, 1.0],
+        ) == UncertainTea._is_turning(metricturn_ql, metricturn_qr, metricturn_case_p, metricturn_case_p)
+    end
+    # MassMetric wrappers agree with the raw diagonal vector, and a dense
+    # metric with a diagonal Sigma matches the diagonal result.
+    @test UncertainTea._is_turning(
+        metricturn_ql,
+        metricturn_qr,
+        metricturn_p,
+        metricturn_p,
+        UncertainTea.DiagonalMetric(metricturn_imm),
+    )
+    @test UncertainTea._is_turning(
+        metricturn_ql,
+        metricturn_qr,
+        metricturn_p,
+        metricturn_p,
+        UncertainTea.DenseMetric(Matrix(Diagonal(metricturn_imm))),
+    )
+    # Genuinely dense metric: check the criterion against the analytic
+    # velocity dot (delta' Sigma p, Sigma = M^{-1}) on a random momentum grid.
+    metricturn_dense_sigma = [1.0 -0.9; -0.9 1.0]
+    metricturn_dense = UncertainTea.DenseMetric(metricturn_dense_sigma)
+    metricturn_dense_rng = MersenneTwister(69)
+    for _ = 1:50
+        metricturn_case_pl = randn(metricturn_dense_rng, 2)
+        metricturn_case_pr = randn(metricturn_dense_rng, 2)
+        metricturn_delta = metricturn_qr .- metricturn_ql
+        metricturn_expected =
+            dot(metricturn_delta, metricturn_dense_sigma * metricturn_case_pl) <= 0 ||
+            dot(metricturn_delta, metricturn_dense_sigma * metricturn_case_pr) <= 0
+        @test UncertainTea._is_turning(
+            metricturn_ql,
+            metricturn_qr,
+            metricturn_case_pl,
+            metricturn_case_pr,
+            metricturn_dense,
+        ) == metricturn_expected
+    end
+    # _batched_is_turning! threads the metric per chain: shared Vector and
+    # per-chain Matrix forms agree with the scalar criterion.
+    metricturn_left_pos = zeros(2, 2)
+    metricturn_right_pos = ones(2, 2)
+    metricturn_left_mom = hcat(metricturn_p, metricturn_p_mirror)
+    metricturn_right_mom = hcat(metricturn_p, metricturn_p_mirror)
+    metricturn_batched = falses(2)
+    UncertainTea._batched_is_turning!(
+        metricturn_batched,
+        metricturn_left_pos,
+        metricturn_right_pos,
+        metricturn_left_mom,
+        metricturn_right_mom,
+        metricturn_imm,
+        trues(2),
+    )
+    @test metricturn_batched == BitVector([true, false])
+    UncertainTea._batched_is_turning!(
+        metricturn_batched,
+        metricturn_left_pos,
+        metricturn_right_pos,
+        metricturn_left_mom,
+        metricturn_right_mom,
+        hcat(metricturn_imm, metricturn_imm),
+        trues(2),
+    )
+    @test metricturn_batched == BitVector([true, false])
+    # _dyadic_turning threads the metric into the checkpoint tests: the same
+    # counterexample flips the verdict versus the identity metric.
+    metricturn_ckpt_pos = zeros(2, 3)
+    metricturn_ckpt_mom = zeros(2, 3)
+    UncertainTea._store_tree_checkpoint!(
+        metricturn_ckpt_pos,
+        metricturn_ckpt_mom,
+        0,
+        metricturn_ql,
+        metricturn_p,
+    )
+    @test !UncertainTea._dyadic_turning(
+        metricturn_ckpt_pos,
+        metricturn_ckpt_mom,
+        1,
+        metricturn_qr,
+        metricturn_p,
+        1,
+        [1.0, 1.0],
+    )
+    @test UncertainTea._dyadic_turning(
+        metricturn_ckpt_pos,
+        metricturn_ckpt_mom,
+        1,
+        metricturn_qr,
+        metricturn_p,
+        1,
+        metricturn_imm,
     )
 
     @tea static function dyadicb_model()

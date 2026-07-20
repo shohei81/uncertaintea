@@ -133,6 +133,7 @@ function _initialize_nuts_first_step!(
         continuation.right.position,
         continuation.left.momentum,
         continuation.right.momentum,
+        inverse_mass_matrix,
     )
     return (moved, false)
 end
@@ -243,6 +244,7 @@ function _initialize_batched_nuts_first_step!(
         continuation.right.position,
         continuation.left.momentum,
         continuation.right.momentum,
+        inverse_mass_matrix,
     )
     sync_mask = falses(length(workspace.left_logjoint))
     sync_mask[chain_index] = true
@@ -283,6 +285,8 @@ function _logaddexp(x::Float64, y::Float64)
     return high + log1p(exp(min(x, y) - high))
 end
 
+# Identity-metric U-turn criterion (kept for unit tests / reference); all
+# production call sites use the metric-aware variant below.
 function _is_turning(
     left_position::AbstractVector,
     right_position::AbstractVector,
@@ -293,12 +297,58 @@ function _is_turning(
     return dot(delta, left_momentum) <= 0 || dot(delta, right_momentum) <= 0
 end
 
+# Metric-aware U-turn criterion: the trajectory velocity is M^{-1} p (see
+# _mass_drift), so the turn test projects the frontier momenta through the
+# inverse mass matrix instead of using the raw momenta.
+function _is_turning(
+    left_position::AbstractVector,
+    right_position::AbstractVector,
+    left_momentum::AbstractVector,
+    right_momentum::AbstractVector,
+    inverse_mass_matrix::Union{AbstractVector,MassMetric},
+)
+    left_dot = _turning_velocity_dot(left_position, right_position, left_momentum, inverse_mass_matrix)
+    left_dot <= 0 && return true
+    right_dot = _turning_velocity_dot(left_position, right_position, right_momentum, inverse_mass_matrix)
+    return right_dot <= 0
+end
+
+function _turning_velocity_dot(
+    left_position::AbstractVector,
+    right_position::AbstractVector,
+    momentum::AbstractVector,
+    inverse_mass_matrix::AbstractVector,
+)
+    acc = 0.0
+    @inbounds for index in eachindex(left_position, right_position, momentum, inverse_mass_matrix)
+        acc +=
+            (right_position[index] - left_position[index]) *
+            inverse_mass_matrix[index] *
+            momentum[index]
+    end
+    return acc
+end
+
+function _turning_velocity_dot(
+    left_position::AbstractVector,
+    right_position::AbstractVector,
+    momentum::AbstractVector,
+    metric::MassMetric,
+)
+    delta = right_position .- left_position
+    return dot(delta, _mass_drift(metric, momentum))
+end
+
+# Metric-aware batched U-turn check: velocities are M^{-1} p per chain.
+# `inverse_mass_matrix` is a shared diagonal Vector (P) or a per-chain diagonal
+# Matrix (P x C); see _batched_mass_value.
 function _batched_is_turning!(
     destination::AbstractVector{Bool},
     left_position::AbstractMatrix,
     right_position::AbstractMatrix,
     left_momentum::AbstractMatrix,
     right_momentum::AbstractMatrix,
+    inverse_mass_matrix::Union{AbstractVector,AbstractMatrix},
     active::AbstractVector{Bool},
 )
     num_chains = size(left_position, 2)
@@ -318,13 +368,19 @@ function _batched_is_turning!(
         right_dot = 0.0
         for parameter_index in axes(left_position, 1)
             delta = right_position[parameter_index, chain_index] - left_position[parameter_index, chain_index]
-            left_dot += delta * left_momentum[parameter_index, chain_index]
-            right_dot += delta * right_momentum[parameter_index, chain_index]
+            inverse_mass = _batched_mass_value(inverse_mass_matrix, parameter_index, chain_index)
+            left_dot += delta * inverse_mass * left_momentum[parameter_index, chain_index]
+            right_dot += delta * inverse_mass * right_momentum[parameter_index, chain_index]
         end
         destination[chain_index] = left_dot <= 0 || right_dot <= 0
     end
     return destination
 end
+
+_batched_mass_value(inverse_mass_matrix::AbstractVector, parameter_index::Int, chain_index::Int) =
+    inverse_mass_matrix[parameter_index]
+_batched_mass_value(inverse_mass_matrices::AbstractMatrix, parameter_index::Int, chain_index::Int) =
+    inverse_mass_matrices[parameter_index, chain_index]
 
 function _merge_batched_nuts_continuation_frontiers!(
     workspace::BatchedNUTSWorkspace,
@@ -511,6 +567,26 @@ function _merge_batched_subtree_summary!(
     return workspace
 end
 
+# Canonical multinomial NUTS discards an invalid final doubling (internal
+# U-turn or divergence) entirely: the subtree's weight, proposal, and frontier
+# never merge into the continuation. Only the leapfrog / accept-stat accounting
+# and the termination flags carry over so the trajectory stops and diagnostics
+# stay complete.
+function _discard_invalid_batched_subtree!(
+    workspace::BatchedNUTSWorkspace,
+    chain_index::Int,
+)
+    workspace.control.integration_steps[chain_index] +=
+        workspace.subtree_integration_steps[chain_index]
+    workspace.continuation_accept_stat_sum[chain_index] +=
+        workspace.subtree_accept_stat_sum[chain_index]
+    workspace.continuation_accept_stat_count[chain_index] +=
+        workspace.subtree_accept_stat_count[chain_index]
+    workspace.control.continuation_turning[chain_index] = workspace.subtree_turning[chain_index]
+    workspace.control.divergent_step[chain_index] = workspace.subtree_divergent[chain_index]
+    return workspace
+end
+
 function _copy_nuts_continuation_frontier_from_tree!(
     continuation::NUTSContinuationState,
     subtree_workspace::NUTSSubtreeWorkspace,
@@ -537,6 +613,7 @@ end
 function _merge_nuts_continuation_turning!(
     continuation::NUTSContinuationState,
     subtree_turning::Bool,
+    inverse_mass_matrix::Union{AbstractVector,MassMetric},
 )
     continuation.turning =
         subtree_turning || _is_turning(
@@ -544,6 +621,7 @@ function _merge_nuts_continuation_turning!(
             continuation.right.position,
             continuation.left.momentum,
             continuation.right.momentum,
+            inverse_mass_matrix,
         )
     return continuation
 end
