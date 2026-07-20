@@ -95,47 +95,50 @@ struct StudentTDist{T<:Real} <: AbstractTeaDistribution
     end
 end
 
+# Builders normalize parameters through `float` so integer (or other non-float
+# real) literals reach the samplers as float storage (issue #73); `float` keeps
+# ForwardDiff Duals intact.
 function normal(mu, sigma)
-    promoted_mu, promoted_sigma = promote(mu, sigma)
+    promoted_mu, promoted_sigma = promote(float(mu), float(sigma))
     return NormalDist(promoted_mu, promoted_sigma)
 end
 
 function laplace(mu, scale)
-    promoted_mu, promoted_scale = promote(mu, scale)
+    promoted_mu, promoted_scale = promote(float(mu), float(scale))
     return LaplaceDist(promoted_mu, promoted_scale)
 end
 
 function exponential(rate)
-    return ExponentialDist(rate)
+    return ExponentialDist(float(rate))
 end
 
 function gamma(shape, rate)
-    promoted_shape, promoted_rate = promote(shape, rate)
+    promoted_shape, promoted_rate = promote(float(shape), float(rate))
     return GammaDist(promoted_shape, promoted_rate)
 end
 
 function inversegamma(shape, scale)
-    promoted_shape, promoted_scale = promote(shape, scale)
+    promoted_shape, promoted_scale = promote(float(shape), float(scale))
     return InverseGammaDist(promoted_shape, promoted_scale)
 end
 
 function weibull(shape, scale)
-    promoted_shape, promoted_scale = promote(shape, scale)
+    promoted_shape, promoted_scale = promote(float(shape), float(scale))
     return WeibullDist(promoted_shape, promoted_scale)
 end
 
 function beta(alpha, beta_parameter)
-    promoted_alpha, promoted_beta = promote(alpha, beta_parameter)
+    promoted_alpha, promoted_beta = promote(float(alpha), float(beta_parameter))
     return BetaDist(promoted_alpha, promoted_beta)
 end
 
 function lognormal(mu, sigma)
-    promoted_mu, promoted_sigma = promote(mu, sigma)
+    promoted_mu, promoted_sigma = promote(float(mu), float(sigma))
     return LogNormalDist(promoted_mu, promoted_sigma)
 end
 
 function studentt(nu, mu, sigma)
-    promoted_nu, promoted_mu, promoted_sigma = promote(nu, mu, sigma)
+    promoted_nu, promoted_mu, promoted_sigma = promote(float(nu), float(mu), float(sigma))
     return StudentTDist(promoted_nu, promoted_mu, promoted_sigma)
 end
 

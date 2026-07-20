@@ -129,3 +129,46 @@
     @test poisson_combined_gradient === poisson_batch_cache.gradient_buffer
     @test poisson_combined_gradient ≈ poisson_batch_gradient atol=1e-8
 end
+
+# Issue #74: large-rate Poisson draws use the PTRS transformed rejection
+# sampler; the Knuth product loop underflows exp(-lambda) and saturated draws
+# around 745 regardless of the rate.
+@testset "poisson_large_rate_sampler" begin
+    ptrs_rng = MersenneTwister(11)
+    ptrs_n = 200_000
+    ptrs_draws = [rand(ptrs_rng, poisson(1000.0)) for _ = 1:ptrs_n]
+    ptrs_mean = sum(ptrs_draws) / ptrs_n
+    ptrs_sd = sqrt(sum((x - ptrs_mean)^2 for x in ptrs_draws) / (ptrs_n - 1))
+    # mean 1000 +- 3 * sd / sqrt(n), sd = sqrt(1000) ~ 31.6
+    @test abs(ptrs_mean - 1000.0) < 3 * sqrt(1000.0) / sqrt(ptrs_n)
+    @test abs(ptrs_sd - sqrt(1000.0)) < 0.5
+    # the old sampler could not exceed ~745; a healthy one covers mean +- 4 sd
+    @test maximum(ptrs_draws) > 1100
+    @test minimum(ptrs_draws) > 800
+    @test all(x -> x >= 0, ptrs_draws)
+
+    # both sides of the algorithm threshold stay unbiased
+    for rate in (30.0, 30.5)
+        edge_rng = MersenneTwister(12)
+        edge_n = 50_000
+        edge_mean = sum(rand(edge_rng, poisson(rate)) for _ = 1:edge_n) / edge_n
+        @test abs(edge_mean - rate) < 3 * sqrt(rate) / sqrt(edge_n)
+    end
+
+    # small-lambda behavior is unchanged (Knuth path): pmf frequency check
+    small_rng = MersenneTwister(13)
+    small_n = 200_000
+    small_draws = [rand(small_rng, poisson(1.0)) for _ = 1:small_n]
+    for k = 0:3
+        frequency = count(==(k), small_draws) / small_n
+        pmf = exp(UncertainTea.logpdf(poisson(1.0), k))
+        @test abs(frequency - pmf) < 0.006
+    end
+
+    # the Gamma-Poisson negativebinomial sampler inherits the fix:
+    # r = 50, p = 0.05 has mean r(1-p)/p = 950, far past the old saturation
+    negbin_rng = MersenneTwister(14)
+    negbin_n = 50_000
+    negbin_mean = sum(rand(negbin_rng, negativebinomial(50.0, 0.05)) for _ = 1:negbin_n) / negbin_n
+    @test abs(negbin_mean - 950.0) < 3 * sqrt(50 * 0.95 / 0.05^2) / sqrt(negbin_n)
+end

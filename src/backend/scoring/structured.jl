@@ -95,6 +95,15 @@ function _backend_mixture_normal_logpdf(weights, mus, sigmas, x)
     k = length(weights)
     (length(mus) == k && length(sigmas) == k) ||
         throw(ArgumentError("mixture requires one weight per normal component"))
+    # same weight validation as the CPU `MixtureDist` constructor (issue #76)
+    total = zero(float(first(weights)))
+    for index = 1:k
+        w = weights[index]
+        w >= zero(w) || throw(ArgumentError("mixture weights must be nonnegative"))
+        total += w
+    end
+    abs(total - one(total)) <= oftype(total, 1e-8) ||
+        throw(ArgumentError("mixture weights must sum to 1 (within 1e-8)"))
     xf = float(x)
     T = typeof(xf + float(weights[1]) + float(mus[1]) + float(sigmas[1]))
     m = T(-Inf)

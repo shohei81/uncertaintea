@@ -4,7 +4,8 @@ function _backend_bernoulli_logpdf(p, x)
     probability = p
     zero(probability) <= probability <= one(probability) ||
         throw(ArgumentError("bernoulli requires 0 <= p <= 1"))
-    value = x isa Bool ? x : x != 0
+    value = _bernoulli_value(x)
+    isnothing(value) && return oftype(float(probability), -Inf)
     return value ? log(probability) : log1p(-probability)
 end
 

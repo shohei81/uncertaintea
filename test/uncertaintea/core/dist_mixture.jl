@@ -207,3 +207,45 @@ end
     @test mix_report_laplace.supported == false
     @test any(issue -> occursin("mixture", issue), mix_report_laplace.issues)
 end
+
+# Issue #75: docs/dsl.md allows both tuple and vector mixture weights; the
+# compiled evaluator materializes a vector literal as Vector{Any}, which the
+# builder now narrows before constructing MixtureDist.
+@testset "mix_vector_literal_weights" begin
+    @tea static function mix_vec_weights_model()
+        {:y} ~ mixture([0.5, 0.5], normal(-1.0, 1.0), normal(1.0, 1.0))
+    end
+    @tea static function mix_tuple_weights_model()
+        {:y} ~ mixture((0.5, 0.5), normal(-1.0, 1.0), normal(1.0, 1.0))
+    end
+    mix_vec_cm = choicemap((:y, 0.0))
+    mix_tuple_value = logjoint(mix_tuple_weights_model, Float64[], (), mix_vec_cm)
+    @test isfinite(mix_tuple_value)
+    @test logjoint(mix_vec_weights_model, Float64[], (), mix_vec_cm) ≈ mix_tuple_value atol = 1e-12
+    @test batched_logjoint(mix_vec_weights_model, zeros(0, 1), (), mix_vec_cm)[1] ≈
+          mix_tuple_value atol = 1e-12
+    # the builder narrows Vector{Any} weights (the compiled vector-literal form)
+    mix_any_weights = mixture(Any[0.5, 0.5], normal(-1.0, 1.0), normal(1.0, 1.0))
+    @test mix_any_weights.weights isa Vector{Float64}
+end
+
+# Issue #76: the weights-sum-to-1 validation holds on every execution path; the
+# device mirror degrades to -Inf instead of throwing (exception-free contract).
+@testset "mix_weight_validation_paths" begin
+    @tea static function mix_bad_weights_model()
+        {:y} ~ mixture((0.2, 0.2), normal(-1.0, 1.0), normal(1.0, 1.0))
+    end
+    mix_bad_cm = choicemap((:y, 0.0))
+    @test_throws ArgumentError logjoint(mix_bad_weights_model, Float64[], (), mix_bad_cm)
+    @test_throws ArgumentError batched_logjoint(mix_bad_weights_model, zeros(0, 1), (), mix_bad_cm)
+    @test_throws ArgumentError UncertainTea._backend_mixture_normal_logpdf(
+        (0.2, 0.2), (-1.0, 1.0), (1.0, 1.0), 0.0,
+    )
+    @test_throws ArgumentError UncertainTea._backend_mixture_normal_logpdf(
+        (1.5, -0.5), (-1.0, 1.0), (1.0, 1.0), 0.0,
+    )
+    @test UncertainTea._device_mixture_normal_logpdf((0.2, 0.2), (-1.0, 1.0), (1.0, 1.0), 0.0) == -Inf
+    @test UncertainTea._device_mixture_normal_logpdf((1.5, -0.5), (-1.0, 1.0), (1.0, 1.0), 0.0) == -Inf
+    @test UncertainTea._device_mixture_normal_logpdf((0.5, 0.5), (-1.0, 1.0), (1.0, 1.0), 0.0) ≈
+          UncertainTea._backend_mixture_normal_logpdf((0.5, 0.5), (-1.0, 1.0), (1.0, 1.0), 0.0) atol = 1e-12
+end
