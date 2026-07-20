@@ -101,3 +101,61 @@
     @test unconstrained_summary.parameters[1].address == (:weights, 1)
     @test unconstrained_summary.parameters[2].address == (:weights, 2)
 end
+
+# --- small-alpha sampling: no exact-zero components at HMC init (issue #101) --
+# For shape < 1 the Marsaglia-Tsang boost gamma(shape+1) * u^(1/shape) used to
+# underflow to exactly 0.0, and the strictly-positive simplex transform then
+# crashed HMC initialization seed-dependently.
+@testset "dirichlet_small_alpha_init" begin
+    @tea function dirichlet_sa_model()
+        w ~ dirichlet(0.01, 0.01, 1.0)
+    end
+    # The exact failing seed from the issue.
+    dirichlet_sa_chain =
+        hmc(dirichlet_sa_model, (); num_samples=5, num_warmup=5, rng=MersenneTwister(2795))
+    @test dirichlet_sa_chain isa HMCChain
+
+    # Sweep: small-alpha draws are strictly positive and survive the simplex
+    # round trip.
+    dirichlet_sa_rng = MersenneTwister(4920)
+    dirichlet_sa_dist = dirichlet(0.01, 0.01, 1.0)
+    dirichlet_sa_t = SimplexTransform(3)
+    dirichlet_sa_zeros = 0
+    dirichlet_sa_nonfinite = 0
+    for _ = 1:20_000
+        dirichlet_sa_w = rand(dirichlet_sa_rng, dirichlet_sa_dist)
+        dirichlet_sa_zeros += count(iszero, dirichlet_sa_w)
+        dirichlet_sa_u = UncertainTea.to_unconstrained(dirichlet_sa_t, dirichlet_sa_w)
+        dirichlet_sa_nonfinite += count(!isfinite, dirichlet_sa_u)
+    end
+    @test dirichlet_sa_zeros == 0
+    @test dirichlet_sa_nonfinite == 0
+
+    # Moderate-alpha moments are untouched by the log-space boost (the
+    # shape >= 1 sampler path is unchanged): alpha = (2, 3, 5) has mean
+    # (0.2, 0.3, 0.5) and var[1] = 2*8/(100*11).
+    dirichlet_sa_rng2 = MersenneTwister(4921)
+    dirichlet_sa_dmod = dirichlet(2.0, 3.0, 5.0)
+    dirichlet_sa_n = 50_000
+    dirichlet_sa_mean = zeros(3)
+    dirichlet_sa_sq1 = 0.0
+    for _ = 1:dirichlet_sa_n
+        dirichlet_sa_draw = rand(dirichlet_sa_rng2, dirichlet_sa_dmod)
+        dirichlet_sa_mean .+= dirichlet_sa_draw
+        dirichlet_sa_sq1 += dirichlet_sa_draw[1]^2
+    end
+    dirichlet_sa_mean ./= dirichlet_sa_n
+    @test maximum(abs.(dirichlet_sa_mean .- [0.2, 0.3, 0.5])) < 0.01
+    @test abs(dirichlet_sa_sq1 / dirichlet_sa_n - dirichlet_sa_mean[1]^2 - 16 / 1100) < 0.002
+
+    # If a zero component still reaches the simplex transform, the error names
+    # the offending component instead of a bare message.
+    dirichlet_sa_err = try
+        UncertainTea.to_unconstrained(SimplexTransform(3), [0.5, 0.0, 0.5])
+        nothing
+    catch dirichlet_sa_caught
+        dirichlet_sa_caught
+    end
+    @test dirichlet_sa_err isa ArgumentError
+    @test occursin("component 2 of 3", dirichlet_sa_err.msg)
+end

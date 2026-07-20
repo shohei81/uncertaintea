@@ -31,6 +31,7 @@ core_test_files = [
     ("dist_mixture.jl", "dist"),
     ("dist_mvnormal_dense.jl", "dist"),
     ("dist_lkj_cholesky.jl", "dist"),
+    ("transform_logit_saturation.jl", "dist"),
     ("dist_integer_params.jl", "dist"),
     ("dist_bernoulli.jl", "dist"),
     ("vector_backend_sampler.jl", "backend-device"),

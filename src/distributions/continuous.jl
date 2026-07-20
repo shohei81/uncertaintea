@@ -160,7 +160,13 @@ end
 
 function _rand_gamma_marsaglia(rng::AbstractRNG, shape::T, rate::T) where {T<:AbstractFloat}
     if shape < one(T)
-        return _rand_gamma_marsaglia(rng, shape + one(T), rate) * (rand(rng, T) ^ (inv(shape)))
+        # Marsaglia-Tsang boost gamma(shape+1) * u^(1/shape), evaluated in log
+        # space: the direct power underflows to exactly 0.0 for small shape
+        # (u^100 at shape=0.01), and exact-zero draws crash downstream
+        # simplex/log transforms at HMC init (issue #101). Flooring at
+        # floatmin keeps the draw strictly positive.
+        boosted = log(_rand_gamma_marsaglia(rng, shape + one(T), rate)) + log(rand(rng, T)) / shape
+        return max(exp(boosted), floatmin(T))
     end
 
     d = shape - T(1 / 3)

@@ -18,10 +18,17 @@ to_unconstrained(::LogitTransform, value) = log(value) - log1p(-value)
 logabsdetjac(::IdentityTransform, value) = zero(value)
 logabsdetjac(::VectorIdentityTransform, value::AbstractVector) = isempty(value) ? 0.0 : zero(value[firstindex(value)])
 logabsdetjac(::LogTransform, value) = value
-function logabsdetjac(::LogitTransform, value)
-    constrained = to_constrained(LogitTransform(), value)
-    return log(constrained) + log1p(-constrained)
+
+# Exact log|d sigmoid(u)/du| = log(sigmoid(u)) + log(sigmoid(-u)) in the
+# saturation-free form -|u| - 2*log1p(exp(-|u|)). Symmetric in u and finite for
+# every u, where the naive log(c) + log1p(-c) collapses to -Inf once
+# c = sigmoid(u) rounds to exactly 1 (u ~ 36.7 in Float64, ~16.6 in Float32).
+function _logit_logabsdetjac(value)
+    magnitude = abs(float(value))
+    return -magnitude - 2 * log1p(exp(-magnitude))
 end
+
+logabsdetjac(::LogitTransform, value) = _logit_logabsdetjac(value)
 
 to_constrained(::VectorLogTransform, value::AbstractVector) = map(exp, value)
 to_unconstrained(::VectorLogTransform, value::AbstractVector) = map(log, value)
@@ -38,10 +45,9 @@ to_constrained(::VectorLogitTransform, value::AbstractVector) = map(v -> inv(one
 to_unconstrained(::VectorLogitTransform, value::AbstractVector) = map(v -> log(v) - log1p(-v), value)
 function logabsdetjac(::VectorLogitTransform, value::AbstractVector)
     isempty(value) && return 0.0
-    total = zero(value[firstindex(value)])
+    total = zero(float(value[firstindex(value)]))
     for element in value
-        constrained = inv(one(element) + exp(-element))
-        total += log(constrained) + log1p(-constrained)
+        total += _logit_logabsdetjac(element)
     end
     return total
 end
@@ -54,8 +60,7 @@ function to_unconstrained(transform::BoundedTransform, value)
     return log(scaled) - log1p(-scaled)
 end
 function logabsdetjac(transform::BoundedTransform, value)
-    sigmoid = _bounded_sigmoid(value)
-    return log(transform.upper - transform.lower) + log(sigmoid) + log1p(-sigmoid)
+    return log(transform.upper - transform.lower) + _logit_logabsdetjac(value)
 end
 
 to_constrained(transform::LowerBoundedTransform, value) = transform.lower + exp(value)
@@ -117,10 +122,15 @@ function _to_unconstrained_simplex!(
         )
 
     last_value = values[end]
-    last_value > zero(last_value) || throw(ArgumentError("simplex values must be strictly positive"))
     total = zero(last_value)
-    for value in values
-        value > zero(value) || throw(ArgumentError("simplex values must be strictly positive"))
+    for index in eachindex(values)
+        value = values[index]
+        value > zero(value) || throw(
+            ArgumentError(
+                "simplex values must be strictly positive; component $(index - firstindex(values) + 1) " *
+                "of $(transform.size) is $value (small-concentration Dirichlet draws can underflow to zero)",
+            ),
+        )
         total += value
     end
     abs(total - one(total)) <= sqrt(eps(float(total))) * transform.size * 16 ||
@@ -195,12 +205,23 @@ function _to_constrained_cholesky_corr!(
             z = values[z_position]
             z_position += 1
             w = tanh(z)
-            logabsdet += _log1m_tanh_sq(z) + log1p(-sum_sqs) / 2
-            entry = w * sqrt(1 - sum_sqs)
+            # tanh saturation at |z| >~ 19 rounds w to exactly +-1, which can
+            # push sum_sqs to 1 (or one ulp above); log1p(-sum_sqs) and
+            # sqrt(1 - sum_sqs) would then throw a DomainError. Unconstrained
+            # space is all of R^n, so match the exception-free device contract
+            # (_device_cholesky_corr_constrain): degrade the log-abs-det to
+            # -Inf (rejection) and clamp the entry to zero (issue #99). The
+            # healthy path is bit-for-bit unchanged.
+            saturated = sum_sqs >= one(sum_sqs)
+            logabsdet +=
+                _log1m_tanh_sq(z) +
+                (saturated ? oftype(sum_sqs, -Inf) : log1p(-sum_sqs) / 2)
+            entry = saturated ? zero(sum_sqs) : w * sqrt(1 - sum_sqs)
             destination[_packed_lower_index(d, row, col)] = entry
             sum_sqs += entry * entry
         end
-        destination[_packed_lower_index(d, row, row)] = sqrt(1 - sum_sqs)
+        destination[_packed_lower_index(d, row, row)] =
+            sum_sqs >= one(sum_sqs) ? zero(sum_sqs) : sqrt(1 - sum_sqs)
     end
     return logabsdet
 end
@@ -323,7 +344,7 @@ function _transform_slot_to_constrained!(
             unconstrained_value = params[parameter_index]
             constrained_value = _bounded_sigmoid(unconstrained_value)
             destination[value_index] = constrained_value
-            logabsdet += log(constrained_value) + log1p(-constrained_value)
+            logabsdet += _logit_logabsdetjac(unconstrained_value)
         end
         return logabsdet
     elseif slot.transform isa LogTransform
