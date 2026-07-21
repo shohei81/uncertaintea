@@ -58,7 +58,18 @@ end
 
 # ---- per-step dual scoring ------------------------------------------------------
 
-@inline function _device_grad_score_step(step::DeviceNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     mu = _device_grad_eval(step.mu, slots, pidx, b)
     sigma = _device_grad_eval(step.sigma, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -67,7 +78,18 @@ end
     return (_device_normal_logpdf(m, s, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceNoncenteredNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceNoncenteredNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     T = _device_dual_basetype(eltype(slots))
     mu = _device_grad_eval(step.mu, slots, pidx, b)
     sigma = _device_grad_eval(step.sigma, slots, pidx, b)
@@ -79,7 +101,18 @@ end
     return (_device_normal_logpdf(zero(zz), one(zz), zz), cursor)
 end
 
-@inline function _device_grad_score_step(step::DeviceLognormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceLognormalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     mu = _device_grad_eval(step.mu, slots, pidx, b)
     sigma = _device_grad_eval(step.sigma, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -88,7 +121,18 @@ end
     return (_device_lognormal_logpdf(m, s, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceExponentialChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceExponentialChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     rate = _device_grad_eval(step.rate, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
     _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
@@ -96,7 +140,18 @@ end
     return (_device_exponential_logpdf(r, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceGammaChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceGammaChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     shape = _device_grad_eval(step.shape, slots, pidx, b)
     rate = _device_grad_eval(step.rate, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -105,7 +160,18 @@ end
     return (_device_gamma_logpdf(sh, r, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceLaplaceChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceLaplaceChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     loc = _device_grad_eval(step.loc, slots, pidx, b)
     scale = _device_grad_eval(step.scale, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -114,7 +180,7 @@ end
     return (_device_laplace_logpdf(l, s, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceBetaChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(step::DeviceBetaChoiceStep, slots, params, observed, observed_int, tc, ls, pidx, b, cursor)
     alpha = _device_grad_eval(step.alpha, slots, pidx, b)
     beta = _device_grad_eval(step.beta, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -123,7 +189,18 @@ end
     return (_device_beta_logpdf(al, be, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceStudentTChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceStudentTChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     nu = _device_grad_eval(step.nu, slots, pidx, b)
     mu = _device_grad_eval(step.mu, slots, pidx, b)
     sigma = _device_grad_eval(step.sigma, slots, pidx, b)
@@ -133,7 +210,18 @@ end
     return (_device_studentt_logpdf(n, m, s, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceInverseGammaChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceInverseGammaChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     shape = _device_grad_eval(step.shape, slots, pidx, b)
     scale = _device_grad_eval(step.scale, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -142,7 +230,18 @@ end
     return (_device_inversegamma_logpdf(sh, sc, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceWeibullChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceWeibullChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     shape = _device_grad_eval(step.shape, slots, pidx, b)
     scale = _device_grad_eval(step.scale, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
@@ -151,16 +250,50 @@ end
     return (_device_weibull_logpdf(sh, sc, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceBinomialChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
-    trials = _device_grad_eval(step.trials, slots, pidx, b)
+@inline function _device_grad_score_step(
+    step::DeviceBinomialChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
+    T = _device_dual_basetype(eltype(slots))
     p = _device_grad_eval(step.probability, slots, pidx, b)
-    value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+    # trials `n` is an exact integer staged as a leading observation row (issue
+    # #71); the -1 sentinel means the host could not resolve it (a deterministic
+    # binding), so fall back to the in-kernel float evaluation.
+    n_staged = @inbounds observed_int[cursor, b]
+    n = n_staged >= 0 ? n_staged : _device_count_int(_device_dual_value(_device_grad_eval(step.trials, slots, pidx, b)))
+    cur = cursor + Int32(1)
+    if step.value_source > Int32(0)
+        value, lad, _ = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
+        _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
+        k = _device_count_int(_device_dual_value(value))
+        return (_device_binomial_logpdf(n, k, p) + lad, cur)
+    end
+    k = @inbounds observed_int[cur, b]
+    value = DeviceDual{T}(convert(T, @inbounds(observed[cur, b])), zero(T))
     _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
-    n, pp, v = promote(trials, p, value)
-    return (_device_binomial_logpdf(n, pp, v) + lad, cur)
+    return (_device_binomial_logpdf(n, k, p), cur + Int32(1))
 end
 
-@inline function _device_grad_score_step(step::DeviceGeometricChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceGeometricChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     p = _device_grad_eval(step.probability, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
     _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
@@ -173,6 +306,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     pidx,
@@ -187,7 +321,18 @@ end
     return (_device_negativebinomial_logpdf(r, pp, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceCategoricalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceCategoricalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     probabilities = _device_grad_eval_args(step.probabilities, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
     _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
@@ -196,7 +341,18 @@ end
     return (_device_categorical_logpdf(probabilities, value) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceBernoulliChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceBernoulliChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     p = _device_grad_eval(step.probability, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
     _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
@@ -204,7 +360,18 @@ end
     return (_device_bernoulli_logpdf(pp, v) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DevicePoissonChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DevicePoissonChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     lambda = _device_grad_eval(step.lambda, slots, pidx, b)
     value, lad, cur = _device_grad_choice_value(step, params, observed, pidx, b, cursor, eltype(slots))
     _device_grad_store_binding!(slots, step.binding_slot, value, pidx, b)
@@ -239,7 +406,18 @@ end
     return (value, cursor + Int32(D))
 end
 
-@inline function _device_grad_score_step(step::DeviceDirichletChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceDirichletChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     T = _device_dual_basetype(eltype(slots))
     alpha = _device_grad_eval_args(step.alpha, slots, pidx, b)
     if step.value_source > Int32(0)
@@ -264,6 +442,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     pidx,
@@ -294,6 +473,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     pidx,
@@ -313,7 +493,18 @@ end
     return (_device_mvnormaldense_logpdf(scale_packed, mu, value), cur2)
 end
 
-@inline function _device_grad_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceMvNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     mu = _device_grad_eval_args(step.mu, slots, pidx, b)
     sigma = _device_grad_eval_args(step.sigma, slots, pidx, b)
     value, cur =
@@ -326,6 +517,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     pidx,
@@ -347,6 +539,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     pidx,
@@ -371,6 +564,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     pidx,
@@ -386,12 +580,23 @@ end
     return (_device_mixture_normal_logpdf(weights, mus, sigmas, value) + lad, cur)
 end
 
-@inline function _device_grad_score_step(step::DeviceDeterministicStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(
+    step::DeviceDeterministicStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    pidx,
+    b,
+    cursor,
+)
     @inbounds slots[step.binding_slot, pidx, b] = _device_grad_eval(step.expr, slots, pidx, b)
     return (zero(eltype(slots)), cursor)
 end
 
-@inline function _device_grad_score_step(step::DeviceLoopStep, slots, params, observed, tc, ls, pidx, b, cursor)
+@inline function _device_grad_score_step(step::DeviceLoopStep, slots, params, observed, observed_int, tc, ls, pidx, b, cursor)
     TD = eltype(slots)
     count = @inbounds tc[step.loop_id]
     start = @inbounds ls[step.loop_id]
@@ -401,7 +606,7 @@ end
         if step.iterator_slot > Int32(0)
             @inbounds slots[step.iterator_slot, pidx, b] = TD(start + t)
         end
-        contribution, cur = _device_grad_score_steps(step.body, slots, params, observed, tc, ls, pidx, b, cur)
+        contribution, cur = _device_grad_score_steps(step.body, slots, params, observed, observed_int, tc, ls, pidx, b, cur)
         total += contribution
     end
     return (total, cur)
@@ -409,12 +614,12 @@ end
 
 # ---- recursive dual step-tuple walk --------------------------------------------
 
-@inline _device_grad_score_steps(::Tuple{}, slots, params, observed, tc, ls, pidx, b, cursor) =
+@inline _device_grad_score_steps(::Tuple{}, slots, params, observed, observed_int, tc, ls, pidx, b, cursor) =
     (zero(eltype(slots)), cursor)
 
-@inline function _device_grad_score_steps(steps::Tuple, slots, params, observed, tc, ls, pidx, b, cursor)
-    contribution, cur = _device_grad_score_step(first(steps), slots, params, observed, tc, ls, pidx, b, cursor)
-    rest, cur2 = _device_grad_score_steps(Base.tail(steps), slots, params, observed, tc, ls, pidx, b, cur)
+@inline function _device_grad_score_steps(steps::Tuple, slots, params, observed, observed_int, tc, ls, pidx, b, cursor)
+    contribution, cur = _device_grad_score_step(first(steps), slots, params, observed, observed_int, tc, ls, pidx, b, cursor)
+    rest, cur2 = _device_grad_score_steps(Base.tail(steps), slots, params, observed, observed_int, tc, ls, pidx, b, cur)
     return (contribution + rest, cur2)
 end
 
@@ -426,6 +631,7 @@ end
     plan,
     @Const(params),
     @Const(observed),
+    @Const(observed_int),
     slots,
     @Const(trip_counts),
     @Const(loop_starts),
@@ -434,7 +640,7 @@ end
     pidx = idx[1]
     b = idx[2]
     total, _ = _device_grad_score_steps(
-        plan.steps, slots, params, observed, trip_counts, loop_starts, pidx, b, Int32(1),
+        plan.steps, slots, params, observed, observed_int, trip_counts, loop_starts, pidx, b, Int32(1),
     )
     @inbounds gradients[pidx, b] = _device_dual_deriv(total)
     if pidx == 1

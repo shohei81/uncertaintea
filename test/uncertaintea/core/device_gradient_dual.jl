@@ -513,3 +513,51 @@ end
         ]...,
     ) atol = 1e-10
 end
+
+# issue #104: near tanh saturation (row square-sums approaching 1) the device
+# lkjcholesky gradient used to drift from the analytic gradient because the dual
+# chain went through the subtractive `1 - sum_sqs`. The constrain now tracks the
+# leftover variance MULTIPLICATIVELY (remaining *= 1 - tanh(z)^2), which makes the
+# forward-mode derivative well-conditioned. The truth here is a 256-bit BigFloat
+# central finite difference of the CPU logjoint (independent of either gradient
+# formula); the device now matches it to FP noise on in-support states.
+@tea static function devg_lkj8_model()
+    Omega ~ lkjcholesky(8, 2.0)
+    return Omega
+end
+
+@testset "devg_lkjcholesky_saturation_gradient" begin
+    nz = (8 * 7) ÷ 2
+    base = Float64[0.3, -0.5, 0.2, 0.7, -0.1, 0.4, -0.3, 0.6, 0.9, -1.1,
+        1.3, -1.4, 1.15, 1.35, -1.25, 1.45, -1.15, 1.55, 1.05, -1.35,
+        1.25, -1.45, 1.12, 1.32, -1.22, 1.42, -1.12, 1.52]
+
+    bigfloat_fd(params, i; h=1e-30) = setprecision(BigFloat, 256) do
+        p = BigFloat.(params)
+        pp = copy(p)
+        pp[i, 1] += h
+        pm = copy(p)
+        pm[i, 1] -= h
+        vp = batched_logjoint_unconstrained(devg_lkj8_model, pp, (), choicemap())[1]
+        vm = batched_logjoint_unconstrained(devg_lkj8_model, pm, (), choicemap())[1]
+        return Float64((vp - vm) / (2 * h))
+    end
+
+    # s = 2.0 drives some z up to ~3.0 (row square-sums near 1) while staying in
+    # support; this is where the old dual chain drifted (~1e-4 at |z|~2-3).
+    for s in (1.0, 2.0)
+        params = reshape(base .* s, nz, 1)
+        v, g = device_batched_logjoint_gradient(devg_lkj8_model, params, (), choicemap())
+        @test isfinite(v[1]) # in-support column
+        worst_row = argmax(abs.(vec(g) .- vec(bigfloat_fd.(Ref(params), 1:nz))))
+        fd = bigfloat_fd(params, worst_row)
+        # device gradient is within FP noise of the exact (BigFloat FD) gradient
+        @test isapprox(g[worst_row, 1], fd; rtol=1e-8, atol=1e-8)
+    end
+
+    # Benign region: device still agrees with the CPU analytic gradient tightly.
+    params = reshape(base .* 0.5, nz, 1)
+    _, g = device_batched_logjoint_gradient(devg_lkj8_model, params, (), choicemap())
+    gref = batched_logjoint_gradient_unconstrained(devg_lkj8_model, params, (), choicemap())
+    @test g ≈ gref rtol = 1e-9
+end

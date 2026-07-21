@@ -876,3 +876,125 @@ end
     @test err isa ArgumentError
     @test occursin("device_lowering_report", err.msg)
 end
+
+# issue #71: integer distribution inputs (binomial trials/count) must stay EXACT
+# at any compute precision. They are staged into a separate integer observation
+# buffer, so Float32 (2^24 mantissa) can no longer collapse `n` and `k`.
+@tea static function dev_large_binomial(n)
+    p ~ beta(2.0, 2.0)
+    {:k} ~ binomial(n, p)
+end
+
+@testset "dev_binomial_integer_exactness" begin
+    n = 2^24 + 1
+    k = n - 1
+    cm = choicemap((:k, k))
+    @test Float32(n) == Float32(k) # both collapse to 16777216f0 in Float32
+
+    params32 = reshape(Float32[16.0], 1, 1)
+    v32, g32 = device_batched_logjoint_gradient(dev_large_binomial, params32, (n,), cm; precision=Float32)
+    gref32 = batched_logjoint_gradient_unconstrained(dev_large_binomial, params32, (n,), cm)
+    # The (n - k) = 1 distinction is preserved, so the gradient matches the CPU
+    # Float32 reference (which keeps n, k as exact Ints) instead of collapsing.
+    @test Float64(g32[1]) ≈ Float64(gref32[1]) rtol = 1e-5
+    @test abs(Float64(g32[1])) > 0.9 # was ~5e-2 (corrupted) before the fix
+
+    # Float64: the device computes the log binomial coefficient from the exact
+    # integers via a difference of two large loggammas, so for huge n it carries
+    # ~1e-9 relative cancellation error vs the CPU exact factorial sum. This is
+    # pre-existing device behavior (the old binomial used the same F64 loggamma
+    # differences) -- unchanged by the fix -- so the huge-n value agrees loosely.
+    params64 = reshape(Float64[16.0], 1, 1)
+    v64 = device_batched_logjoint(dev_large_binomial, params64, (n,), cm; precision=Float64)
+    vref64 = batched_logjoint_unconstrained(dev_large_binomial, params64, (n,), cm)
+    @test v64 ≈ vref64 rtol = 1e-6
+    @test isapprox(Float64(v32[1]), v64[1]; rtol=1e-3) # Float32 tracks the Float64 value
+
+    # Small-count binomial is unchanged: Float64 matches the CPU tightly and
+    # Float32 matches within precision. Use a moderate p (logit 0.5 -> ~0.62); the
+    # huge-n case above pins p ~ 1, which is a degenerate Float32 regime for the
+    # log1p(-p) term unrelated to the integer-exactness fix.
+    small = choicemap((:k, 7))
+    small_params64 = reshape(Float64[0.5], 1, 1)
+    small_params32 = reshape(Float32[0.5], 1, 1)
+    v64_small = device_batched_logjoint(dev_large_binomial, small_params64, (20,), small; precision=Float64)
+    ref64_small = batched_logjoint_unconstrained(dev_large_binomial, small_params64, (20,), small)
+    @test v64_small ≈ ref64_small rtol = 1e-12
+    dev_small = device_batched_logjoint(dev_large_binomial, small_params32, (20,), small; precision=Float32)
+    @test Float64.(dev_small) ≈ Float64.(ref64_small) rtol = 1e-4
+end
+
+# issue #83: device_lowering_report must enforce the same loop-range constraints
+# staging enforces (unit step, Int32-representable bounds/trip count), rather than
+# deferring them to a staging error after the report claims support.
+@tea static function dev_nonunit_step_loop(n)
+    m ~ normal(0.0, 1.0)
+    for i = 1:2:n
+        {:y => i} ~ normal(m, 1.0)
+    end
+    return m
+end
+
+@tea static function dev_big_bound_loop()
+    m ~ normal(0.0, 1.0)
+    for i = 2147483648:2147483648
+        {:y => i} ~ normal(m, 1.0)
+    end
+    return m
+end
+
+@tea static function dev_big_trip_loop()
+    m ~ normal(0.0, 1.0)
+    for i = 1:3000000000
+        {:y => i} ~ normal(m, 1.0)
+    end
+    return m
+end
+
+@testset "dev_loop_iterable_report_checks" begin
+    sup_step, iss_step = device_lowering_report(dev_nonunit_step_loop)
+    @test !sup_step
+    @test any(occursin("unit-step", issue) for issue in iss_step)
+
+    sup_bound, iss_bound = device_lowering_report(dev_big_bound_loop)
+    @test !sup_bound
+    @test any(occursin("Int32", issue) for issue in iss_bound)
+
+    sup_trip, iss_trip = device_lowering_report(dev_big_trip_loop)
+    @test !sup_trip
+    @test any(occursin("trip count", issue) for issue in iss_trip)
+end
+
+# issue #84: the device categorical scorer must validate the probability vector
+# (each entry in [0, 1] and sum to 1), mapping invalid vectors to a non-finite
+# result per the exception-free contract, matching the CPU (which throws).
+@tea static function dev_invalid_categorical()
+    p ~ beta(2.0, 2.0)
+    {:y} ~ categorical(p, p)
+end
+
+@tea static function dev_norm_categorical()
+    q ~ beta(2.0, 2.0)
+    {:y} ~ categorical(q, 1.0 - q)
+end
+
+@testset "dev_categorical_probability_validation" begin
+    # p = 0.3 -> probabilities (0.3, 0.3) sum to 0.6 (not normalized).
+    params = reshape([log(0.3 / 0.7)], 1, 1)
+    cm = choicemap((:y, 1))
+    sup, _ = device_lowering_report(dev_invalid_categorical)
+    @test sup # lowering is fine; validation happens at scoring time
+    val = device_batched_logjoint(dev_invalid_categorical, params, (), cm)
+    @test all(==(-Inf), val) # was a finite ~-2.53 before the fix; CPU throws
+    # the gradient-kernel value channel agrees (the -Inf constant carries a zero
+    # derivative, so only the reported logjoint VALUE flags the rejection)
+    gval, _ = device_batched_logjoint_gradient(dev_invalid_categorical, params, (), cm)
+    @test all(==(-Inf), gval)
+
+    # A properly normalized categorical still scores finitely and matches the CPU.
+    params_ok = reshape([0.2], 1, 1)
+    cm_ok = choicemap((:y, 2))
+    dev_ok = device_batched_logjoint(dev_norm_categorical, params_ok, (), cm_ok)
+    ref_ok = batched_logjoint_unconstrained(dev_norm_categorical, params_ok, (), cm_ok)
+    @test dev_ok ≈ ref_ok rtol = 1e-12
+end

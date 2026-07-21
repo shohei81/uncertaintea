@@ -145,8 +145,18 @@ function _run_device_batched_advi(
         for particle_index = 1:num_particles
             values[particle_index] = Float64(values_download[particle_index])
         end
-        all(isfinite, values) ||
-            throw(ArgumentError("batched_advi encountered only non-finite unconstrained logjoint values or gradients"))
+        # Mirror the CPU path (src/inference/vi.jl): guard BOTH the objective
+        # values and the (downloaded, reduced) gradients. The on-device reduction
+        # averages over every particle, so a single non-finite particle gradient
+        # poisons the mean; feeding that to Adam would silently corrupt the state
+        # (issue #70). This host-side check throws, matching the CPU contract.
+        (
+            all(isfinite, values) &&
+            all(isfinite, location_gradient_download) &&
+            all(isfinite, scale_gradient_download)
+        ) || throw(
+            ArgumentError("batched_advi encountered only non-finite unconstrained logjoint values or gradients"),
+        )
 
         for parameter_index = 1:parameter_total
             location_gradient[parameter_index] = Float64(location_gradient_download[parameter_index])

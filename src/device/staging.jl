@@ -10,8 +10,23 @@
 
 struct DeviceStagingBundle{T}
     observed::Matrix{T}
+    # Exact integer mirror of `observed`, row-for-row: integer-valued entries
+    # (observation counts, binomial trials) as `Int64`. Discrete-count kernels
+    # read integer inputs from here so they stay exact regardless of the compute
+    # precision `T` (issue #71). Non-integral / out-of-range entries map to the
+    # sentinel -1 so a count kernel reading one lands out of support (k >= 0
+    # fails), matching the CPU rejection of a non-integral count; rows that no
+    # count kernel reads (continuous observations) simply ignore the sentinel.
+    observed_int::Matrix{Int64}
     trip_counts::Vector{Int32}
     loop_starts::Vector{Int32}
+end
+
+# Round to an exact Int64 when the (Float64-staged) value is integral and within
+# the Int64-exact range; otherwise the out-of-support sentinel -1.
+@inline function _device_exact_int(v::Real)
+    (isfinite(v) && v == round(v) && abs(v) <= 9.007199254740992e15) || return Int64(-1)
+    return round(Int64, v)
 end
 
 function _device_staging_environment(
@@ -98,6 +113,43 @@ function _stage_step!(
     ::Type{T},
 ) where {T}
     isnothing(step.parameter_slot) || return nothing # latent: no observed row
+    _stage_observed_row!(rows, step, env, constraints, dummy_params, T)
+    return nothing
+end
+
+# binomial trials is an integer, parameter-independent argument. Stage it as a
+# LEADING row (exact through the Float64 staging traversal) so the device reads
+# the exact `n` from the integer observation buffer regardless of the compute
+# precision `T` (issue #71). The observed count `k` (if any) stages next, exactly
+# as the generic choice step; the device binomial step consumes both.
+#
+# When `trials` is a direct argument / constant its value resolves here exactly.
+# When it is a deterministic binding the host env cannot always resolve (its
+# in-kernel value is computed later), the row is staged as NaN -> integer
+# sentinel -1, and the device binomial step falls back to evaluating `step.trials`
+# in-kernel from the float slots (the pre-issue-#71 behavior).
+function _stage_step!(
+    rows,
+    step::BackendBinomialChoicePlanStep,
+    env,
+    constraints,
+    dummy_params,
+    trip_counts,
+    loop_starts,
+    loop_counter,
+    ::Type{T},
+) where {T}
+    trials_row = Vector{T}(undef, size(dummy_params, 2))
+    resolved = true
+    try
+        _eval_backend_numeric_expr!(trials_row, env, step.trials)
+    catch err
+        (err isa BatchedBackendFallback || err isa ArgumentError) || rethrow()
+        resolved = false
+    end
+    resolved || fill!(trials_row, T(NaN))
+    push!(rows, trials_row)
+    isnothing(step.parameter_slot) || return nothing # latent value: no count row
     _stage_observed_row!(rows, step, env, constraints, dummy_params, T)
     return nothing
 end
@@ -222,19 +274,29 @@ function _stage_device_observations(
     batch_size::Int,
 ) where {T}
     backend = _backend_execution_plan(model)
-    env = _device_staging_environment(model, backend, args, batch_size, T)
-    dummy_params = Matrix{T}(undef, 0, batch_size)
-    rows = Vector{Vector{T}}()
+    # Stage the observation stream in Float64 (exact for integers up to 2^53) so
+    # integer inputs survive before splitting into the compute-precision float
+    # buffer and the exact-integer mirror (issue #71). Float64 -> T is identical
+    # to a direct T stage for every representable value, so the float path is
+    # unchanged.
+    env = _device_staging_environment(model, backend, args, batch_size, Float64)
+    dummy_params = Matrix{Float64}(undef, 0, batch_size)
+    rows = Vector{Vector{Float64}}()
     trip_counts = zeros(Int32, Int(plan.loop_count))
     loop_starts = zeros(Int32, Int(plan.loop_count))
     loop_counter = Ref(0)
     for step in backend.steps
-        _stage_step!(rows, step, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, T)
+        _stage_step!(rows, step, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, Float64)
     end
 
     observed = Matrix{T}(undef, length(rows), batch_size)
+    observed_int = Matrix{Int64}(undef, length(rows), batch_size)
     for (row_index, row) in enumerate(rows)
-        @inbounds observed[row_index, :] .= row
+        for col = 1:batch_size
+            @inbounds v = row[col]
+            @inbounds observed[row_index, col] = T(v)
+            @inbounds observed_int[row_index, col] = _device_exact_int(v)
+        end
     end
-    return DeviceStagingBundle{T}(observed, trip_counts, loop_starts)
+    return DeviceStagingBundle{T}(observed, observed_int, trip_counts, loop_starts)
 end
