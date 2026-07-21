@@ -95,6 +95,7 @@ function device_batched_logjoint_gradient!(workspace::DeviceBatchedWorkspace{T},
         workspace.plan,
         workspace.params_device,
         workspace.observed_device,
+        workspace.observed_int_device,
         workspace.grad_slots_device,
         workspace.trip_counts_device,
         workspace.loop_starts_device;

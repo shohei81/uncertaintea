@@ -44,6 +44,7 @@ mutable struct DeviceBatchedWorkspace{T,B<:KernelAbstractions.Backend,P<:DeviceE
     params_device::Any
     slots_device::Any
     observed_device::Any
+    observed_int_device::Any
     totals_device::Any
     trip_counts_device::Any
     loop_starts_device::Any
@@ -85,6 +86,8 @@ function DeviceBatchedWorkspace(
     _device_stage_arguments!(slots_device, model, args, batch_size, T)
     observed_device = KernelAbstractions.allocate(backend, T, size(bundle.observed, 1), batch_size)
     copyto!(observed_device, bundle.observed)
+    observed_int_device = KernelAbstractions.allocate(backend, Int64, size(bundle.observed_int, 1), batch_size)
+    copyto!(observed_int_device, bundle.observed_int)
     totals_device = KernelAbstractions.allocate(backend, T, batch_size)
     trip_counts_device = KernelAbstractions.allocate(backend, Int32, length(bundle.trip_counts))
     loop_starts_device = KernelAbstractions.allocate(backend, Int32, length(bundle.loop_starts))
@@ -101,6 +104,7 @@ function DeviceBatchedWorkspace(
         params_device,
         slots_device,
         observed_device,
+        observed_int_device,
         totals_device,
         trip_counts_device,
         loop_starts_device,
@@ -223,6 +227,7 @@ function device_batched_logjoint!(workspace::DeviceBatchedWorkspace{T}, params::
         workspace.plan,
         workspace.params_device,
         workspace.observed_device,
+        workspace.observed_int_device,
         workspace.slots_device,
         workspace.trip_counts_device,
         workspace.loop_starts_device;

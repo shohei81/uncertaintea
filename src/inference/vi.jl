@@ -568,7 +568,11 @@ function batched_advi(
     particles = Matrix{Float64}(undef, parameter_total, num_particles)
     noise = similar(particles)
     values = Vector{Float64}(undef, num_particles)
-    _draw_gaussian_particles!(particles, noise, location, log_scale, rng)
+    # Shape the gradient cache WITHOUT consuming the RNG: the cache only needs the
+    # particle matrix shape and a finite representative point, not a real draw. The
+    # first genuine draw happens inside the loop below, so a same-seed device run
+    # (which has no pre-loop draw) sees an identical RNG stream (issue #108).
+    particles .= location
     cache = BatchedLogjointGradientCache(model, particles, args, constraints)
     gradient_backend = _advi_gradient_backend(cache)
 

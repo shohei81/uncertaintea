@@ -140,16 +140,38 @@ end
     return ifelse(_device_count_ok(x, k), base, _device_neginf(T))
 end
 
-@inline function _device_binomial_logpdf(trials::T, p::T, x::T) where {T}
-    n = round(trials)
-    k = round(x)
-    in_support = _device_count_ok(x, k) & _device_count_ok(trials, n) & (k <= n)
-    log_combination = _device_loggamma(n + one(T)) - _device_loggamma(k + one(T)) -
-                      _device_loggamma(n - k + one(T))
+# Base real type behind a plain real or a DeviceDual (the gradient kernel's p).
+@inline _device_real_basetype(::Type{DeviceDual{T}}) where {T} = T
+@inline _device_real_basetype(::Type{T}) where {T<:Real} = T
+
+# Exception-free count round: a non-finite / out-of-Int64-range value maps to -1
+# (out of support -> -Inf) instead of throwing an InexactError inside the kernel.
+@inline function _device_count_int(x::Real)
+    (isfinite(x) & (abs(x) < 9.0e15)) || return Int64(-1)
+    return round(Int64, x)
+end
+
+# Exact-integer log binomial coefficient computed in Float64 (integers <= 2^53 are
+# exact), so the n-vs-k distinction survives regardless of the compute precision
+# T (issue #71).
+@inline function _device_log_binom_coeff(n::Integer, k::Integer)
+    return _device_loggamma(Float64(n) + 1.0) - _device_loggamma(Float64(k) + 1.0) -
+           _device_loggamma(Float64(n - k) + 1.0)
+end
+
+# `n` (trials) and `k` (count) are EXACT integers threaded through the integer
+# observation buffer (issue #71); `p` is a plain real (logjoint kernel) or a
+# `DeviceDual` (gradient kernel). The p-independent combinatorial term is formed
+# in Float64 and folded in as a zero-derivative constant, so the difference
+# `n - k` stays exact and the gradient flows only through the p-dependent terms
+# whose integer coefficients are exact.
+@inline function _device_binomial_logpdf(n::Integer, k::Integer, p::P) where {P}
+    T = _device_real_basetype(P)
+    in_support = (k >= 0) & (n >= 0) & (k <= n)
+    log_combination = convert(P, T(_device_log_binom_coeff(n, k)))
     # guard the k == 0 / k == n corners so p in {0, 1} cannot produce 0 * -Inf
-    base = log_combination + ifelse(k > zero(T), k * log(p), zero(T)) +
-           ifelse(k < n, (n - k) * log1p(-p), zero(T))
-    return ifelse(in_support, base, _device_neginf(T))
+    base = log_combination + ifelse(k > 0, k * log(p), zero(p)) + ifelse(k < n, (n - k) * log1p(-p), zero(p))
+    return ifelse(in_support, base, oftype(base, -Inf))
 end
 
 @inline function _device_geometric_logpdf(p::T, x::T) where {T}
@@ -176,11 +198,35 @@ end
     return _device_categorical_pick(Base.tail(probabilities), k, index + Int32(1), acc + term)
 end
 
+# Value-channel probability of a tuple entry (plain-`T` in the logjoint kernel,
+# `DeviceDual{T}` in the gradient kernel); validation reads only the value.
+@inline _device_prob_value(x::DeviceDual) = x.value
+@inline _device_prob_value(x) = x
+
+# Fold the probability vector into (all entries in [0, 1], running sum), reading
+# the value channel so duals and literals validate identically.
+@inline _device_categorical_validate(::Tuple{}, acc::T, ok::Bool) where {T} = (ok, acc)
+@inline function _device_categorical_validate(probabilities::Tuple, acc::T, ok::Bool) where {T}
+    p = T(_device_prob_value(first(probabilities)))
+    ok2 = ok & (p >= zero(T)) & (p <= one(T))
+    return _device_categorical_validate(Base.tail(probabilities), acc + p, ok2)
+end
+
+# Mirrors the CPU `_backend_categorical_logpdf` (src/backend/scoring/discrete.jl):
+# besides the observed-category range check, each probability must lie in [0, 1]
+# and the vector must sum to 1 (within tolerance). Invalid vectors map to -Inf per
+# the exception-free device contract instead of throwing (issue #84).
 @inline function _device_categorical_logpdf(probabilities::Tuple, x::T) where {T}
+    # validation runs on the base real type (`eps`/comparisons are value-channel),
+    # so it works whether `x`/the probabilities are plain reals or `DeviceDual`s.
+    TB = _device_real_basetype(T)
     k = round(x)
     in_support = (x >= one(T)) & (x <= T(length(probabilities))) & (x == k)
+    in_range, total_prob = _device_categorical_validate(probabilities, zero(TB), true)
+    tolerance = sqrt(eps(one(TB))) * TB(max(length(probabilities), 1) * 8)
+    normalized = abs(total_prob - one(TB)) <= tolerance
     total = _device_categorical_pick(probabilities, k, Int32(1), zero(T))
-    return ifelse(in_support, total, oftype(total, -Inf))
+    return ifelse(in_support & in_range & normalized, total, oftype(total, -Inf))
 end
 
 # ---- erf / erfc (W. J. Cody, SPECFUN CALERF rational approximations) ------------
@@ -763,10 +809,21 @@ end
 # `_to_constrained_cholesky_corr!` (row-major below-diagonal consumption of the
 # d(d-1)/2 unconstrained entries, column-major packed d(d+1)/2 output), fully
 # unrolled from the dimension in the type like `_device_mvnormaldense_solve`.
-# Returns (packed_tuple, logabsdet). Where the CPU reference would throw a
-# DomainError (a row's square sum reaching 1 up to rounding, only possible when
-# tanh saturates at +-1), the exception-free device contract clamps the sqrt
-# argument at zero and lets log(remaining) degrade the log-abs-det to -Inf.
+# Returns (packed_tuple, logabsdet).
+#
+# The row's leftover variance is tracked MULTIPLICATIVELY as
+#   remaining = prod_{k<j} (1 - tanh(z_k)^2)   ( == 1 - sum_{k<j} L[row,k]^2 ),
+# rather than by the subtractive `1 - sum_sqs` (issue #104). Both give the same
+# value, but the multiplicative form makes the forward-mode DERIVATIVE
+# well-conditioned near tanh saturation: `d/dz_j log(remaining) = -2 tanh(z_j)`
+# is bounded, and the imprecise `(1 - w^2)` factor cancels exactly between the
+# value and derivative channels of `log(remaining)` / `sqrt(remaining)`, so the
+# device gradient stays within FP noise of the CPU analytic gradient on
+# in-support states instead of drifting as `sum_sqs -> 1`. Saturation is still
+# exact: when tanh rounds to +-1, `1 - w^2` is exactly 0, so `remaining` hits 0
+# and the ifelse guards select the CONSTANT -Inf / zero branches (the eagerly
+# evaluated `sqrt(0)` / `log(0)` duals carry 0/0 derivative NaNs that would
+# otherwise poison downstream gradients; ifelse discards the unselected branch).
 @generated function _device_cholesky_corr_constrain(z::NTuple{Q,T}, ::Val{D}) where {Q,T,D}
     packed_index(row, col) = (col - 1) * D - ((col - 1) * (col - 2)) ÷ 2 + (row - col + 1)
     entry_symbols = Vector{Symbol}(undef, (D * (D + 1)) ÷ 2)
@@ -776,32 +833,32 @@ end
     push!(body, :(lad = zero(z[1])))
     z_position = 0
     for row = 2:D
+        rem_sym = Symbol(:remaining_, row)
         sum_sym = Symbol(:sum_sqs_, row)
-        push!(body, :($sum_sym = zero(z[1])))
+        push!(body, :($rem_sym = one(z[1]))) # leftover variance before column 1 is 1
+        push!(body, :($sum_sym = zero(z[1]))) # additive sum tracked ONLY for the saturation trigger
         for col = 1:(row-1)
             z_position += 1
             entry = Symbol(:entry_, row, :_, col)
             entry_symbols[packed_index(row, col)] = entry
+            wsym = Symbol(:w_, row, :_, col)
             saturated = Symbol(:saturated_, row, :_, col)
-            # tanh saturation (|z| large enough that an earlier w rounds to
-            # +-1) pushes s to exactly 1; the ifelse selects a CONSTANT -Inf /
-            # zero there because the eagerly-evaluated log1p(-1) and sqrt(0)
-            # carry 0/0 derivative NaNs in the dual channel that would poison
-            # every downstream gradient (the value channel alone would be
-            # fine). min() still caps the eager log1p argument at -1 so the
-            # unselected branch never throws a CPU DomainError. On the healthy
-            # path log1p(-s) matches the CPU form bit-for-bit.
+            push!(body, :($wsym = tanh(z[$z_position])))
+            # Saturation trigger matches the CPU reference (`sum_sqs >= 1`) so the
+            # device support boundary is unchanged; the values/derivatives below
+            # come from the well-conditioned multiplicative `remaining` instead.
             push!(body, :($saturated = $sum_sym >= one(z[1])))
-            # the /2 stays INSIDE the healthy branch: dividing the constant
-            # dual(-Inf, 0) by 2 forms -Inf * 0 = NaN in the quotient rule
+            # log(remaining) has the clean, bounded derivative -2*tanh(z_k) per
+            # earlier column; guard the eager log/sqrt arguments at zero and let
+            # the ifelse select the constant -Inf/zero on the saturated branch.
             push!(
                 body,
                 :(
                     lad +=
                         _device_log1m_tanh_sq(z[$z_position]) + ifelse(
                             $saturated,
-                            oftype($sum_sym, -Inf),
-                            log1p(-min($sum_sym, one($sum_sym))) / 2,
+                            oftype($rem_sym, -Inf),
+                            log(max($rem_sym, zero($rem_sym))) / 2,
                         )
                 ),
             )
@@ -809,29 +866,18 @@ end
                 body,
                 :(
                     $entry =
-                        tanh(z[$z_position]) * ifelse(
-                            $saturated,
-                            zero($sum_sym),
-                            sqrt(max(one(z[1]) - $sum_sym, zero(z[1]))),
-                        )
+                        $wsym * ifelse($saturated, zero($rem_sym), sqrt(max($rem_sym, zero($rem_sym))))
                 ),
             )
             push!(body, :($sum_sym += $entry * $entry))
+            # remaining *= (1 - w^2); exactly 0 once tanh saturates to +-1
+            push!(body, :($rem_sym = ifelse($saturated, zero($rem_sym), $rem_sym * (one($wsym) - $wsym * $wsym))))
         end
         diagonal = Symbol(:entry_, row, :_, row)
         entry_symbols[packed_index(row, row)] = diagonal
         row_saturated = Symbol(:saturated_, row, :_, row)
         push!(body, :($row_saturated = $sum_sym >= one(z[1])))
-        push!(
-            body,
-            :(
-                $diagonal = ifelse(
-                    $row_saturated,
-                    zero($sum_sym),
-                    sqrt(max(one(z[1]) - $sum_sym, zero(z[1]))),
-                )
-            ),
-        )
+        push!(body, :($diagonal = ifelse($row_saturated, zero($rem_sym), sqrt(max($rem_sym, zero($rem_sym))))))
     end
     return quote
         $(body...)

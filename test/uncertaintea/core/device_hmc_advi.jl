@@ -35,6 +35,15 @@ end
     return mu
 end
 
+# issue #70: a non-differentiable point (sqrt(abs(x)) has an infinite/NaN
+# derivative at x = 0) makes every particle gradient non-finite while the
+# objective value stays finite.
+@tea static function devh_badgrad_model()
+    x ~ normal(0.0, 1.0)
+    s = sqrt(abs(x))
+    {:y} ~ normal(s, 1.0)
+end
+
 @testset "devh_hmc_conjugate" begin
     backend = CPU()
     constraints = choicemap((:y, 0.3))
@@ -166,4 +175,45 @@ end
     end
     @test advi_error isa ArgumentError
     @test occursin("device_lowering_report", sprint(showerror, advi_error))
+end
+
+# issue #70: the device ADVI step must guard the DOWNLOADED gradients (not only
+# the objective values). With initial_log_scale extremely negative the particles
+# collapse onto x = 0, where sqrt(abs(x)) has a non-finite derivative: the
+# objective value is finite but every gradient is NaN. The device path must throw
+# the same ArgumentError as the CPU path instead of returning a NaN state.
+@testset "devh_advi_nonfinite_gradient_guard" begin
+    backend = CPU()
+    kwargs = (
+        num_steps=1,
+        num_particles=2,
+        initial_params=[0.0],
+        initial_log_scale=-1000.0,
+        rng=MersenneTwister(1),
+    )
+    # CPU reference throws; the device path must match.
+    @test_throws ArgumentError batched_advi(devh_badgrad_model, (), choicemap((:y, 0.0)); kwargs...)
+    device_error = try
+        batched_advi(devh_badgrad_model, (), choicemap((:y, 0.0)); backend=backend, kwargs...)
+        nothing
+    catch err
+        err
+    end
+    @test device_error isa ArgumentError
+    @test occursin("non-finite", sprint(showerror, device_error))
+end
+
+# issue #108: same-seed CPU and device mean-field ADVI must see an identical RNG
+# stream. The CPU path shapes its gradient cache without a real draw, so no RNG is
+# burned before the loop -- matching the device path, which has no pre-loop draw.
+@testset "devh_advi_same_seed_cpu_device" begin
+    backend = CPU()
+    constraints = choicemap((:y, 0.3))
+    seed = 20260721
+    common = (num_steps=25, num_particles=8, initial_params=[0.0], initial_log_scale=0.0)
+    cpu = batched_advi(devh_conjugate_gauss, (), constraints; common..., rng=MersenneTwister(seed))
+    dev = batched_advi(devh_conjugate_gauss, (), constraints; common..., backend=backend, rng=MersenneTwister(seed))
+    @test maximum(abs.(cpu.elbo_history .- dev.elbo_history)) < 1e-13
+    @test maximum(abs.(cpu.location .- dev.location)) < 1e-13
+    @test maximum(abs.(cpu.log_scale .- dev.log_scale)) < 1e-13
 end

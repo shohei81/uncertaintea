@@ -182,6 +182,7 @@ function _device_launch_gradient!(inner::DeviceBatchedWorkspace)
         inner.plan,
         inner.params_device,
         inner.observed_device,
+        inner.observed_int_device,
         inner.grad_slots_device,
         inner.trip_counts_device,
         inner.loop_starts_device;

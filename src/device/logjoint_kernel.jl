@@ -78,7 +78,7 @@ end
 
 # ---- per-step scoring ----------------------------------------------------------
 
-@inline function _device_score_step(step::DeviceNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceNormalChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -86,7 +86,17 @@ end
     return (_device_normal_logpdf(mu, sigma, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceNoncenteredNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(
+    step::DeviceNoncenteredNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    col,
+    cursor,
+)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)
     z = @inbounds params[step.value_source, col]
@@ -94,7 +104,7 @@ end
     return (_device_normal_logpdf(zero(z), one(z), z), cursor)
 end
 
-@inline function _device_score_step(step::DeviceLognormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceLognormalChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -102,14 +112,14 @@ end
     return (_device_lognormal_logpdf(mu, sigma, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceExponentialChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceExponentialChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     rate = _device_eval(step.rate, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
     _device_store_binding!(slots, step.binding_slot, value, col)
     return (_device_exponential_logpdf(rate, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceGammaChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceGammaChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     shape = _device_eval(step.shape, slots, col)
     rate = _device_eval(step.rate, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -117,7 +127,7 @@ end
     return (_device_gamma_logpdf(shape, rate, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceLaplaceChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceLaplaceChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     loc = _device_eval(step.loc, slots, col)
     scale = _device_eval(step.scale, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -125,7 +135,7 @@ end
     return (_device_laplace_logpdf(loc, scale, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceBetaChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceBetaChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     alpha = _device_eval(step.alpha, slots, col)
     beta = _device_eval(step.beta, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -133,7 +143,7 @@ end
     return (_device_beta_logpdf(alpha, beta, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceStudentTChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceStudentTChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     nu = _device_eval(step.nu, slots, col)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)
@@ -142,7 +152,7 @@ end
     return (_device_studentt_logpdf(nu, mu, sigma, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceInverseGammaChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceInverseGammaChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     shape = _device_eval(step.shape, slots, col)
     scale = _device_eval(step.scale, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -150,7 +160,7 @@ end
     return (_device_inversegamma_logpdf(shape, scale, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceWeibullChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceWeibullChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     shape = _device_eval(step.shape, slots, col)
     scale = _device_eval(step.scale, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -158,22 +168,45 @@ end
     return (_device_weibull_logpdf(shape, scale, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceBinomialChoiceStep, slots, params, observed, tc, ls, col, cursor)
-    trials = _device_eval(step.trials, slots, col)
+@inline function _device_score_step(step::DeviceBinomialChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     p = _device_eval(step.probability, slots, col)
-    value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
+    # trials `n` is an exact integer staged as a leading observation row (issue
+    # #71); the -1 sentinel means the host could not resolve it (a deterministic
+    # binding), so fall back to the in-kernel float evaluation.
+    n_staged = @inbounds observed_int[cursor, col]
+    n = n_staged >= 0 ? n_staged : _device_count_int(_device_dual_value(_device_eval(step.trials, slots, col)))
+    cur = cursor + Int32(1)
+    if step.value_source > Int32(0)
+        u = @inbounds params[step.value_source, col]
+        value, lad = _device_transform(step.transform, u)
+        _device_store_binding!(slots, step.binding_slot, value, col)
+        k = _device_count_int(_device_dual_value(value))
+        return (_device_binomial_logpdf(n, k, p) + lad, cur)
+    end
+    k = @inbounds observed_int[cur, col]
+    value = @inbounds observed[cur, col]
     _device_store_binding!(slots, step.binding_slot, value, col)
-    return (_device_binomial_logpdf(trials, p, value) + lad, cur)
+    return (_device_binomial_logpdf(n, k, p), cur + Int32(1))
 end
 
-@inline function _device_score_step(step::DeviceGeometricChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceGeometricChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     p = _device_eval(step.probability, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
     _device_store_binding!(slots, step.binding_slot, value, col)
     return (_device_geometric_logpdf(p, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceNegativeBinomialChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(
+    step::DeviceNegativeBinomialChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    col,
+    cursor,
+)
     successes = _device_eval(step.successes, slots, col)
     p = _device_eval(step.probability, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
@@ -181,28 +214,28 @@ end
     return (_device_negativebinomial_logpdf(successes, p, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceCategoricalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceCategoricalChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     probabilities = _device_eval_args(step.probabilities, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
     _device_store_binding!(slots, step.binding_slot, value, col)
     return (_device_categorical_logpdf(probabilities, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceBernoulliChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceBernoulliChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     p = _device_eval(step.probability, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
     _device_store_binding!(slots, step.binding_slot, value, col)
     return (_device_bernoulli_logpdf(p, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DevicePoissonChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DevicePoissonChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     lambda = _device_eval(step.lambda, slots, col)
     value, lad, cur = _device_choice_value(step, params, observed, col, cursor)
     _device_store_binding!(slots, step.binding_slot, value, col)
     return (_device_poisson_logpdf(lambda, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceDirichletChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceDirichletChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     alpha = _device_eval_args(step.alpha, slots, col)
     if step.value_source > Int32(0)
         z = ntuple(i -> @inbounds(params[step.value_source+Int32(i-1), col]), Val(length(step.alpha) - 1))
@@ -218,6 +251,7 @@ end
     slots,
     params,
     observed,
+    observed_int,
     tc,
     ls,
     col,
@@ -233,7 +267,7 @@ end
     return (_device_lkjcholesky_logpdf(eta, value, Val(D)), cursor + Int32((D * (D + 1)) ÷ 2))
 end
 
-@inline function _device_score_step(step::DeviceMvNormalDenseChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceMvNormalDenseChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     mu = _device_eval_args(step.mu, slots, col)
     scale_packed = ntuple(
         i -> @inbounds(observed[cursor+Int32(i-1), col]),
@@ -244,7 +278,7 @@ end
     return (_device_mvnormaldense_logpdf(scale_packed, mu, value), cur2)
 end
 
-@inline function _device_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceMvNormalChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     mu = _device_eval_args(step.mu, slots, col)
     sigma = _device_eval_args(step.sigma, slots, col)
     value, cur = _device_vector_choice_value(step, params, observed, col, cursor, Val(length(step.mu)))
@@ -253,7 +287,17 @@ end
     return (_device_mvnormal_logpdf_fold(mu, sigma, value), cur)
 end
 
-@inline function _device_score_step(step::DeviceTruncatedNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(
+    step::DeviceTruncatedNormalChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    col,
+    cursor,
+)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)
     lower = _device_eval(step.lower, slots, col)
@@ -263,7 +307,17 @@ end
     return (_device_truncatednormal_logpdf(mu, sigma, lower, upper, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceTruncatedStudentTChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(
+    step::DeviceTruncatedStudentTChoiceStep,
+    slots,
+    params,
+    observed,
+    observed_int,
+    tc,
+    ls,
+    col,
+    cursor,
+)
     nu = _device_eval(step.nu, slots, col)
     mu = _device_eval(step.mu, slots, col)
     sigma = _device_eval(step.sigma, slots, col)
@@ -274,7 +328,7 @@ end
     return (_device_truncatedstudentt_logpdf(nu, mu, sigma, lower, upper, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceMixtureNormalChoiceStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceMixtureNormalChoiceStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     weights = _device_eval_args(step.weights, slots, col)
     mus = _device_eval_args(step.mus, slots, col)
     sigmas = _device_eval_args(step.sigmas, slots, col)
@@ -283,12 +337,12 @@ end
     return (_device_mixture_normal_logpdf(weights, mus, sigmas, value) + lad, cur)
 end
 
-@inline function _device_score_step(step::DeviceDeterministicStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceDeterministicStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     @inbounds slots[step.binding_slot, col] = _device_eval(step.expr, slots, col)
     return (zero(eltype(slots)), cursor)
 end
 
-@inline function _device_score_step(step::DeviceLoopStep, slots, params, observed, tc, ls, col, cursor)
+@inline function _device_score_step(step::DeviceLoopStep, slots, params, observed, observed_int, tc, ls, col, cursor)
     Tt = eltype(slots)
     count = @inbounds tc[step.loop_id]
     start = @inbounds ls[step.loop_id]
@@ -298,7 +352,7 @@ end
         if step.iterator_slot > Int32(0)
             @inbounds slots[step.iterator_slot, col] = Tt(start + t)
         end
-        contribution, cur = _device_score_steps(step.body, slots, params, observed, tc, ls, col, cur)
+        contribution, cur = _device_score_steps(step.body, slots, params, observed, observed_int, tc, ls, col, cur)
         total += contribution
     end
     return (total, cur)
@@ -306,12 +360,12 @@ end
 
 # ---- recursive step-tuple walk -------------------------------------------------
 
-@inline _device_score_steps(::Tuple{}, slots, params, observed, tc, ls, col, cursor) =
+@inline _device_score_steps(::Tuple{}, slots, params, observed, observed_int, tc, ls, col, cursor) =
     (zero(eltype(slots)), cursor)
 
-@inline function _device_score_steps(steps::Tuple, slots, params, observed, tc, ls, col, cursor)
-    contribution, cur = _device_score_step(first(steps), slots, params, observed, tc, ls, col, cursor)
-    rest, cur2 = _device_score_steps(Base.tail(steps), slots, params, observed, tc, ls, col, cur)
+@inline function _device_score_steps(steps::Tuple, slots, params, observed, observed_int, tc, ls, col, cursor)
+    contribution, cur = _device_score_step(first(steps), slots, params, observed, observed_int, tc, ls, col, cursor)
+    rest, cur2 = _device_score_steps(Base.tail(steps), slots, params, observed, observed_int, tc, ls, col, cur)
     return (contribution + rest, cur2)
 end
 
@@ -322,11 +376,13 @@ end
     plan,
     @Const(params),
     @Const(observed),
+    @Const(observed_int),
     slots,
     @Const(trip_counts),
     @Const(loop_starts),
 )
     col = @index(Global)
-    total, _ = _device_score_steps(plan.steps, slots, params, observed, trip_counts, loop_starts, col, Int32(1))
+    total, _ =
+        _device_score_steps(plan.steps, slots, params, observed, observed_int, trip_counts, loop_starts, col, Int32(1))
     @inbounds totals[col] = total
 end

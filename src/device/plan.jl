@@ -1035,11 +1035,86 @@ function _lower_device_step!(
     return nothing
 end
 
+# Statically evaluate a backend expression to a concrete value when it depends
+# only on literals (captured constants); `nothing` if it references a runtime slot
+# (model argument / binding) and is only knowable during host staging.
+_device_static_value(::AbstractBackendExpr) = nothing
+_device_static_value(expr::BackendLiteralExpr) = expr.value
+function _device_static_value(expr::BackendPrimitiveExpr)
+    (expr.op === Symbol(":") || expr.op === Symbol("=>")) && return nothing
+    isempty(expr.arguments) && return nothing
+    values = map(_device_static_value, expr.arguments)
+    any(isnothing, values) && return nothing
+    try
+        return getfield(Base, expr.op)(values...)
+    catch
+        return nothing
+    end
+end
+function _device_static_value(expr::BackendBlockExpr)
+    value = nothing
+    for argument in expr.arguments
+        value = _device_static_value(argument)
+    end
+    return value
+end
+
+# The `:` range primitive backing a loop iterable (a block iterable ends in it).
+_device_loop_range_expr(expr::BackendPrimitiveExpr) = expr.op === Symbol(":") ? expr : nothing
+function _device_loop_range_expr(expr::BackendBlockExpr)
+    for argument in Iterators.reverse(expr.arguments)
+        range = _device_loop_range_expr(argument)
+        isnothing(range) || return range
+    end
+    return nothing
+end
+_device_loop_range_expr(::AbstractBackendExpr) = nothing
+
+_device_fits_int32(n::Integer) = typemin(Int32) <= n <= typemax(Int32)
+
+# Enforce, IN THE REPORT, the same loop-range constraints device staging enforces
+# (src/device/staging.jl): unit step and Int32-representable bounds/trip count. The
+# report is a public contract, so a range it cannot encode must surface as
+# supported=false here rather than as a staging error later (issue #83). Bounds
+# that depend on runtime arguments stay unchecked here (staging resolves them).
+function _device_check_loop_iterable!(issues, iterable)
+    range = _device_loop_range_expr(iterable)
+    isnothing(range) && return nothing
+    args = range.arguments
+    nargs = length(args)
+    step_value = nargs == 3 ? _device_static_value(args[2]) : 1
+    if step_value isa Integer && step_value != 1
+        _device_issue!(
+            issues,
+            "device staging only supports unit-step loop ranges (see device_lowering_report); loop iterable has step $step_value",
+        )
+    end
+    start_value = _device_static_value(args[1])
+    stop_value = _device_static_value(args[nargs])
+    if start_value isa Integer && !_device_fits_int32(start_value)
+        _device_issue!(
+            issues,
+            "device staging requires Int32-representable loop bounds; loop start $start_value is out of Int32 range",
+        )
+    end
+    if start_value isa Integer && stop_value isa Integer && step_value isa Integer && step_value != 0
+        trip_count = length(start_value:step_value:stop_value)
+        if !_device_fits_int32(trip_count)
+            _device_issue!(
+                issues,
+                "device staging requires an Int32-representable loop trip count; got $trip_count",
+            )
+        end
+    end
+    return nothing
+end
+
 function _lower_device_step!(out, step::BackendLoopPlanStep, backend, layout, ::Type{T}, issues, loop_counter, in_loop) where {T}
     if in_loop
         _device_issue!(issues, "device lowering does not support nested loops")
         return nothing
     end
+    _device_check_loop_iterable!(issues, step.iterable)
     loop_counter[] += Int32(1)
     loop_id = loop_counter[]
     body_vec = Any[]
