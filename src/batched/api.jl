@@ -293,6 +293,12 @@ function batched_logjoint(
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return float(eltype(params))[]
 
+    # The backend totals and environment buffers inherit the params element type
+    # (issue #92): an integer-typed constrained matrix would make the totals
+    # integer and hit InexactError when a float log-density is accumulated.
+    # Promote silently so integer observation/parameter matrices just work.
+    eltype(params) <: AbstractFloat || (params = float.(params))
+
     workspace = BatchedLogjointWorkspace(model)
     # the backend plan for a dependent-transform model scores in z space, so
     # the CONSTRAINED entry point must use the per-column reference instead
