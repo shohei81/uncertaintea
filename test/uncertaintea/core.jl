@@ -34,14 +34,16 @@ core_test_files = [
     ("transform_logit_saturation.jl", "dist"),
     ("dist_integer_params.jl", "dist"),
     ("dist_bernoulli.jl", "dist"),
-    ("vector_backend_sampler.jl", "backend-device"),
-    ("batched_scoring_eltype_f32.jl", "backend-device"),
-    ("vectorized_obs_iid_latents.jl", "backend-device"),
-    ("backend_native_families.jl", "backend-device"),
-    ("device_lowering_parity.jl", "backend-device"),
-    ("device_gradient_dual.jl", "backend-device"),
-    ("device_hmc_advi.jl", "backend-device"),
-    ("device_masked_nuts.jl", "backend-device"),
+    # "backend": CPU/backend batched scoring and vector-latent paths.
+    ("vector_backend_sampler.jl", "backend"),
+    ("batched_scoring_eltype_f32.jl", "backend"),
+    ("vectorized_obs_iid_latents.jl", "backend"),
+    ("backend_native_families.jl", "backend"),
+    # "device": the KernelAbstractions device kernels (heavier compile).
+    ("device_lowering_parity.jl", "device"),
+    ("device_gradient_dual.jl", "device"),
+    ("device_hmc_advi.jl", "device"),
+    ("device_masked_nuts.jl", "device"),
     ("gradient_crosscheck.jl", "crosscheck"),
     # "inference": diagnostics, VI, predictive, and lighter-weight sampler checks.
     ("batched_advi_particle.jl", "inference"),
@@ -80,7 +82,7 @@ let registered = Set(first.(core_test_files)), on_disk = Set(f for f in readdir(
 end
 
 test_group = get(ENV, "UNCERTAINTEA_TEST_GROUP", "all")
-known_test_groups = ("all", "dsl", "dist", "backend-device", "inference", "sampling", "crosscheck")
+known_test_groups = ("all", "dsl", "dist", "backend", "device", "inference", "sampling", "crosscheck")
 test_group in known_test_groups ||
     error("Unknown UNCERTAINTEA_TEST_GROUP=\"$test_group\"; expected one of $known_test_groups")
 
