@@ -44,8 +44,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        julia-version: ["1.10", "1"] # compat floor and latest stable
-        test-group: [dsl, dist, backend-device, inference, crosscheck]
+        # Compat floor and a pinned recent stable. The latest leg is pinned to a
+        # concrete minor (not the floating "1") so the version-keyed Julia
+        # precompile cache stays warm across runs instead of being invalidated
+        # every time a new Julia is released; bump it deliberately.
+        julia-version: ["1.10", "1.12"]
+        test-group: [dsl, dist, backend-device, inference, sampling, crosscheck]
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
