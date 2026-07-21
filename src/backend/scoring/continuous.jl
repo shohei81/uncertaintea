@@ -1,38 +1,49 @@
 # Backend-native scalar and batched scoring: continuous scalar families (normal, lognormal, laplace, exponential, gamma, inversegamma, weibull, beta, studentt).
+#
+# Scale/positivity parameters (sigma, rate, shape, scale, alpha, beta, nu) are
+# EXCEPTION-FREE here (issue #98): an out-of-support parameter scores NaN for
+# that call instead of throwing, matching the device kernel contract in
+# src/device/math.jl. These helpers back both the scalar backend path and the
+# batched logjoint/gradient path used inside a leapfrog trajectory; a divergent
+# chain that drives a log-transformed scale latent to exp(u) == 0 must invalidate
+# only its own column (via the integrator's isfinite masking), not abort the run.
+# The genuine user-input contract still throws at the distribution constructors
+# in src/distributions/continuous.jl. A NaN guard is also required before the
+# loggamma/digamma calls below, which raise DomainError on non-positive reals.
 
 function _backend_normal_logpdf(mu, sigma, x)
     xx, mu_, sigma_ = promote(x, mu, sigma)
-    sigma_ > zero(sigma_) || throw(ArgumentError("normal requires sigma > 0"))
+    sigma_ > zero(sigma_) || return oftype(xx, NaN)
     z = (xx - mu_) / sigma_
     return -log(sigma_) - log(2 * pi) / 2 - z * z / 2
 end
 
 function _backend_lognormal_logpdf(mu, sigma, x)
     xx, mu_, sigma_ = promote(x, mu, sigma)
-    sigma_ > zero(sigma_) || throw(ArgumentError("lognormal requires sigma > 0"))
+    sigma_ > zero(sigma_) || return oftype(xx, NaN)
     xx > zero(xx) || return oftype(xx, -Inf)
     return _backend_normal_logpdf(mu_, sigma_, log(xx)) - log(xx)
 end
 
 function _backend_exponential_logpdf(rate, x)
     xx, rate_ = promote(x, rate)
-    rate_ > zero(rate_) || throw(ArgumentError("exponential requires rate > 0"))
+    rate_ > zero(rate_) || return oftype(xx, NaN)
     xx >= zero(xx) || return oftype(xx, -Inf)
     return log(rate_) - rate_ * xx
 end
 
 function _backend_gamma_logpdf(shape, rate, x)
     xx, shape_, rate_ = promote(x, shape, rate)
-    shape_ > zero(shape_) || throw(ArgumentError("gamma requires shape > 0"))
-    rate_ > zero(rate_) || throw(ArgumentError("gamma requires rate > 0"))
+    shape_ > zero(shape_) || return oftype(xx, NaN)
+    rate_ > zero(rate_) || return oftype(xx, NaN)
     xx > zero(xx) || return oftype(xx, -Inf)
     return shape_ * log(rate_) - loggamma(shape_) + (shape_ - one(shape_)) * log(xx) - rate_ * xx
 end
 
 function _backend_studentt_logpdf(nu, mu, sigma, x)
     xx, nu_, mu_, sigma_ = promote(x, nu, mu, sigma)
-    nu_ > zero(nu_) || throw(ArgumentError("studentt requires nu > 0"))
-    sigma_ > zero(sigma_) || throw(ArgumentError("studentt requires sigma > 0"))
+    nu_ > zero(nu_) || return oftype(xx, NaN)
+    sigma_ > zero(sigma_) || return oftype(xx, NaN)
     z = (xx - mu_) / sigma_
     return _studentt_log_constant(nu_) - log(sigma_) -
            (nu_ + one(nu_)) * log1p((z * z) / nu_) / 2
@@ -551,14 +562,14 @@ function _score_backend_observed_loop_choice!(
 end
 function _backend_laplace_logpdf(mu, scale, x)
     xx, mu_, scale_ = promote(x, mu, scale)
-    scale_ > zero(scale_) || throw(ArgumentError("laplace requires scale > 0"))
+    scale_ > zero(scale_) || return oftype(xx, NaN)
     return -log(2 * scale_) - abs(xx - mu_) / scale_
 end
 
 function _backend_inversegamma_logpdf(shape, scale, x)
     xx, shape_, scale_ = promote(x, shape, scale)
-    shape_ > zero(shape_) || throw(ArgumentError("inversegamma requires shape > 0"))
-    scale_ > zero(scale_) || throw(ArgumentError("inversegamma requires scale > 0"))
+    shape_ > zero(shape_) || return oftype(xx, NaN)
+    scale_ > zero(scale_) || return oftype(xx, NaN)
     xx > zero(xx) || return oftype(xx, -Inf)
     return shape_ * log(scale_) - loggamma(shape_) -
            (shape_ + one(shape_)) * log(xx) -
@@ -567,8 +578,8 @@ end
 
 function _backend_weibull_logpdf(shape, scale, x)
     xx, shape_, scale_ = promote(x, shape, scale)
-    shape_ > zero(shape_) || throw(ArgumentError("weibull requires shape > 0"))
-    scale_ > zero(scale_) || throw(ArgumentError("weibull requires scale > 0"))
+    shape_ > zero(shape_) || return oftype(xx, NaN)
+    scale_ > zero(scale_) || return oftype(xx, NaN)
     xx < zero(xx) && return oftype(xx, -Inf)
     if xx == zero(xx)
         if shape_ < one(shape_)
@@ -585,8 +596,8 @@ end
 
 function _backend_beta_logpdf(alpha, beta_parameter, x)
     xx, alpha_, beta_ = promote(x, alpha, beta_parameter)
-    alpha_ > zero(alpha_) || throw(ArgumentError("beta requires alpha > 0"))
-    beta_ > zero(beta_) || throw(ArgumentError("beta requires beta > 0"))
+    alpha_ > zero(alpha_) || return oftype(xx, NaN)
+    beta_ > zero(beta_) || return oftype(xx, NaN)
     zero(xx) < xx < one(xx) || return oftype(xx, -Inf)
     return loggamma(alpha_ + beta_) - loggamma(alpha_) - loggamma(beta_) +
            (alpha_ - one(alpha_)) * log(xx) +

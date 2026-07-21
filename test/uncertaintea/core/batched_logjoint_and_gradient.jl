@@ -658,3 +658,85 @@
         positive_step_unconstrained,
     ) atol=1e-8
 end
+
+@testset "exception_free_batched_scoring" begin
+    # Issue #98: a divergent trajectory that drives a log-transformed scale
+    # latent to exp(u) == 0 must invalidate only its own column (scoring
+    # non-finite, like the device path), not abort the whole batched run.
+    @tea static function efs_hierarchical(n::Int)
+        mu ~ normal(0.0, 3.0)
+        s ~ gamma(2.0, 2.0)
+        for i = 1:n
+            {(:y, i)} ~ normal(mu, s)
+        end
+        return mu
+    end
+    efs_cm = choicemap((((:y, i), 0.1 * i) for i = 1:6)...)
+
+    # The underflow column scores non-finite instead of throwing; this matches
+    # the device reference (device_batched_logjoint returns [NaN] for the same
+    # input) and what the leapfrog isfinite masking already assumes.
+    efs_bad = batched_logjoint_unconstrained(efs_hierarchical, reshape([0.0, -800.0], 2, 1), (6,), efs_cm)
+    @test length(efs_bad) == 1
+    @test !isfinite(efs_bad[1])
+    @test efs_bad ≈ UncertainTea.device_batched_logjoint(
+        efs_hierarchical, reshape([0.0, -800.0], 2, 1), (6,), efs_cm,
+    ) nans = true
+
+    # A valid column sharing the batch with a bad one is scored correctly: it
+    # matches the same column computed on its own (and the per-column scalar
+    # reference), while the bad column stays non-finite.
+    efs_mixed = batched_logjoint_unconstrained(
+        efs_hierarchical, [0.0 0.0; 0.5 -800.0], (6,), efs_cm,
+    )
+    efs_good_alone = batched_logjoint_unconstrained(
+        efs_hierarchical, reshape([0.0, 0.5], 2, 1), (6,), efs_cm,
+    )
+    @test isfinite(efs_mixed[1])
+    @test efs_mixed[1] ≈ efs_good_alone[1] atol = 1e-10
+    @test efs_mixed[1] ≈
+          logjoint_unconstrained(efs_hierarchical, [0.0, 0.5], (6,), efs_cm) atol = 1e-10
+    @test !isfinite(efs_mixed[2])
+
+    # The analytic batched gradient degrades the same way: the bad column's
+    # gradient is non-finite while the good column matches its own gradient.
+    efs_grad = batched_logjoint_gradient_unconstrained(
+        efs_hierarchical, [0.0 0.0; 0.5 -800.0], (6,), efs_cm,
+    )
+    efs_good_grad = batched_logjoint_gradient_unconstrained(
+        efs_hierarchical, reshape([0.0, 0.5], 2, 1), (6,), efs_cm,
+    )
+    @test all(isfinite, view(efs_grad, :, 1))
+    @test view(efs_grad, :, 1) ≈ view(efs_good_grad, :, 1) atol = 1e-10
+    @test !all(isfinite, view(efs_grad, :, 2))
+
+    # Fixed-step batched HMC that previously crashed on every step/seed combo
+    # (a divergent chain reaching the underflow boundary) now completes, with
+    # divergent chains handled per column.
+    for seed = 1:5, step in (0.6, 0.9, 1.2)
+        chains = batched_hmc(
+            efs_hierarchical, (6,), efs_cm;
+            num_chains=8, num_samples=60, num_warmup=0, step_size=step,
+            num_leapfrog_steps=10, adapt_step_size=false,
+            adapt_mass_matrix=false, find_reasonable_step_size=false,
+            initial_params=fill(0.1, 2), rng=MersenneTwister(seed),
+        )
+        @test length(chains.chains) == 8
+        @test all(chain -> all(isfinite, chain.constrained_samples), chains.chains)
+    end
+end
+
+@testset "batched_logjoint_integer_matrix" begin
+    # Issue #92: an integer-typed constrained matrix must be promoted to float
+    # up front so the backend totals are float; otherwise scoring hits an
+    # InexactError. The promoted result matches the float-matrix result.
+    @tea static function blim_model()
+        mu ~ normal(0.0, 1.0)
+        {:y} ~ normal(mu, 1.0)
+    end
+    blim_constraints = [choicemap((:y, 0.0)), choicemap((:y, 1.0))]
+    blim_int = batched_logjoint(blim_model, reshape([0, 1], 1, 2), (), blim_constraints)
+    blim_float = batched_logjoint(blim_model, reshape([0.0, 1.0], 1, 2), (), blim_constraints)
+    @test eltype(blim_int) <: AbstractFloat
+    @test blim_int ≈ blim_float atol = 1e-12
+end

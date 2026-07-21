@@ -11,9 +11,14 @@ function _std_normal_pdf(z)
     return exp(-zz * zz / 2) / sqrt(oftype(zz, 2) * pi)
 end
 
+# Scale positivity is exception-free (issue #98): a latent-driven sigma that
+# underflows scores NaN for that column, matching the device contract, so a
+# divergent trajectory invalidates only its own chain instead of aborting the
+# batch. Structural specification errors (inverted bounds in truncatedstudentt)
+# remain a genuine user-input contract and still throw.
 function _backend_truncatednormal_logpdf(mu, sigma, lower, upper, x)
     xx, mu_, sigma_, lower_, upper_ = promote(x, mu, sigma, lower, upper)
-    sigma_ > zero(sigma_) || throw(ArgumentError("truncatednormal requires sigma > 0"))
+    sigma_ > zero(sigma_) || return oftype(xx, NaN)
     (xx < lower_ || xx > upper_) && return oftype(xx, -Inf)
     base = _backend_normal_logpdf(mu_, sigma_, xx)
     za = (lower_ - mu_) / sigma_
@@ -85,11 +90,14 @@ end
 
 function _backend_truncatedstudentt_logpdf(nu, mu, sigma, lower, upper, x)
     xx, nu_, mu_, sigma_, lower_, upper_ = promote(x, nu, mu, sigma, lower, upper)
-    # Mirror the CPU `TruncatedStudentTDist` constructor contract: the
-    # backend-native path bypasses construction, so re-validate the parameters
-    # here to keep behavior (a clear ArgumentError) identical to the reference.
-    nu_ > zero(nu_) || throw(ArgumentError("truncatedstudentt requires nu > 0"))
-    sigma_ > zero(sigma_) || throw(ArgumentError("truncatedstudentt requires sigma > 0"))
+    # Scale/df positivity is exception-free (issue #98): a latent-driven nu or
+    # sigma that leaves support scores NaN for this column, matching the device
+    # contract, so a divergent trajectory invalidates only its own chain. The
+    # inverted-bounds check is a structural specification error (a genuine
+    # user-input contract) and still throws, mirroring the CPU
+    # `TruncatedStudentTDist` constructor.
+    nu_ > zero(nu_) || return oftype(xx, NaN)
+    sigma_ > zero(sigma_) || return oftype(xx, NaN)
     lower_ < upper_ || throw(ArgumentError("truncatedstudentt requires lower < upper"))
     (xx < lower_ || xx > upper_) && return oftype(xx, -Inf)
     base = _backend_studentt_logpdf(nu_, mu_, sigma_, xx)
