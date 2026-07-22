@@ -432,6 +432,20 @@ end
 _resolve_signature_plan(model::TeaModel, constraints::ChoiceMap) =
     _resolve_signature_plan(model, _conditioning_signature(model, constraints))
 
+# The signature-specific parameter layout for one conditioning. The CPU
+# inference entry points size, initialize, and reconstruct against THIS layout
+# (issue #95, PR-6), not the syntactic default `parameterlayout(model)`: the
+# latent set is a function of which addresses are constrained, so a constrained
+# bound choice drops its slot and an unconstrained unbound choice gains one.
+_conditioned_parameter_layout(model::TeaModel, constraints::ChoiceMap) =
+    _resolve_signature_plan(model, constraints).plan.parameter_layout
+
+# Per-column conditioning (a chain/result may carry one ChoiceMap per column):
+# every column shares the same signature, so the representative constraints fix
+# the (static) layout, matching how `_batched_signature_layout` resolves it.
+_conditioned_parameter_layout(model::TeaModel, constraints::AbstractVector) =
+    _conditioned_parameter_layout(model, _representative_constraints(constraints))
+
 # Human-readable description of a conditioning signature, used by the
 # raw-parameter-vector APIs when a length check fails. The parameter-vector
 # length is a function of the conditioning signature (which addresses are

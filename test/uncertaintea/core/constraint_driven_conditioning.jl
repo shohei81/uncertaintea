@@ -291,6 +291,50 @@ end
         @test Set(UncertainTea.addresses(pd)) == Set(Any[(:y,)])
     end
 
+    # PR-6: the CPU inference entry points size and initialize from the same
+    # conditioning signature, so a constraint on the bound `:y` (which made
+    # hmc/nuts throw DimensionMismatch under the syntactic layout) now runs and
+    # targets the conditioned posterior.
+    @testset "#95 hmc/nuts condition on a bound address (closed-form posterior)" begin
+        # mu ~ N(0,1), y | mu ~ N(mu,1) observed at yobs, z | y observed. The z
+        # term is constant in mu (y is data), so the mu-posterior is the standard
+        # conjugate normal N(yobs/2, 1/2).
+        yobs = 3.0
+        cons = choicemap(:y => yobs, :z => 1.0)
+        post_mean = yobs / 2
+        post_var = 0.5
+
+        # signature {:y, :z}: exactly one latent (mu), so the sampler takes a
+        # one-element state -- the count that made the old syntactic sizing throw.
+        layout = UncertainTea._resolve_signature_plan(cdc_chain, cons).plan.parameter_layout
+        @test parametervaluecount(layout) == 1
+
+        sample_mean(v) = sum(v) / length(v)
+        sample_var(v) = sum(abs2, v .- sample_mean(v)) / (length(v) - 1)
+
+        for sampler in (hmc, nuts)
+            res = sampler(cdc_chain, (), cons; num_samples=4000, num_warmup=1000, rng=MersenneTwister(95))
+            @test size(res.constrained_samples, 1) == 1
+            mus = vec(res.constrained_samples[1, :])
+            # posterior mean / variance match the conjugate closed form within
+            # Monte Carlo error (not merely cross-path agreement).
+            @test sample_mean(mus) ≈ post_mean atol = 0.1
+            @test sample_var(mus) ≈ post_var atol = 0.1
+        end
+    end
+
+    @testset "#95 same model with :y unconstrained samples the larger latent set" begin
+        # Only `:z` observed: `:y` is now a latent, so [mu, y] are both sampled.
+        cons = choicemap(:z => 0.5)
+        layout = UncertainTea._resolve_signature_plan(cdc_chain, cons).plan.parameter_layout
+        @test parametervaluecount(layout) == 2
+
+        res = nuts(cdc_chain, (), cons; num_samples=800, num_warmup=800, rng=MersenneTwister(7))
+        @test size(res.constrained_samples, 1) == 2
+        # every draw is finite in both latent coordinates.
+        @test all(isfinite, res.constrained_samples)
+    end
+
     @testset "observed value feeds a reparam=:noncentered loc/scale" begin
         mu0 = 0.4
         yv = 3.0

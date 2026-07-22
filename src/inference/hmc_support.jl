@@ -118,18 +118,22 @@ function _initial_hmc_position(
     initial_params,
     rng::AbstractRNG,
 )
+    resolved = _resolve_signature_plan(model, constraints)
+    layout = resolved.plan.parameter_layout
     if isnothing(initial_params)
-        trace, _ = generate(model, args, constraints; rng=rng)
-        return transform_to_unconstrained(trace)
+        # A prior draw of the SIGNATURE latents (not the syntactic default
+        # layout): observations are read from the constraints, so the initial
+        # unconstrained vector must match the conditioned latent set (#95 PR-6).
+        constrained = _signature_initial_parameters(model, args, resolved, constraints; rng=rng)
+        return transform_to_unconstrained(model, constrained, args, constraints)
     end
 
-    layout = parameterlayout(model)
     expected = parametercount(layout)
     constrained_expected = parametervaluecount(layout)
     if length(initial_params) == expected
         return Float64[value for value in initial_params]
     elseif length(initial_params) == constrained_expected
-        return transform_to_unconstrained(model, Float64[value for value in initial_params], args)
+        return transform_to_unconstrained(model, Float64[value for value in initial_params], args, constraints)
     end
     throw(
         DimensionMismatch(

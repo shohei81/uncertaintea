@@ -197,7 +197,7 @@ function map_estimate(
     mode, fx, _, gnorm, iterations, converged =
         _lbfgs_maximize(objective, gradient!, seed; history=history, max_iters=max_iters, g_tol=g_tol)
 
-    constrained = transform_to_constrained(model, mode, args)
+    constrained = transform_to_constrained(model, mode, args, constraints)
     return MAPResult(mode, constrained, fx, converged, iterations, gnorm)
 end
 

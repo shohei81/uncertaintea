@@ -6,6 +6,23 @@
 
 const _GIBBS_DISCRETE_FAMILIES = (:bernoulli, :categorical, :poisson, :geometric, :negativebinomial, :binomial)
 
+# Unconstrained initial continuous position from a prior trace, read through the
+# signature-specific continuous layout (#95 PR-6) so a bound continuous
+# observation does not leak into the sampled block.
+function _gibbs_trace_unconstrained(
+    model::TeaModel,
+    trace::TeaTrace,
+    layout::ParameterLayout,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    constrained = Vector{Float64}(undef, parametervaluecount(layout))
+    for slot in layout.slots
+        _write_slot_value!(constrained, slot, trace[_static_address(slot.address)])
+    end
+    return transform_to_unconstrained(model, constrained, args, constraints)
+end
+
 struct GibbsSite
     address::Any
     kind::Symbol      # :flip (bernoulli) | :uniform_other (categorical) | :walk (integer supports)
@@ -384,8 +401,14 @@ function gibbs(
     metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
     0 <= discrete_tail < 1 || throw(ArgumentError("discrete_tail must be in [0, 1)"))
     discrete_tail_probability = Float64(discrete_tail)
-    num_params = parametercount(parameterlayout(model))
-    constrained_num_params = parametervaluecount(parameterlayout(model))
+    # The continuous block conditions on `merged` (observations + the current
+    # discrete-site values). Discrete sites carry no parameter slot, so the
+    # continuous latent layout is the same whether keyed on `constraints` or on
+    # `merged`; size it from the conditioning signature (#95 PR-6) rather than
+    # the syntactic default so a bound continuous observation drops its slot.
+    continuous_layout = _conditioned_parameter_layout(model, constraints)
+    num_params = parametercount(continuous_layout)
+    constrained_num_params = parametervaluecount(continuous_layout)
     has_continuous = num_params > 0
     # a pure-discrete model legitimately has zero continuous parameters; the
     # remaining NUTS options are validated uniformly either way
@@ -431,8 +454,8 @@ function gibbs(
             end
         end
         if !isnothing(seeded_position) && has_continuous
-            seeded_constrained = transform_to_constrained(model, seeded_position, args)
-            for entry in parameterchoicemap(model, seeded_constrained).entries
+            seeded_constrained = transform_to_constrained(model, seeded_position, args, constraints)
+            for entry in parameterchoicemap(model, seeded_constrained, constraints).entries
                 _pushchoice!(seeded, first(entry), last(entry))
             end
         end
@@ -470,7 +493,8 @@ function gibbs(
             end
         end
         position = if isnothing(seeded_position)
-            has_continuous ? transform_to_unconstrained(trace) : Float64[]
+            has_continuous ? _gibbs_trace_unconstrained(model, trace, continuous_layout, args, constraints) :
+            Float64[]
         else
             seeded_position
         end
@@ -605,7 +629,7 @@ function gibbs(
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
             constrained_samples[:, sample_index] =
-                has_continuous ? transform_to_constrained(model, position, args) : Float64[]
+                has_continuous ? transform_to_constrained(model, position, args, constraints) : Float64[]
             logjoint_values[sample_index] = current_logjoint
             acceptance_stats[sample_index] = accept_stat
             accepted[sample_index] = moved_step

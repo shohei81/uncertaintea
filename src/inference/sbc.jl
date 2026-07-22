@@ -120,18 +120,24 @@ function sbc(
     thin > 0 || throw(ArgumentError("sbc requires thin > 0"))
     num_bins > 1 || throw(ArgumentError("sbc requires num_bins > 1"))
 
-    layout = parameterlayout(model)
-    num_values = parametervaluecount(layout)
-    num_values > 0 || throw(ArgumentError("sbc requires a model with at least one latent parameter"))
+    # The posterior is over the SIGNATURE latents of the conditioning `data`
+    # (#95 PR-6): the ranked truth vector and the sampler's constrained draws
+    # must use that same layout, not the syntactic default. `num_values` is
+    # fixed across simulations (the observed address set is constant), so it is
+    # resolved from the first simulation's `data` and the ranks matrix is sized
+    # then.
+    parametervaluecount(parameterlayout(model)) > 0 ||
+        throw(ArgumentError("sbc requires a model with at least one latent parameter"))
     data_addresses = isnothing(observation_addresses) ? nothing : collect(Any, observation_addresses)
 
-    ranks = Matrix{Int}(undef, num_values, num_simulations)
+    ranks = Matrix{Int}(undef, 0, 0)
+    signature_layout = nothing
+    num_values = 0
     for simulation = 1:num_simulations
         prior_trace, _ = generate(model, args, choicemap(); rng=rng)
-        truth = parameter_vector(prior_trace)
         if isnothing(data_addresses)
-            # observations = every trace address that is not a latent slot
-            latent_map = parameterchoicemap(model, truth)
+            # observations = every trace address that is not a default latent slot
+            latent_map = parameterchoicemap(model, parameter_vector(prior_trace))
             data_addresses = Any[
                 first(entry) for entry in prior_trace.choices.entries if !haskey(latent_map, first(entry))
             ]
@@ -139,6 +145,19 @@ function sbc(
                 throw(ArgumentError("sbc requires at least one observation address to condition on"))
         end
         data = choicemap((address, prior_trace[address]) for address in data_addresses)
+        if isnothing(signature_layout)
+            signature_layout = _conditioned_parameter_layout(model, data)
+            num_values = parametervaluecount(signature_layout)
+            num_values > 0 ||
+                throw(ArgumentError("sbc requires at least one free latent after conditioning on the observations"))
+            ranks = Matrix{Int}(undef, num_values, num_simulations)
+        end
+        # truth = the conditioned latents' values read from the prior trace, in
+        # the signature layout that the sampler's constrained_samples follow.
+        truth = Vector{Float64}(undef, num_values)
+        for slot in signature_layout.slots
+            _write_slot_value!(truth, slot, prior_trace[_static_address(slot.address)])
+        end
         chain = if sampler === :gibbs
             gibbs(
                 model,
@@ -166,7 +185,7 @@ function sbc(
         end
     end
 
-    names = _export_parameter_names(model, :constrained)
+    names = _export_parameter_names(signature_layout, :constrained)
     pvalues = [
         _sbc_uniformity_pvalue(view(ranks, value_index, :), num_posterior_draws, num_bins) for
         value_index = 1:num_values
