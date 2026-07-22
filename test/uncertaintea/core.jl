@@ -6,7 +6,7 @@
 # default "all" runs everything, so a plain local `Pkg.test()` is unchanged.
 # Groups are balanced by measured wall-clock time; put a new file in the
 # topically matching group and rebalance only if one group grows far beyond
-# the others. sampling.jl belongs to the "inference" group (see runtests.jl).
+# the others. sampling.jl belongs to the "sampling" group (see runtests.jl).
 include("fixtures.jl")
 
 core_test_files = [
@@ -34,35 +34,41 @@ core_test_files = [
     ("transform_logit_saturation.jl", "dist"),
     ("dist_integer_params.jl", "dist"),
     ("dist_bernoulli.jl", "dist"),
-    ("vector_backend_sampler.jl", "backend-device"),
-    ("batched_scoring_eltype_f32.jl", "backend-device"),
-    ("vectorized_obs_iid_latents.jl", "backend-device"),
-    ("backend_native_families.jl", "backend-device"),
-    ("device_lowering_parity.jl", "backend-device"),
-    ("device_gradient_dual.jl", "backend-device"),
-    ("device_hmc_advi.jl", "backend-device"),
-    ("device_masked_nuts.jl", "backend-device"),
+    # "backend": CPU/backend batched scoring and vector-latent paths.
+    ("vector_backend_sampler.jl", "backend"),
+    ("batched_scoring_eltype_f32.jl", "backend"),
+    ("vectorized_obs_iid_latents.jl", "backend"),
+    ("backend_native_families.jl", "backend"),
+    # "device": the KernelAbstractions device kernels (heavier compile).
+    ("device_lowering_parity.jl", "device"),
+    ("device_gradient_dual.jl", "device"),
+    ("device_hmc_advi.jl", "device"),
+    ("device_masked_nuts.jl", "device"),
     ("gradient_crosscheck.jl", "crosscheck"),
+    # "inference": diagnostics, VI, predictive, and lighter-weight sampler checks.
     ("batched_advi_particle.jl", "inference"),
-    ("tempered_batched_smc.jl", "inference"),
     ("proposal_diagnostics_overflow.jl", "inference"),
     ("integrator_nuts_proposal.jl", "inference"),
     ("nuts_uturn_turning.jl", "inference"),
-    ("nuts_fixed_step_moments.jl", "inference"),
-    ("warmup_driver_regression.jl", "inference"),
     ("mcmc_diagnostics_ess_mcse.jl", "inference"),
     ("predictive_sampling_smc_resampling.jl", "inference"),
     ("waic_psis_loo.jl", "inference"),
     ("map_laplace_approximation.jl", "inference"),
-    ("per_chain_warmup_batched.jl", "inference"),
-    ("dense_mass_matrix_single_chain.jl", "inference"),
-    ("masked_batched_nuts.jl", "inference"),
-    ("sbc_calibration.jl", "inference"),
     ("advi_structured_guides.jl", "inference"),
     ("pathfinder_init.jl", "inference"),
-    ("reparam_noncentered_cpu.jl", "inference"),
-    ("discrete_enum_cpu.jl", "inference"),
-    ("mh_within_gibbs.jl", "inference"),
+    # "sampling": the wall-clock-heavy MCMC draws (many samples/chains). Split out
+    # of "inference" so the two shards run in balanced parallel; sampling.jl
+    # (see runtests.jl) also belongs here.
+    ("tempered_batched_smc.jl", "sampling"),
+    ("nuts_fixed_step_moments.jl", "sampling"),
+    ("warmup_driver_regression.jl", "sampling"),
+    ("per_chain_warmup_batched.jl", "sampling"),
+    ("dense_mass_matrix_single_chain.jl", "sampling"),
+    ("masked_batched_nuts.jl", "sampling"),
+    ("sbc_calibration.jl", "sampling"),
+    ("reparam_noncentered_cpu.jl", "sampling"),
+    ("discrete_enum_cpu.jl", "sampling"),
+    ("mh_within_gibbs.jl", "sampling"),
 ]
 
 let registered = Set(first.(core_test_files)), on_disk = Set(f for f in readdir(joinpath(@__DIR__, "core")) if endswith(f, ".jl"))
@@ -76,7 +82,7 @@ let registered = Set(first.(core_test_files)), on_disk = Set(f for f in readdir(
 end
 
 test_group = get(ENV, "UNCERTAINTEA_TEST_GROUP", "all")
-known_test_groups = ("all", "dsl", "dist", "backend-device", "inference", "crosscheck")
+known_test_groups = ("all", "dsl", "dist", "backend", "device", "inference", "sampling", "crosscheck")
 test_group in known_test_groups ||
     error("Unknown UNCERTAINTEA_TEST_GROUP=\"$test_group\"; expected one of $known_test_groups")
 
