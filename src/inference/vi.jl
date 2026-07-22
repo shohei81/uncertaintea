@@ -74,13 +74,13 @@ function _resolve_unconstrained_point(
         return _initial_hmc_position(model, args, constraints, nothing, rng)
     end
 
-    layout = parameterlayout(model)
+    layout = _conditioned_parameter_layout(model, constraints)
     parameter_total = parametercount(layout)
     constrained_total = parametervaluecount(layout)
     if length(point) == parameter_total
         return Float64[value for value in point]
     elseif length(point) == constrained_total
-        return transform_to_unconstrained(model, Float64[value for value in point], args)
+        return transform_to_unconstrained(model, Float64[value for value in point], args, constraints)
     end
 
     throw(
@@ -401,6 +401,30 @@ function _batched_transform_to_constrained!(
     return destination
 end
 
+# Signature-aware column transform (#95 PR-6): the unconstrained columns hold
+# the conditioned latent set, so reconstruction reads observations from the
+# constraints rather than the syntactic default layout.
+function _signature_batched_transform_to_constrained!(
+    destination::AbstractMatrix,
+    model::TeaModel,
+    params::AbstractMatrix,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    size(destination, 2) == size(params, 2) ||
+        throw(
+            DimensionMismatch(
+                "expected constrained particle destination with $(size(params, 2)) columns, got $(size(destination, 2))",
+            ),
+        )
+
+    for particle_index in axes(params, 2)
+        destination[:, particle_index] =
+            transform_to_constrained(model, collect(view(params, :, particle_index)), args, constraints)
+    end
+    return destination
+end
+
 function _clip_advi_gradients!(
     location_gradient::AbstractVector,
     log_scale_gradient::AbstractVector,
@@ -460,7 +484,7 @@ function variational_mean(
     if space === :unconstrained
         return copy(parameters)
     elseif space === :constrained
-        return transform_to_constrained(result.model, parameters, result.args)
+        return transform_to_constrained(result.model, parameters, result.args, result.constraints)
     end
 
     throw(ArgumentError("variational space must be :constrained or :unconstrained"))
@@ -492,8 +516,15 @@ function variational_samples(
     if space === :unconstrained
         return unconstrained
     elseif space === :constrained
-        constrained = Matrix{Float64}(undef, parametervaluecount(parameterlayout(result.model)), num_samples)
-        _batched_transform_to_constrained!(constrained, result.model, unconstrained)
+        layout = _conditioned_parameter_layout(result.model, result.constraints)
+        constrained = Matrix{Float64}(undef, parametervaluecount(layout), num_samples)
+        _signature_batched_transform_to_constrained!(
+            constrained,
+            result.model,
+            unconstrained,
+            result.args,
+            result.constraints,
+        )
         return constrained
     end
 
@@ -552,7 +583,7 @@ function batched_advi(
         )
     end
 
-    layout = parameterlayout(model)
+    layout = _conditioned_parameter_layout(model, constraints)
     parameter_total = parametercount(layout)
     parameter_total > 0 || throw(ArgumentError("batched_advi requires at least one parameterized latent choice"))
     num_steps > 0 || throw(ArgumentError("batched_advi requires num_steps > 0"))

@@ -7,8 +7,18 @@
 # `_summary_parameter_entries` in diagnostics.jl): scalar slots keep their
 # binding name (e.g. "sigma"), vector slots get a bracketed component index
 # (e.g. "v[1]").
+# Signature-aware naming (#95 PR-6): sampler output is sized by the conditioning
+# signature of the chain's constraints, so its display names must come from that
+# same layout, not the syntactic default `parameterlayout(model)`.
+function _export_parameter_names(model::TeaModel, constraints::ChoiceMap, space::Symbol)
+    return _export_parameter_names(_conditioned_parameter_layout(model, constraints), space)
+end
+
 function _export_parameter_names(model::TeaModel, space::Symbol)
-    layout = parameterlayout(model)
+    return _export_parameter_names(parameterlayout(model), space)
+end
+
+function _export_parameter_names(layout::ParameterLayout, space::Symbol)
     entries = _summary_parameter_entries(layout, space)
     num_params = length(entries)
     names = Vector{String}(undef, num_params)
@@ -30,7 +40,7 @@ Return per-parameter display names in the requested `space` (`:constrained` or
 `:unconstrained`), ordered to match the third dimension of [`posterior_array`](@ref).
 """
 function parameter_names(chains::HMCChains; space::Symbol=:constrained)
-    return _export_parameter_names(chains.model, space)
+    return _export_parameter_names(chains.model, chains.constraints, space)
 end
 
 """

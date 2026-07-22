@@ -51,8 +51,9 @@ function hmc(
     rng::AbstractRNG=Random.default_rng(),
 )
     metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
-    num_params = parametercount(parameterlayout(model))
-    constrained_num_params = parametervaluecount(parameterlayout(model))
+    layout = _conditioned_parameter_layout(model, constraints)
+    num_params = parametercount(layout)
+    constrained_num_params = parametervaluecount(layout)
     _validate_hmc_arguments(
         num_params,
         num_samples,
@@ -168,7 +169,7 @@ function hmc(
         else
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
-            constrained_samples[:, sample_index] = transform_to_constrained(model, position, args)
+            constrained_samples[:, sample_index] = transform_to_constrained(model, position, args, constraints)
             logjoint_values[sample_index] = current_logjoint
             acceptance_stats[sample_index] = accept_prob
             energies[sample_index] = sample_energy
@@ -227,8 +228,9 @@ function nuts(
     rng::AbstractRNG=Random.default_rng(),
 )
     metric in (:diag, :dense) || throw(ArgumentError("metric must be :diag or :dense, got :$metric"))
-    num_params = parametercount(parameterlayout(model))
-    constrained_num_params = parametervaluecount(parameterlayout(model))
+    layout = _conditioned_parameter_layout(model, constraints)
+    num_params = parametercount(layout)
+    constrained_num_params = parametervaluecount(layout)
     _validate_nuts_arguments(
         num_params,
         num_samples,
@@ -331,7 +333,7 @@ function nuts(
         else
             sample_index += 1
             unconstrained_samples[:, sample_index] = position
-            constrained_samples[:, sample_index] = transform_to_constrained(model, position, args)
+            constrained_samples[:, sample_index] = transform_to_constrained(model, position, args, constraints)
             logjoint_values[sample_index] = current_logjoint
             acceptance_stats[sample_index] = accept_stat
             energies[sample_index] = proposal_energy

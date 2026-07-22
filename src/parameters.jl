@@ -424,7 +424,17 @@ function _transform_slot_to_unconstrained!(
 end
 
 function parameterchoicemap(model::TeaModel, params::AbstractVector)
-    layout = parameterlayout(model)
+    return _parameterchoicemap(parameterlayout(model), params)
+end
+
+# Signature-aware variant (#95 PR-6): the latent slots follow the conditioning
+# signature, so a constrained-space vector produced for `(model, constraints)`
+# maps back to exactly the conditioned latents' addresses.
+function parameterchoicemap(model::TeaModel, params::AbstractVector, constraints::ChoiceMap)
+    return _parameterchoicemap(_conditioned_parameter_layout(model, constraints), params)
+end
+
+function _parameterchoicemap(layout::ParameterLayout, params::AbstractVector)
     expected = parametervaluecount(layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
 
