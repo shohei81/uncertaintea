@@ -51,6 +51,7 @@ end
 function _backend_lower_truncatednormal_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -78,13 +79,14 @@ function _backend_lower_truncatednormal_choice_step(
         sigma,
         lower,
         upper,
-        _backend_scalar_parameter_row(model, step.parameter_slot, issues)[1],
+        _backend_scalar_parameter_row(parameter_layout, step.parameter_slot, issues)[1],
     )
 end
 
 function _backend_lower_truncatedstudentt_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -127,7 +129,7 @@ function _backend_lower_truncatedstudentt_choice_step(
         sigma,
         lower,
         upper,
-        _backend_scalar_parameter_row(model, step.parameter_slot, issues)[1],
+        _backend_scalar_parameter_row(parameter_layout, step.parameter_slot, issues)[1],
     )
 end
 

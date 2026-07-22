@@ -23,7 +23,9 @@
     indexed_scale_backend_plan = backend_execution_plan(indexed_scale_model)
     coin_backend_report = backend_report(observed_coin)
     coin_backend_plan = backend_execution_plan(observed_coin)
-    coin_workspace = UncertainTea.BatchedLogjointWorkspace(observed_coin)
+    # PR-4: signature-keyed workspace, built with the conditioning it will score
+    # (`:y` observed), so the coin choice is an observation with no parameter slot.
+    coin_workspace = UncertainTea.BatchedLogjointWorkspace(observed_coin, choicemap((:y, true)))
     coin_batch_logjoint = batched_logjoint(
         observed_coin,
         zeros(0, 3),

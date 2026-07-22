@@ -120,6 +120,7 @@ end
 function _backend_lower_marginalize_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     suffix::AbstractVector,
     issues::Vector{String},
@@ -152,7 +153,7 @@ function _backend_lower_marginalize_choice_step(
     end
     support = family === :bernoulli ? (false, true) : ntuple(identity, length(probabilities))
 
-    body = _backend_lower_steps(model, layout, suffix, issues)
+    body = _backend_lower_steps(model, layout, parameter_layout, suffix, issues)
     any(isnothing, body) && return nothing
     body_steps = tuple(body...)
     support_product = length(support) * _backend_marginalize_support_product(body_steps)

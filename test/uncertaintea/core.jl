@@ -42,6 +42,7 @@ core_test_files = [
     ("backend_native_families.jl", "backend"),
     # "device": the KernelAbstractions device kernels (heavier compile).
     ("device_lowering_parity.jl", "device"),
+    ("signature_batched_device_parity.jl", "device"),
     ("device_gradient_dual.jl", "device"),
     ("device_hmc_advi.jl", "device"),
     ("device_masked_nuts.jl", "device"),

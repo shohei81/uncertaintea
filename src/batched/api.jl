@@ -5,19 +5,19 @@ function _batched_backend_gradient_cache(
     batch_args,
     batch_constraints,
 )
-    backend_plan = _backend_execution_plan(model)
+    element_type = float(eltype(params))
+    workspace = BatchedLogjointWorkspace(model, batch_constraints)
+    backend_plan = workspace.backend_plan
     isnothing(backend_plan) && return nothing
     _backend_gradient_supported(backend_plan) || return nothing
 
-    element_type = float(eltype(params))
-    workspace = BatchedLogjointWorkspace(model)
     cache = BatchedBackendGradientCache(
         workspace,
         zeros(element_type, size(params, 1), length(workspace.environment.layout.symbols), size(params, 2)),
         Matrix{element_type}[],
         batch_args,
         batch_constraints,
-        _backend_gradient_seed_rows(parameterlayout(model)),
+        _backend_gradient_seed_rows(workspace.layout),
     )
     totals = _batched_totals_buffer!(workspace, size(params, 2), element_type)
     try
@@ -51,12 +51,13 @@ function _batched_gradient_column_cache(
     batch_constraints,
     batch_index::Int,
 )
-    workspace = BatchedLogjointWorkspace(model)
+    column_constraints = _batched_constraints(batch_constraints, batch_index)
+    workspace = BatchedLogjointWorkspace(model, column_constraints)
     objective = BatchedGradientObjective(
         model,
         workspace,
         _batched_args(batch_args, batch_index),
-        _batched_constraints(batch_constraints, batch_index),
+        column_constraints,
     )
     seed = collect(view(params, :, batch_index))
     config = ForwardDiff.GradientConfig(objective, seed)
@@ -71,7 +72,7 @@ function _batched_flat_gradient_cache(
     batch_args,
     batch_constraints,
 )
-    workspace = BatchedLogjointWorkspace(model)
+    workspace = BatchedLogjointWorkspace(model, batch_constraints)
     objective = BatchedFlatGradientObjective(
         model,
         workspace,
@@ -98,7 +99,7 @@ function BatchedLogjointGradientCache(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_unconstrained_params(model, params)
+    batch_size = _validate_batched_unconstrained_params(model, params, constraints)
     batch_args = _validate_batched_args(model, args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     parameter_count = size(params, 1)
@@ -288,7 +289,7 @@ function batched_logjoint(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_constrained_params(model, params)
+    batch_size = _validate_batched_constrained_params(model, params, constraints)
     batch_args = _validate_batched_args(model, args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return float(eltype(params))[]
@@ -299,10 +300,10 @@ function batched_logjoint(
     # Promote silently so integer observation/parameter matrices just work.
     eltype(params) <: AbstractFloat || (params = float.(params))
 
-    workspace = BatchedLogjointWorkspace(model)
+    workspace = BatchedLogjointWorkspace(model, batch_constraints)
     # the backend plan for a dependent-transform model scores in z space, so
     # the CONSTRAINED entry point must use the per-column reference instead
-    if !isnothing(workspace.backend_plan) && !_has_dependent_transforms(parameterlayout(model))
+    if !isnothing(workspace.backend_plan) && !_has_dependent_transforms(workspace.layout)
         try
             return _logjoint_with_batched_backend!(workspace, params, batch_args, batch_constraints)
         catch err
@@ -320,12 +321,12 @@ function batched_logjoint_unconstrained(
     args=(),
     constraints=choicemap(),
 )
-    batch_size = _validate_batched_unconstrained_params(model, params)
+    batch_size = _validate_batched_unconstrained_params(model, params, constraints)
     batch_args = _validate_batched_args(model, args, batch_size)
     batch_constraints = _validate_batched_constraints(constraints, batch_size)
     batch_size == 0 && return float(eltype(params))[]
 
-    workspace = BatchedLogjointWorkspace(model)
+    workspace = BatchedLogjointWorkspace(model, batch_constraints)
     values = Vector{float(eltype(params))}(undef, batch_size)
     return _batched_logjoint_unconstrained_with_workspace!(values, model, workspace, params, batch_args, batch_constraints)
 end

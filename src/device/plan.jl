@@ -1340,11 +1340,16 @@ function _device_probe_deterministic_issue(backend::BackendExecutionPlan, slot::
     return nothing
 end
 
-function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
+# Device lowering is keyed off the conditioning signature (issue #95, PR-4): the
+# backend plan and parameter layout come from `resolved` (a signature-specific
+# `ExecutionPlan`), so the observed/latent split -- the dense observed matrix and
+# the latent slot spans -- matches the CPU signature layout by construction.
+function _lower_device_plan(model::TeaModel, resolved::ResolvedSignaturePlan, ::Type{T}) where {T}
     issues = String[]
-    backend = _backend_execution_plan(model)
+    lowering = _signature_backend_lowering(model, resolved)
+    backend = lowering.plan
     if isnothing(backend)
-        report = backend_report(model)
+        report = lowering.report
         if isempty(report.issues)
             _device_issue!(issues, "model $(model.name) is not representable in the second-stage backend")
         else
@@ -1353,7 +1358,7 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         return issues, nothing
     end
 
-    layout = parameterlayout(model)
+    layout = resolved.plan.parameter_layout
     loop_counter = Ref(Int32(0))
     out = Any[]
     for step in backend.steps
@@ -1364,7 +1369,7 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         return issues, nothing
     end
 
-    environment_layout = executionplan(model).environment_layout
+    environment_layout = resolved.plan.environment_layout
     symbols = environment_layout.symbols
 
     # loop ranges and choice addresses are resolved by host staging, where choice
@@ -1417,7 +1422,7 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
     # argument slots are staged once per workspace (issue #38); a model that
     # rebinds an argument symbol would have kernels overwrite that slot and
     # break workspace reuse, so reject the rebinding shape outright
-    argument_slots = BitSet(executionplan(model).environment_layout.argument_slots)
+    argument_slots = BitSet(environment_layout.argument_slots)
     if !isempty(argument_slots) && _device_steps_rebind_argument(out, argument_slots)
         _device_issue!(
             issues,
@@ -1426,7 +1431,7 @@ function _lower_device_plan(model::TeaModel, ::Type{T}) where {T}
         return issues, nothing
     end
 
-    slot_count = length(executionplan(model).environment_layout.symbols)
+    slot_count = length(environment_layout.symbols)
     steps = tuple(out...)
     plan = DeviceExecutionPlan{T}(steps, slot_count, loop_counter[])
     return issues, plan
@@ -1450,7 +1455,8 @@ function _device_steps_rebind_argument(steps, argument_slots::BitSet)
     return false
 end
 
-function device_lowering_report(model::TeaModel; precision::Type=Float64)
-    issues, plan = _lower_device_plan(model, precision)
+function device_lowering_report(model::TeaModel; constraints::ChoiceMap=choicemap(), precision::Type=Float64)
+    resolved = _resolve_signature_plan(model, _representative_constraints(constraints))
+    issues, plan = _lower_device_plan(model, resolved, precision)
     return (isempty(issues) && !isnothing(plan), issues)
 end

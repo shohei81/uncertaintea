@@ -201,7 +201,9 @@ end
         # workspace form guarantees the backend plan scored these values
         @test backend_report(denc_indicator_model).supported == true
         denc_bn_params = [-1.5 -1.2 0.3; 1.7 2.1 -0.4]
-        denc_bn_workspace = UncertainTea.BatchedLogjointWorkspace(denc_indicator_model)
+        # PR-4: the batched workspace is keyed off the conditioning signature, so
+        # it is built with the constraints it will score (here `:y` is observed).
+        denc_bn_workspace = UncertainTea.BatchedLogjointWorkspace(denc_indicator_model, denc_constraints)
         denc_bn_values = UncertainTea._logjoint_with_batched_backend!(
             denc_bn_workspace,
             denc_bn_params,
@@ -258,7 +260,8 @@ end
         # index slot through the backend lowering
         @test backend_report(denc_index_consumer_model).supported == true
         denc_bn_index_params = reshape([0.55, 0.35], 1, 2)
-        denc_bn_index_workspace = UncertainTea.BatchedLogjointWorkspace(denc_index_consumer_model)
+        denc_bn_index_workspace =
+            UncertainTea.BatchedLogjointWorkspace(denc_index_consumer_model, choicemap((:y, 1)))
         @test UncertainTea._logjoint_with_batched_backend!(
             denc_bn_index_workspace,
             denc_bn_index_params,
@@ -271,7 +274,8 @@ end
 
         # zero-mass branches are skipped in the batched scorer too
         @test backend_report(denc_zero_mass_model).supported == true
-        denc_bn_zero_workspace = UncertainTea.BatchedLogjointWorkspace(denc_zero_mass_model)
+        denc_bn_zero_workspace =
+            UncertainTea.BatchedLogjointWorkspace(denc_zero_mass_model, choicemap((:y, 0.9)))
         @test UncertainTea._logjoint_with_batched_backend!(
             denc_bn_zero_workspace,
             reshape([0.4], 1, 1),

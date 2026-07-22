@@ -260,13 +260,23 @@ end
 # needs the UNCONSTRAINED row, resolves it through the gradient cache's
 # value-row -> seed-row map, so dimension-changing predecessors
 # (simplex/cholesky) no longer force a fallback.
-function _backend_scalar_parameter_row(model::TeaModel, parameter_slot, issues::Vector{String})
+# The parameter layout here is the layout of the PLAN being lowered (issue #95,
+# PR-4): a signature-specific plan classifies latents/observations differently
+# from the model's syntactic default, so the slot indices carried by the plan's
+# steps must be resolved against the plan's own layout, not `parameterlayout(model)`.
+function _backend_scalar_parameter_row(parameter_layout::ParameterLayout, parameter_slot, issues::Vector{String})
     isnothing(parameter_slot) && return nothing, true
-    slot = parameterlayout(model).slots[parameter_slot]
+    slot = parameter_layout.slots[parameter_slot]
     return slot.value_index, true
 end
 
-function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::ChoicePlanStep, issues::Vector{String})
+function _backend_lower_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    step::ChoicePlanStep,
+    issues::Vector{String},
+)
     if step.rhs isa BroadcastDistributionSpec
         return _backend_lower_broadcast_normal_choice_step(model, layout, step, issues)
     end
@@ -289,7 +299,7 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         )
         return nothing
     end
-    parameter_row, parameter_row_ok = _backend_scalar_parameter_row(model, step.parameter_slot, issues)
+    parameter_row, parameter_row_ok = _backend_scalar_parameter_row(parameter_layout, step.parameter_slot, issues)
     parameter_row_ok || return nothing
     if step.rhs.reparam === :noncentered && step.rhs.family !== :normal
         _backend_issue!(
@@ -298,13 +308,17 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
         )
         return nothing
     end
-    step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, step, issues)
-    step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, step, issues)
-    step.rhs.family === :lkjcholesky && return _backend_lower_lkjcholesky_choice_step(model, layout, step, issues)
-    step.rhs.family === :truncatednormal && return _backend_lower_truncatednormal_choice_step(model, layout, step, issues)
-    step.rhs.family === :truncatedstudentt && return _backend_lower_truncatedstudentt_choice_step(model, layout, step, issues)
-    step.rhs.family === :mixture && return _backend_lower_mixture_choice_step(model, layout, step, issues)
-    step.rhs.family === :mvnormaldense && return _backend_lower_mvnormaldense_choice_step(model, layout, step, issues)
+    step.rhs.family === :mvnormal && return _backend_lower_mvnormal_choice_step(model, layout, parameter_layout, step, issues)
+    step.rhs.family === :dirichlet && return _backend_lower_dirichlet_choice_step(model, layout, parameter_layout, step, issues)
+    step.rhs.family === :lkjcholesky &&
+        return _backend_lower_lkjcholesky_choice_step(model, layout, parameter_layout, step, issues)
+    step.rhs.family === :truncatednormal &&
+        return _backend_lower_truncatednormal_choice_step(model, layout, parameter_layout, step, issues)
+    step.rhs.family === :truncatedstudentt &&
+        return _backend_lower_truncatedstudentt_choice_step(model, layout, parameter_layout, step, issues)
+    step.rhs.family === :mixture && return _backend_lower_mixture_choice_step(model, layout, parameter_layout, step, issues)
+    step.rhs.family === :mvnormaldense &&
+        return _backend_lower_mvnormaldense_choice_step(model, layout, parameter_layout, step, issues)
 
     address = _backend_lower_address(model, layout, step.address, issues)
     arguments = map(arg -> _backend_lower_expr(model, layout, arg, issues, "distribution argument"), step.rhs.arguments)
@@ -425,15 +439,27 @@ function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::C
     return nothing
 end
 
-function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::DeterministicPlanStep, issues::Vector{String})
+function _backend_lower_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    step::DeterministicPlanStep,
+    issues::Vector{String},
+)
     expr = _backend_lower_expr(model, layout, step.expr, issues, "deterministic assignment")
     isnothing(expr) && return nothing
     return BackendDeterministicPlanStep(step.binding_slot, expr)
 end
 
-function _backend_lower_step(model::TeaModel, layout::EnvironmentLayout, step::LoopPlanStep, issues::Vector{String})
+function _backend_lower_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    step::LoopPlanStep,
+    issues::Vector{String},
+)
     iterable = _backend_lower_expr(model, layout, step.iterable, issues, "loop iterable")
-    body = map(inner -> _backend_lower_step(model, layout, inner, issues), step.body)
+    body = map(inner -> _backend_lower_step(model, layout, parameter_layout, inner, issues), step.body)
     (isnothing(iterable) || any(isnothing, body)) && return nothing
     return BackendLoopPlanStep(step.iterator_slot, iterable, tuple(body...))
 end
@@ -782,22 +808,44 @@ _backend_marginalized_choice_step(step) =
 # steps as its continuation (docs/discrete-enumeration.md), so the plan's tail
 # becomes the marginalize step's body and nested flagged latents nest as
 # nested steps. Everything else lowers step-by-step as before.
-function _backend_lower_steps(model::TeaModel, layout::EnvironmentLayout, steps::AbstractVector, issues::Vector{String})
+function _backend_lower_steps(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    steps::AbstractVector,
+    issues::Vector{String},
+)
     lowered = Any[]
     for (position, step) in enumerate(steps)
         if _backend_marginalized_choice_step(step)
             push!(
                 lowered,
-                _backend_lower_marginalize_choice_step(model, layout, step, steps[(position+1):end], issues),
+                _backend_lower_marginalize_choice_step(
+                    model,
+                    layout,
+                    parameter_layout,
+                    step,
+                    steps[(position+1):end],
+                    issues,
+                ),
             )
             return lowered
         end
-        push!(lowered, _backend_lower_step(model, layout, step, issues))
+        push!(lowered, _backend_lower_step(model, layout, parameter_layout, step, issues))
     end
     return lowered
 end
 
 function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
+    return _lower_backend_execution_plan(model, executionplan(model); target=target)
+end
+
+# Lower an arbitrary execution plan (the model's syntactic default OR a
+# conditioning-signature-specific plan; see `_signature_execution_plan`). The
+# latent/observation split -- and therefore whether a choice step carries a
+# `parameter_slot` -- is baked into `plan` already, so the backend classification
+# stays consistent with the CPU signature layout by construction (issue #95).
+function _lower_backend_execution_plan(model::TeaModel, plan::ExecutionPlan; target::Symbol=:gpu)
     target === :gpu || throw(ArgumentError("only :gpu backend lowering is currently supported"))
     if model.branchful
         # a (dynamic-mode) body with if/else control flow: the linear plan
@@ -814,9 +862,8 @@ function _lower_backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
         )
         return BackendLoweringResult(report, nothing)
     end
-    plan = executionplan(model)
     issues = String[]
-    steps = _backend_lower_steps(model, plan.environment_layout, plan.steps, issues)
+    steps = _backend_lower_steps(model, plan.environment_layout, plan.parameter_layout, plan.steps, issues)
     report = BackendLoweringReport(
         target,
         isempty(issues),
@@ -898,6 +945,29 @@ end
 function _backend_execution_plan(model::TeaModel; target::Symbol=:gpu)
     return _backend_lowering(model; target=target).plan
 end
+
+# Backend lowering for a conditioning-signature-specific plan (issue #95, PR-4).
+# Lowered from `resolved.plan`, so a bound-but-constrained choice is an observation
+# and a bound-but-unconstrained choice is a latent, exactly matching the CPU
+# signature layout. Memoized on the resolved plan itself (which lives in the
+# model's `signature_cache`), so repeated batched/device runs at the same
+# conditioning reuse the lowering.
+function _signature_backend_lowering(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan;
+    target::Symbol=:gpu,
+)
+    target === :gpu || throw(ArgumentError("only :gpu backend lowering is currently supported"))
+    cached = resolved.backend_lowering[]
+    if isnothing(cached)
+        cached = _lower_backend_execution_plan(model, resolved.plan; target=target)
+        resolved.backend_lowering[] = cached
+    end
+    return cached::BackendLoweringResult
+end
+
+_signature_backend_plan(model::TeaModel, resolved::ResolvedSignaturePlan; target::Symbol=:gpu) =
+    _signature_backend_lowering(model, resolved; target=target).plan
 
 function backend_report(model::TeaModel; target::Symbol=:gpu)
     return _backend_lowering(model; target=target).report
