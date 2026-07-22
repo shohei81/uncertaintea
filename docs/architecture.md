@@ -321,12 +321,41 @@ To stay close to Gen, conditioning should be external:
 
 This avoids baking a separate observed-site syntax into the core language.
 
+### Constraint-driven classification (issue #95)
+
+A choice is an **observation** iff its address is present in the constraints at
+inference time; otherwise it is a **latent** with a dense parameter slot.
+Binding (`x ~ dist` versus `y = ({:a} ~ dist)`) is orthogonal -- it only names
+the value downstream. This single rule is now shared by `generate`/`assess`, the
+compiled `logjoint`/gradient paths, the batched and device layouts, and the
+diagnostics/predictive APIs, so no two layers can disagree about what is
+observed. See
+[docs/constraint-driven-conditioning.md](constraint-driven-conditioning.md).
+
+Two behavior changes replaced the earlier syntactic rule (latent iff bound):
+
+- constraining a bound address now conditions on it everywhere (previously the
+  compiled scoring paths silently ignored it, producing wrong posteriors);
+- an unbound `{:a} ~ dist` left unconstrained is now a latent that is sampled
+  and scored (previously an error).
+
+The key architectural consequence: **the parameter layout is a function of the
+conditioning signature** (the canonicalized set of constrained addresses), not
+of the model alone. This is not a regression of the static/GPU-first direction
+-- once the conditioning is fixed the layout is fully static and dense, and the
+signature-specific `ParameterLayout` and compiled plans are memoized by
+`(model, signature)`. Consequently the parameter-vector length is
+conditioning-dependent, and the raw-parameter-vector APIs validate it against
+the signature-specific count with an error that names the conditioning.
+
 ## Memory and Parameter Layout
 
 Preferred:
 
 - a single unconstrained vector or dense `param x chain` tensor
 - normalized address metadata compiled once per execution plan
+- one dense layout per conditioning signature (see the constraint-driven
+  classification note above), memoized by `(model, signature)`
 - dense observed-data layouts for batch-heavy likelihoods
 - the same dense `param x particle` layout now also underpins the current
   `batched_advi`, importance-sampling, and SIR reference paths

@@ -2,8 +2,16 @@
 #
 # This mirrors the compiled scoring walk in `evaluator.jl` (`_score_compiled_steps` /
 # `_score_plan_step!`) but instead of summing every choice's logpdf it *records* the
-# per-observation logpdf for every constraint-valued choice (an observation is a choice
-# whose value comes from the constraints, i.e. `step.parameter_value_indices === nothing`).
+# per-observation logpdf for every observation.
+#
+# The observation/latent split is taken from the CONDITIONING SIGNATURE (issue #95),
+# exactly as `logjoint` and the batched/device paths do: the walk runs over the
+# signature-resolved compiled plan, in which a static choice constrained at inference
+# time carries no parameter slot (so it reads its value from the constraints and is
+# recorded), while any unconstrained static choice is a slotted latent. This keeps the
+# recorded observations identical to `observation_addresses` and to the scoring paths.
+# (Correctly weighting a marginalized/enumerated latent's likelihood contribution is
+# issue #88; it builds on this classification and is not implemented here.)
 
 _record_compiled_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap, records) = records
 
@@ -71,8 +79,9 @@ function _record_plan_step!(
 end
 
 function _record_execution!(records, model::TeaModel, params::AbstractVector, args::Tuple, constraints::ChoiceMap)
-    plan = executionplan(model)
-    compiled_plan = _compiled_execution_plan(model)
+    resolved = _resolve_signature_plan(model, constraints)
+    plan = resolved.plan
+    compiled_plan = resolved.compiled
     args = _complete_model_args(model, args)
 
     env = PlanEnvironment(plan.environment_layout)
@@ -84,15 +93,38 @@ function _record_execution!(records, model::TeaModel, params::AbstractVector, ar
     return records
 end
 
+# Initial parameter vector matching the signature layout (not the default
+# layout): observation_addresses only needs a validly-shaped latent vector to
+# walk the plan and read the constrained addresses, so any prior draw of the
+# signature latents will do.
+function _signature_initial_parameters(
+    model::TeaModel,
+    args::Tuple,
+    resolved,
+    constraints::ChoiceMap;
+    rng::AbstractRNG=Random.default_rng(),
+)
+    trace, _ = generate(model, args, constraints; rng=rng)
+    layout = resolved.plan.parameter_layout
+    params = Vector{Float64}(undef, parametervaluecount(layout))
+    for slot in layout.slots
+        _write_slot_value!(params, slot, trace[_static_address(slot.address)])
+    end
+    return params
+end
+
 """
     observation_addresses(model, args=(), constraints=choicemap()) -> Vector
 
-Return the ordered list of constrained (observation) choice addresses in execution-plan
-order. This order defines the column order of `pointwise_loglikelihood` and is deterministic
-across draws.
+Return the ordered list of observation choice addresses in execution-plan order. Under the
+constraint-driven rule (issue #95, `docs/constraint-driven-conditioning.md`) an observation
+is exactly a choice whose address is constrained-and-present, regardless of whether the
+choice is bound; binding is orthogonal. This order defines the column order of
+`pointwise_loglikelihood` and is deterministic across draws.
 """
 function observation_addresses(model::TeaModel, args::Tuple=(), constraints::ChoiceMap=choicemap())
-    params = initialparameters(model, args)
+    resolved = _resolve_signature_plan(model, constraints)
+    params = _signature_initial_parameters(model, args, resolved, constraints)
     records = Pair{Any,Float64}[]
     _record_execution!(records, model, params, args, constraints)
     return Any[first(r) for r in records]

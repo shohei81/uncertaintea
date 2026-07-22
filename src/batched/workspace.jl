@@ -147,14 +147,28 @@ function _batched_signature_layout(model::TeaModel, constraints)
 end
 
 function _validate_batched_unconstrained_params(model::TeaModel, params::AbstractMatrix, constraints=choicemap())
-    expected = parametercount(_batched_signature_layout(model, constraints))
-    size(params, 1) == expected || throw(DimensionMismatch("expected $expected parameters, got $(size(params, 1))"))
+    representative = _representative_constraints(constraints)
+    layout = _batched_signature_layout(model, constraints)
+    expected = parametercount(layout)
+    size(params, 1) == expected ||
+        throw(_signature_length_error(model, layout, representative, expected, size(params, 1)))
     return size(params, 2)
 end
 
 function _validate_batched_constrained_params(model::TeaModel, params::AbstractMatrix, constraints=choicemap())
-    expected = parametervaluecount(_batched_signature_layout(model, constraints))
-    size(params, 1) == expected || throw(DimensionMismatch("expected $expected parameters, got $(size(params, 1))"))
+    representative = _representative_constraints(constraints)
+    layout = _batched_signature_layout(model, constraints)
+    expected = parametervaluecount(layout)
+    size(params, 1) == expected || throw(
+        _signature_length_error(
+            model,
+            layout,
+            representative,
+            expected,
+            size(params, 1);
+            space="constrained-space parameters",
+        ),
+    )
     return size(params, 2)
 end
 

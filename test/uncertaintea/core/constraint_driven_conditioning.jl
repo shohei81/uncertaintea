@@ -213,6 +213,84 @@ end
         @test l_con ≈ l_unc atol = 1e-9
     end
 
+    # PR-5: signature-aware API validation and observation/predictive alignment.
+    @testset "length mismatch under a non-default signature names the conditioning" begin
+        cons = choicemap(:y => 3.0, :z => 1.0)
+        # signature {:y, :z}: one latent (mu), so a two-element vector is wrong.
+        err = try
+            logjoint(cdc_chain, [0.5, 2.0], (), cons)
+            nothing
+        catch e
+            e
+        end
+        @test err isa DimensionMismatch
+        msg = sprint(showerror, err)
+        # the message names the observed addresses and the latent it leaves.
+        @test occursin("expected 1", msg)
+        @test occursin("observed", msg)
+        @test occursin("(:y,)", msg)
+        @test occursin("(:z,)", msg)
+        @test occursin("mu", msg)
+        @test occursin("constraint-driven-conditioning", msg)
+
+        # the same signature-aware message is produced by the unconstrained-space
+        # and transform entry points that take a raw parameter vector.
+        for f in (
+            () -> logjoint_unconstrained(cdc_chain, [0.5, 2.0], (), cons),
+            () -> logjoint_gradient_unconstrained(cdc_chain, [0.5, 2.0], (), cons),
+            () -> transform_to_constrained(cdc_chain, [0.5, 2.0], (), cons),
+            () -> transform_to_unconstrained(cdc_chain, [0.5, 2.0], (), cons),
+        )
+            e = try
+                f()
+                nothing
+            catch err
+                err
+            end
+            @test e isa DimensionMismatch
+            @test occursin("observed", sprint(showerror, e))
+        end
+
+        # a correctly-sized vector for this signature is accepted.
+        @test isfinite(logjoint(cdc_chain, [0.5], (), cons))
+        @test transform_to_constrained(cdc_chain, [0.5], (), cons) == [0.5]
+    end
+
+    @testset "observation_addresses returns exactly the constrained-present addresses" begin
+        # cdc_chain has a bound `:y` and an unbound `:z`. Binding is orthogonal:
+        # both are observations iff constrained.
+        @test observation_addresses(cdc_chain, (), choicemap(:y => 1.0, :z => 2.0)) ==
+              Any[(:y,), (:z,)]
+        # only `:z` constrained -> `:y` becomes a latent and drops out.
+        @test observation_addresses(cdc_chain, (), choicemap(:z => 2.0)) == Any[(:z,)]
+        # only the bound `:y` constrained -> `:z` is unconstrained. `:z` is an
+        # unbound latent under the rule (not a required observation), so the set
+        # is exactly {:y}.
+        @test observation_addresses(cdc_chain, (), choicemap(:y => 1.0)) == Any[(:y,)]
+        # nothing constrained -> no observations.
+        @test observation_addresses(cdc_chain, (), choicemap()) == Any[]
+    end
+
+    @testset "predictive classification is consistent with the signature" begin
+        # cdc_gaussian: mu latent, `{:y}` observed. Inference conditions on `:y`;
+        # the posterior-predictive re-samples exactly the observation addresses
+        # returned by observation_addresses (the non-latent choices).
+        cons = choicemap(:y => 0.5)
+        chains = hmc_chains(
+            cdc_gaussian,
+            (),
+            cons;
+            num_chains=2,
+            num_samples=40,
+            num_warmup=40,
+            rng=MersenneTwister(95),
+        )
+        pd = predict(cdc_gaussian, (), chains; num_draws=10, rng=MersenneTwister(1))
+        @test Set(UncertainTea.addresses(pd)) ==
+              Set(observation_addresses(cdc_gaussian, (), cons))
+        @test Set(UncertainTea.addresses(pd)) == Set(Any[(:y,)])
+    end
+
     @testset "observed value feeds a reparam=:noncentered loc/scale" begin
         mu0 = 0.4
         yv = 3.0

@@ -61,6 +61,41 @@ end
 
 This style stays close to Gen's explicit addressed choice syntax.
 
+### Constraint-Driven Latent/Observation Classification
+
+A random choice is an **observation** iff its address is present in the
+constraints supplied at inference time; otherwise it is a **latent** that
+receives a dense parameter slot. **Binding is orthogonal to this
+classification** -- `x ~ dist` and `y = ({:a} ~ dist)` only name the value for
+downstream use; neither makes a choice a latent or an observation on its own.
+This is the same conditioning rule `generate`/`assess` already follow, now
+shared by every compiled path (`logjoint`, `logjoint_unconstrained`, gradients,
+the batched and device paths, and the diagnostics/predictive APIs). See
+[docs/constraint-driven-conditioning.md](constraint-driven-conditioning.md) for
+the full design.
+
+Two consequences follow, and both were behavior changes from the earlier
+syntactic rule (which classified a choice as a latent iff it was *bound*):
+
+- **Constraining a bound address now conditions on it.** In
+  `y = ({:y} ~ normal(mu, sigma))`, constraining `:y` makes it an observation
+  everywhere. The compiled scoring paths previously ignored such a constraint
+  and scored `:y` as a free latent, silently disagreeing with
+  `generate`/`assess`; they now agree.
+- **An unbound `{:a} ~ dist` left unconstrained is now a latent.** It gets a
+  parameter slot and its prior is scored, instead of raising an error demanding
+  a constraint. A program that still constrains such a site is unaffected.
+
+Because the latent set depends on what is constrained, **the parameter-vector
+length is a function of the conditioning signature** (the set of constrained
+addresses), not of the model alone -- exactly as Stan's parameter block depends
+on its data block. Once the conditioning is fixed the layout is fully static and
+dense. The raw-parameter-vector APIs therefore validate the vector length
+against the signature-specific count and, on mismatch, name the conditioning
+(which addresses are observed and which latents remain) rather than reporting a
+bare count. `observation_addresses(model, args, constraints)` returns exactly
+the constrained-and-present choice addresses under this rule.
+
 ### Repeated Choices
 
 ```julia

@@ -432,6 +432,43 @@ end
 _resolve_signature_plan(model::TeaModel, constraints::ChoiceMap) =
     _resolve_signature_plan(model, _conditioning_signature(model, constraints))
 
+# Human-readable description of a conditioning signature, used by the
+# raw-parameter-vector APIs when a length check fails. The parameter-vector
+# length is a function of the conditioning signature (which addresses are
+# observed), not of the model alone (see docs/constraint-driven-conditioning.md),
+# so a bare "expected N got M" hides the reason for the count; this names the
+# observed addresses and the latent slots the conditioning implies.
+function _describe_conditioning(model::TeaModel, layout::ParameterLayout, constraints::ChoiceMap)
+    observed = sort!([string(address) for address in _conditioning_signature(model, constraints)])
+    latents = [slot.binding === Symbol("") ? "<unbound>" : string(slot.binding) for slot in layout.slots]
+    obs_desc =
+        isempty(observed) ? "no addresses observed" :
+        "$(length(observed)) observed: {$(join(observed, ", "))}"
+    lat_desc =
+        isempty(latents) ? "no latent slots" :
+        "$(length(latents)) latent slot(s): [$(join(latents, ", "))]"
+    return "$obs_desc; $lat_desc"
+end
+
+# DimensionMismatch for a signature-specific length check that names the
+# conditioning so the required length is self-explanatory. `space` distinguishes
+# unconstrained ("parameters") from constrained ("constrained-space parameters").
+function _signature_length_error(
+    model::TeaModel,
+    layout::ParameterLayout,
+    constraints::ChoiceMap,
+    expected::Integer,
+    got::Integer;
+    space::AbstractString="parameters",
+)
+    return DimensionMismatch(
+        "expected $expected $space for this conditioning " *
+        "($(_describe_conditioning(model, layout, constraints))), got $got. The parameter-vector " *
+        "length is conditioning-dependent (constraining or unconstraining an address changes it); " *
+        "see docs/constraint-driven-conditioning.md.",
+    )
+end
+
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledLiteralExpr)
     return expr.value
 end
@@ -657,7 +694,16 @@ function _logjoint(
 )
     plan = resolved.plan
     expected = parametervaluecount(plan.parameter_layout)
-    length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+    length(params) == expected || throw(
+        _signature_length_error(
+            model,
+            plan.parameter_layout,
+            constraints,
+            expected,
+            length(params);
+            space="constrained-space parameters",
+        ),
+    )
     args = _complete_model_args(model, args)
 
     env = PlanEnvironment(plan.environment_layout)
@@ -781,7 +827,7 @@ function _transform_to_constrained_with_logabsdet(
     layout = resolved.plan.parameter_layout
     expected = parametercount(layout)
     length(params) == expected ||
-        throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+        throw(_signature_length_error(model, layout, constraints, expected, length(params)))
 
     constrained = similar(params, parametervaluecount(layout))
     if _has_dependent_transforms(layout)
