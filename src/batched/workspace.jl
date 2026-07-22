@@ -2,6 +2,12 @@ mutable struct BatchedLogjointWorkspace{BP,CP,E}
     backend_plan::BP
     compiled_plan::CP
     environment::E
+    # Signature-specific execution plan and its parameter layout (issue #95,
+    # PR-4): the observed/latent split (and therefore the slot layout, the backend
+    # plan, and the compiled plan above) is derived from the conditioning
+    # signature, matching the CPU `logjoint` path. Static per signature.
+    plan::ExecutionPlan
+    layout::ParameterLayout
     parameter_count::Int
     constrained_parameter_count::Int
     argument_count::Int
@@ -109,14 +115,18 @@ struct BatchedLogjointGradientCache{C,B,F,G<:AbstractMatrix}
     batch_size::Int
 end
 
-function BatchedLogjointWorkspace(model::TeaModel)
-    plan = executionplan(model)
+function BatchedLogjointWorkspace(model::TeaModel, constraints=choicemap())
+    resolved = _resolve_signature_plan(model, _representative_constraints(constraints))
+    plan = resolved.plan
+    layout = plan.parameter_layout
     return BatchedLogjointWorkspace(
-        _backend_execution_plan(model),
-        _compiled_execution_plan(model),
+        _signature_backend_plan(model, resolved),
+        resolved.compiled,
         PlanEnvironment(plan.environment_layout),
-        parametercount(plan.parameter_layout),
-        parametervaluecount(plan.parameter_layout),
+        plan,
+        layout,
+        parametercount(layout),
+        parametervaluecount(layout),
         length(modelspec(model).arguments),
         copy(plan.environment_layout.argument_slots),
         Ref{Any}(nothing),
@@ -128,14 +138,22 @@ function BatchedLogjointWorkspace(model::TeaModel)
     )
 end
 
-function _validate_batched_unconstrained_params(model::TeaModel, params::AbstractMatrix)
-    expected = parametercount(parameterlayout(model))
+# Parameter-vector length now follows the CONDITIONING SIGNATURE, not the
+# syntactic default layout (issue #95, PR-4): constraining a bound choice drops
+# its slot; leaving an unbound choice unconstrained adds one. (PR-5 owns naming
+# the signature in the message.)
+function _batched_signature_layout(model::TeaModel, constraints)
+    return _resolve_signature_plan(model, _representative_constraints(constraints)).plan.parameter_layout
+end
+
+function _validate_batched_unconstrained_params(model::TeaModel, params::AbstractMatrix, constraints=choicemap())
+    expected = parametercount(_batched_signature_layout(model, constraints))
     size(params, 1) == expected || throw(DimensionMismatch("expected $expected parameters, got $(size(params, 1))"))
     return size(params, 2)
 end
 
-function _validate_batched_constrained_params(model::TeaModel, params::AbstractMatrix)
-    expected = parametervaluecount(parameterlayout(model))
+function _validate_batched_constrained_params(model::TeaModel, params::AbstractMatrix, constraints=choicemap())
+    expected = parametervaluecount(_batched_signature_layout(model, constraints))
     size(params, 1) == expected || throw(DimensionMismatch("expected $expected parameters, got $(size(params, 1))"))
     return size(params, 2)
 end
@@ -385,12 +403,23 @@ function _logjoint_unconstrained_with_workspace!(
     length(params) == workspace.parameter_count ||
         throw(DimensionMismatch("expected $(workspace.parameter_count) parameters, got $(length(params))"))
 
-    layout = parameterlayout(model)
+    layout = workspace.layout
     constrained = _constrained_buffer!(workspace, params)
     if _has_dependent_transforms(layout)
         # dependent transforms (reparam=:noncentered) need the plan walk; the
-        # per-slot loop below would throw on their marker transforms
-        logabsdet = _dependent_transform_walk!(constrained, model, params, args, false)
+        # per-slot loop below would throw on their marker transforms. The walk
+        # runs against the SIGNATURE plan/compiled plan so an observed value that
+        # feeds a noncentered loc/scale resolves from the constraint (PR-3/PR-4).
+        logabsdet = _dependent_transform_walk!(
+            constrained,
+            model,
+            workspace.plan,
+            workspace.compiled_plan,
+            params,
+            args,
+            false,
+            constraints,
+        )
         return _logjoint_with_workspace!(workspace, constrained, args, constraints) + logabsdet
     end
     logabsdet = workspace.parameter_count == 0 ? zero(float(eltype(params))) : zero(params[firstindex(params)])
@@ -411,7 +440,7 @@ function _logjoint_unconstrained_batched_backend!(
     parameter_count, batch_size = size(params)
     length(destination) == batch_size ||
         throw(DimensionMismatch("expected unconstrained batched destination of length $batch_size, got $(length(destination))"))
-    layout = parameterlayout(model)
+    layout = workspace.layout
     value_type = eltype(destination)
     constrained = _batched_constrained_buffer!(workspace, workspace.constrained_parameter_count, batch_size, value_type)
     logabsdet = _batched_logabsdet_buffer!(workspace, batch_size, value_type)

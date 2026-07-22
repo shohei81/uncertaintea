@@ -7,8 +7,9 @@
         gaussian_batch_gradient_cache,
         gaussian_batch_params_shifted,
     )
-    gaussian_workspace = UncertainTea.BatchedLogjointWorkspace(gaussian_mean)
-    iid_shared_workspace = UncertainTea.BatchedLogjointWorkspace(iid_model)
+    # PR-4: the batched workspace is keyed off the conditioning signature, so it
+    # is constructed with the constraints it will score against.
+    gaussian_workspace = UncertainTea.BatchedLogjointWorkspace(gaussian_mean, gaussian_batch_constraints)
     heterogeneous_iid_args = Any[(Int32(2),), (3,)]
     heterogeneous_iid_gradient_cache = BatchedLogjointGradientCache(
         iid_model,
@@ -22,6 +23,7 @@
         choicemap((:y => 1, 0.0f0), (:y => 2, -0.1f0), (:y => 3, 0.3f0)),
         choicemap((:y => 1, 0.4f0), (:y => 2, 0.2f0), (:y => 3, -0.2f0)),
     ]
+    iid_shared_workspace = UncertainTea.BatchedLogjointWorkspace(iid_model, iid_shared_batch_constraints)
     iid_shared_batch_logjoint = batched_logjoint(
         iid_model,
         iid_shared_batch_params,
@@ -89,8 +91,9 @@
         (),
         deterministic_batch_constraints,
     )
-    deterministic_workspace = UncertainTea.BatchedLogjointWorkspace(deterministic_scale)
-    offset_workspace = UncertainTea.BatchedLogjointWorkspace(offset_iid_model)
+    deterministic_workspace =
+        UncertainTea.BatchedLogjointWorkspace(deterministic_scale, deterministic_batch_constraints)
+    offset_workspace = UncertainTea.BatchedLogjointWorkspace(offset_iid_model, offset_batch_constraints)
     positive_batch_logjoint = batched_logjoint_unconstrained(
         observed_positive_step,
         positive_batch_unconstrained,
@@ -608,7 +611,7 @@
     ] atol=1e-8
     @test clamp_scale_combined_gradient === clamp_scale_gradient_cache.gradient_buffer
     @test clamp_scale_combined_gradient ≈ clamp_scale_gradient atol=1e-8
-    positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step)
+    positive_workspace = UncertainTea.BatchedLogjointWorkspace(observed_positive_step, positive_batch_constraints)
     positive_workspace_values = UncertainTea._logjoint_unconstrained_batched_backend!(
         observed_positive_step,
         positive_workspace,

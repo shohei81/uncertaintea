@@ -268,12 +268,16 @@ end
 
 function _stage_device_observations(
     model::TeaModel,
+    backend::BackendExecutionPlan,
     plan::DeviceExecutionPlan{T},
     args,
     constraints,
     batch_size::Int,
 ) where {T}
-    backend = _backend_execution_plan(model)
+    # `backend` is the SIGNATURE-specific backend plan (issue #95, PR-4): a step
+    # is observed iff it carries no parameter slot in this signature, so a
+    # bound-but-constrained choice stages an observed row and a bound-but-
+    # unconstrained choice does not -- matching the CPU signature layout.
     # Stage the observation stream in Float64 (exact for integers up to 2^53) so
     # integer inputs survive before splitting into the compute-precision float
     # buffer and the exact-integer mirror (issue #71). Float64 -> T is identical

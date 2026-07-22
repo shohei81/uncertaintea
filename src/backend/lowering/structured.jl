@@ -163,6 +163,7 @@ end
 function _backend_lower_mvnormal_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -186,7 +187,7 @@ function _backend_lower_mvnormal_choice_step(
 
     value_index = nothing
     if !isnothing(step.parameter_slot)
-        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot = parameter_layout.slots[step.parameter_slot]
         slot.transform isa VectorIdentityTransform || begin
             _backend_issue!(issues, "mvnormal backend lowering expects a vector identity transform")
             return nothing
@@ -211,6 +212,7 @@ end
 function _backend_lower_dirichlet_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -230,7 +232,7 @@ function _backend_lower_dirichlet_choice_step(
     parameter_index = nothing
     value_index = nothing
     if !isnothing(step.parameter_slot)
-        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot = parameter_layout.slots[step.parameter_slot]
         slot.transform isa SimplexTransform || begin
             _backend_issue!(issues, "dirichlet backend lowering expects a simplex transform")
             return nothing
@@ -256,6 +258,7 @@ end
 function _backend_lower_lkjcholesky_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -273,7 +276,7 @@ function _backend_lower_lkjcholesky_choice_step(
     parameter_index = nothing
     value_index = nothing
     if !isnothing(step.parameter_slot)
-        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot = parameter_layout.slots[step.parameter_slot]
         slot.transform isa CholeskyCorrTransform || begin
             _backend_issue!(issues, "lkjcholesky backend lowering expects a cholesky correlation transform")
             return nothing
@@ -313,6 +316,7 @@ end
 function _backend_lower_mixture_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -344,7 +348,7 @@ function _backend_lower_mixture_choice_step(
     end
     # like every scalar-valued step, store the slot's VALUE row (issue #36),
     # not its ordinal: scoring reads the constrained matrix with this number
-    parameter_row, parameter_row_ok = _backend_scalar_parameter_row(model, step.parameter_slot, issues)
+    parameter_row, parameter_row_ok = _backend_scalar_parameter_row(parameter_layout, step.parameter_slot, issues)
     parameter_row_ok || return nothing
     return BackendMixtureNormalChoicePlanStep(
         step.binding_slot,
@@ -360,6 +364,7 @@ end
 function _backend_lower_mvnormaldense_choice_step(
     model::TeaModel,
     layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
     issues::Vector{String},
 )
@@ -386,7 +391,7 @@ function _backend_lower_mvnormaldense_choice_step(
 
     value_index = nothing
     if !isnothing(step.parameter_slot)
-        slot = parameterlayout(model).slots[step.parameter_slot]
+        slot = parameter_layout.slots[step.parameter_slot]
         slot.transform isa VectorIdentityTransform || begin
             _backend_issue!(issues, "mvnormaldense backend lowering expects a vector identity transform")
             return nothing

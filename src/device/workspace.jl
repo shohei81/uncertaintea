@@ -72,13 +72,17 @@ function DeviceBatchedWorkspace(
         args isa Tuple ? _complete_model_args(model, args) :
         Tuple[_complete_model_args(model, batch_args) for batch_args in args]
     T = precision
-    issues, plan = _lower_device_plan(model, T)
+    # Resolve the conditioning-signature plan once and derive the device plan,
+    # observation staging, and parameter count from it (issue #95, PR-4).
+    resolved = _resolve_signature_plan(model, _representative_constraints(constraints))
+    issues, plan = _lower_device_plan(model, resolved, T)
     isnothing(plan) && throw(ArgumentError(_device_unsupported_message(model, issues)))
 
     batch_size = Int(batch_size)
-    bundle = _stage_device_observations(model, plan, args, constraints, batch_size)
+    backend_plan = _signature_backend_plan(model, resolved)
+    bundle = _stage_device_observations(model, backend_plan, plan, args, constraints, batch_size)
 
-    parameter_count = parametercount(parameterlayout(model))
+    parameter_count = parametercount(resolved.plan.parameter_layout)
     slot_count = Int(plan.slot_count)
 
     params_device = KernelAbstractions.allocate(backend, T, parameter_count, batch_size)

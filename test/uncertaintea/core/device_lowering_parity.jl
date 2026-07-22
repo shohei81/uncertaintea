@@ -290,13 +290,17 @@ end
 end
 
 @testset "dev_numerical_parity_truncated" begin
-    supported, issues = device_lowering_report(dev_truncated_model)
-    @test supported
-    @test isempty(issues)
-
     ys = [0.4, -0.7, 1.1]
     ts = [1.5, -0.2, 0.8]
     cm = choicemap((:h, 0.6), ((:y => i, ys[i]) for i = 1:3)..., ((:t => i, ts[i]) for i = 1:3)...)
+
+    # PR-4 (issue #95): device lowering is signature-aware. The static `:h`
+    # truncated choice is an OBSERVATION only when constrained; left unconstrained
+    # it is a truncated latent, which the device path does not lower. Report for
+    # the conditioning this test scores (`:h`, `:y`, `:t` observed).
+    supported, issues = device_lowering_report(dev_truncated_model; constraints=cm)
+    @test supported
+    @test isempty(issues)
     params = [0.5 -0.3 1.2; 0.1 0.7 -0.2]
     dev = device_batched_logjoint(dev_truncated_model, params, (3,), cm)
     ref = batched_logjoint_unconstrained(dev_truncated_model, params, (3,), cm)

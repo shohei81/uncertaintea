@@ -616,14 +616,15 @@ function BatchedHMCWorkspace(
     inverse_mass_matrix::AbstractVector=ones(size(position, 1)),
 )
     num_params, num_chains = size(position)
-    constrained_num_params = parametervaluecount(parameterlayout(model))
     batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
+    # constrained-space width follows the conditioning signature (issue #95)
+    constrained_num_params = parametervaluecount(_batched_signature_layout(model, batch_constraints))
     length(inverse_mass_matrix) == num_params ||
         throw(DimensionMismatch("expected inverse mass matrix of length $num_params, got $(length(inverse_mass_matrix))"))
 
     return BatchedHMCWorkspace(
-        BatchedLogjointWorkspace(model),
+        BatchedLogjointWorkspace(model, batch_constraints),
         BatchedLogjointGradientCache(model, position, batch_args, batch_constraints),
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),

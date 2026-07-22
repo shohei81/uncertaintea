@@ -375,10 +375,26 @@ end
 # model's `signature_cache`, so re-running inference with new data at the same
 # observed addresses reuses the compiled plan.
 
-struct ResolvedSignaturePlan
+mutable struct ResolvedSignaturePlan
     plan::ExecutionPlan
     compiled::CompiledExecutionPlan
+    # Backend lowering of `plan`, lowered lazily on first batched/device use and
+    # cached here (this struct is memoized in `model.signature_cache`). Holds a
+    # `BackendLoweringResult` once populated; `nothing` until then. Untyped so
+    # `evaluator.jl` need not see the backend types (defined later, in backend.jl).
+    backend_lowering::Base.RefValue{Any}
 end
+
+ResolvedSignaturePlan(plan::ExecutionPlan, compiled::CompiledExecutionPlan) =
+    ResolvedSignaturePlan(plan, compiled, Ref{Any}(nothing))
+
+# A representative single ChoiceMap for the conditioning signature. The batched
+# and device paths accept either a shared ChoiceMap or a per-column vector of
+# ChoiceMaps; the parameter layout is static per signature, so every column of a
+# batch shares one signature and the first entry is representative.
+_representative_constraints(constraints::ChoiceMap) = constraints
+_representative_constraints(constraints::AbstractVector) =
+    isempty(constraints) ? choicemap() : first(constraints)
 
 # The observed set is the canonical signature: the normalized addresses of the
 # model's static, unscoped choices that are present in `constraints`. Values are
