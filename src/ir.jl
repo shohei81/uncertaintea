@@ -843,6 +843,157 @@ function _assign_parameter_layout(steps::Vector{AbstractPlanStep})
     return parameterized, ParameterLayout(slots, parameter_counter[] - 1, value_counter[] - 1)
 end
 
+# --- signature-driven latent/observation classification (issue #95) ---------
+#
+# The syntactic layout above (`_assign_parameter_layout`) remains the model's
+# default. docs/constraint-driven-conditioning.md makes the split a function of
+# the CONDITIONING SIGNATURE instead: a static-address, unscoped choice whose
+# address is present in the constraints is an OBSERVATION (no slot); every other
+# choice is a LATENT and is given a parameter slot when it is structurally
+# slot-eligible (has a parameter transform, static address, unscoped). Binding
+# is orthogonal, so an UNBOUND latent (`{:a} ~ dist` left unconstrained) also
+# gets a slot -- unlike the syntactic pass, this classification does not consult
+# `step.binding`.
+#
+# `observed` is any collection supporting `in` and holds the normalized
+# addresses classified as observations for the current signature.
+
+# Normalized address of a fully static choice step, or `nothing` when the
+# address is templated (loop/tuple-dynamic) and therefore never slot-eligible.
+function _static_choice_address(step::ChoicePlanStep)
+    isstaticaddress(step.address) || return nothing
+    return normalize_address(tuple((part.value for part in step.address.parts)...))
+end
+
+function _parameterize_step_for_signature(
+    step::ChoicePlanStep,
+    observed,
+    slots::Vector{ParameterSlotSpec},
+    step_counter::Base.RefValue{Int},
+    slot_counter::Base.RefValue{Int},
+    parameter_counter::Base.RefValue{Int},
+    value_counter::Base.RefValue{Int},
+)
+    step_index = step_counter[]
+    step_counter[] += 1
+
+    static = isempty(step.scopes) && isstaticaddress(step.address)
+    is_observation = static && (_static_choice_address(step) in observed)
+    transform = _parameter_transform(step.rhs)
+    slot_eligible = !is_observation && static && !isnothing(transform)
+
+    if !slot_eligible
+        # A latent that is structurally ineligible for a slot cannot carry a
+        # dependent noncentered transform. (The default build pass already
+        # rejects the ineligible shapes at construction, so this only guards
+        # the residual case of a noncentered latent whose address is templated.)
+        if !is_observation &&
+           step.rhs isa DistributionSpec &&
+           step.rhs.reparam === :noncentered &&
+           isnothing(transform)
+            throw(
+                ArgumentError(
+                    "reparam=:noncentered requires a static-address, unscoped latent choice; " *
+                    "the choice at $(step.address) gets no parameter slot",
+                ),
+            )
+        end
+        return ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, step.scopes, nothing)
+    end
+
+    slot_index = slot_counter[]
+    slot_counter[] += 1
+    dimension, value_length = _parameter_dimensions(transform)
+    parameter_index = parameter_counter[]
+    value_index = value_counter[]
+    parameter_counter[] += dimension
+    value_counter[] += value_length
+    push!(
+        slots,
+        ParameterSlotSpec(
+            step_index,
+            isnothing(step.binding) ? Symbol("") : step.binding,
+            step.address,
+            parameter_index,
+            dimension,
+            value_index,
+            value_length,
+            transform,
+        ),
+    )
+    return ChoicePlanStep(step.choice_index, step.binding, step.address, step.rhs, step.scopes, slot_index)
+end
+
+function _parameterize_plan_steps_for_signature(
+    steps::Vector{AbstractPlanStep},
+    observed,
+    slots::Vector{ParameterSlotSpec},
+    step_counter::Base.RefValue{Int},
+    slot_counter::Base.RefValue{Int},
+    parameter_counter::Base.RefValue{Int},
+    value_counter::Base.RefValue{Int},
+)
+    parameterized = AbstractPlanStep[]
+    for step in steps
+        if step isa ChoicePlanStep
+            push!(
+                parameterized,
+                _parameterize_step_for_signature(
+                    step,
+                    observed,
+                    slots,
+                    step_counter,
+                    slot_counter,
+                    parameter_counter,
+                    value_counter,
+                ),
+            )
+        elseif step isa DeterministicPlanStep
+            push!(parameterized, step)
+        elseif step isa LoopPlanStep
+            body = _parameterize_plan_steps_for_signature(
+                step.body,
+                observed,
+                slots,
+                step_counter,
+                slot_counter,
+                parameter_counter,
+                value_counter,
+            )
+            push!(parameterized, LoopPlanStep(step.iterator, step.iterable, body))
+        else
+            throw(ArgumentError("unsupported plan step in signature parameterization: $(typeof(step))"))
+        end
+    end
+    return parameterized
+end
+
+# Re-parameterize an already-built (inlined + env-annotated) execution plan for
+# a conditioning signature, producing a fresh `ExecutionPlan` whose parameter
+# layout reflects the signature's latent/observation split. The environment
+# layout is signature-independent (it depends only on bindings), so it is
+# reused; binding slots are re-annotated because reparameterization rebuilds the
+# choice steps.
+function _signature_execution_plan(base_plan::ExecutionPlan, observed)
+    slots = ParameterSlotSpec[]
+    step_counter = Ref(1)
+    slot_counter = Ref(1)
+    parameter_counter = Ref(1)
+    value_counter = Ref(1)
+    reparameterized = _parameterize_plan_steps_for_signature(
+        base_plan.steps,
+        observed,
+        slots,
+        step_counter,
+        slot_counter,
+        parameter_counter,
+        value_counter,
+    )
+    layout = ParameterLayout(slots, parameter_counter[] - 1, value_counter[] - 1)
+    annotated = _annotate_environment_slots(reparameterized, base_plan.environment_layout)
+    return ExecutionPlan(base_plan.model_name, annotated, layout, base_plan.environment_layout)
+end
+
 function _inline_plan_steps(steps::Vector{AbstractPlanStep})
     expanded = AbstractPlanStep[]
     for step in steps

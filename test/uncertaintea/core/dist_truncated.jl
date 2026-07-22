@@ -118,12 +118,16 @@ end
     @test parametervaluecount(trunc_layout) == 1
     @test trunc_layout.slots[1].transform isa LowerBoundedTransform
 
-    # generate/logjoint agreement: constrain both the latent and the
-    # observation so the trace scores the full joint.
+    # generate/logjoint agreement over the full joint. The trace fixes both the
+    # latent and the observation so its log_weight is the full joint; logjoint
+    # scores `:sigma` as a latent (from the parameter vector) and conditions on
+    # the observation `:obs` only -- constraining `:sigma` too would classify it
+    # as an observation (docs/constraint-driven-conditioning.md, issue #95).
     trunc_full = choicemap((:sigma, 0.7f0), (:obs, 1.3f0))
     trunc_trace, _ = generate(trunc_scale_model, (nothing,), trunc_full; rng=MersenneTwister(3))
     trunc_pv = parameter_vector(trunc_trace)
-    @test trunc_trace.log_weight ≈ logjoint(trunc_scale_model, trunc_pv, (nothing,), trunc_full) atol = 1e-6
+    @test trunc_trace.log_weight ≈
+          logjoint(trunc_scale_model, trunc_pv, (nothing,), choicemap((:obs, 1.3f0))) atol = 1e-6
 
     # NUTS runs and produces finite, strictly positive constrained samples.
     trunc_obs = choicemap((:obs, 1.3f0))

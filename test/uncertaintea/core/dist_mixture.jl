@@ -67,11 +67,14 @@ end
     @test parametervaluecount(mix_layout) == 1
     @test mix_layout.slots[1].transform isa IdentityTransform
 
-    # generate/logjoint agreement over the full joint.
+    # generate/logjoint agreement over the full joint: `mu` is scored as a
+    # latent (from the parameter vector) and only the observation `:y` is
+    # conditioned on (constraining `:mu` would make it an observation --
+    # docs/constraint-driven-conditioning.md, issue #95).
     mix_full = choicemap((:mu, 0.4f0), (:y, 1.3f0))
     mix_trace, _ = generate(mix_obs_model, (), mix_full; rng=MersenneTwister(11))
     mix_pv = parameter_vector(mix_trace)
-    @test mix_trace.log_weight ≈ logjoint(mix_obs_model, mix_pv, (), mix_full) atol = 1e-6
+    @test mix_trace.log_weight ≈ logjoint(mix_obs_model, mix_pv, (), choicemap((:y, 1.3f0))) atol = 1e-6
 
     # Batched logjoint (ForwardDiff fallback) matches the per-column value.
     mix_obs = choicemap((:y, 1.3f0))
@@ -144,11 +147,14 @@ end
     @test parametervaluecount(mix_dir_layout) == 2
     @test mix_dir_layout.slots[1].transform isa SimplexTransform
 
-    # generate/logjoint agreement over the full joint.
+    # generate/logjoint agreement over the full joint: the dirichlet `w` is a
+    # latent (from the parameter vector) and only the observation `:y` is
+    # conditioned on (docs/constraint-driven-conditioning.md, issue #95).
     mix_dir_full = choicemap((:w, [0.4, 0.6]), (:y, 0.7f0))
     mix_dir_trace, _ = generate(mix_dirichlet_model, (), mix_dir_full; rng=MersenneTwister(21))
     mix_dir_pv = parameter_vector(mix_dir_trace)
-    @test mix_dir_trace.log_weight ≈ logjoint(mix_dirichlet_model, mix_dir_pv, (), mix_dir_full) atol = 1e-6
+    @test mix_dir_trace.log_weight ≈
+          logjoint(mix_dirichlet_model, mix_dir_pv, (), choicemap((:y, 0.7f0))) atol = 1e-6
 
     # NUTS runs finite with the weights flowing in as a differentiable simplex.
     mix_dir_obs = choicemap((:y, 0.7f0))
