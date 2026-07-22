@@ -272,8 +272,11 @@ function _run_device_batched_hmc(
     rng::AbstractRNG,
 )
     T = precision
-    num_params = parametercount(parameterlayout(model))
-    constrained_num_params = parametervaluecount(parameterlayout(model))
+    # Signature-aware sizing (#95): match the CPU batched_hmc path and the
+    # signature-aware device workspace (PR-4), not the syntactic default layout.
+    signature_layout = _batched_signature_layout(model, constraints)
+    num_params = parametercount(signature_layout)
+    constrained_num_params = parametervaluecount(signature_layout)
     _validate_batched_hmc_arguments(
         num_chains,
         num_params,
@@ -516,14 +519,14 @@ function _run_device_batched_hmc(
             sample_index += 1
             for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
-                _transform_to_constrained!(
-                    view(host_workspace.constrained_position, :, chain_index),
+                _write_signature_constrained_sample!(
+                    constrained_samples,
                     model,
                     view(position, :, chain_index),
-                )
-                copyto!(
-                    view(constrained_samples, :, sample_index, chain_index),
-                    view(host_workspace.constrained_position, :, chain_index),
+                    sample_index,
+                    _batched_args(batch_args, chain_index),
+                    _batched_constraints(batch_constraints, chain_index),
+                    chain_index,
                 )
                 logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
                 acceptance_stats[sample_index, chain_index] = accept_prob[chain_index]
