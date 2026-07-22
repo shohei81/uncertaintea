@@ -80,8 +80,15 @@ allocated on first use), returning `(values, gradients)`. Successive calls with 
 `params` are independent (staging is not mutated).
 """
 function device_batched_logjoint_gradient!(workspace::DeviceBatchedWorkspace{T}, params::AbstractMatrix) where {T}
-    size(params, 1) == workspace.parameter_count ||
-        throw(DimensionMismatch("expected $(workspace.parameter_count) parameters, got $(size(params, 1))"))
+    size(params, 1) == workspace.parameter_count || throw(
+        _signature_length_error(
+            workspace.model,
+            workspace.layout,
+            workspace.signature_constraints,
+            workspace.parameter_count,
+            size(params, 1),
+        ),
+    )
     size(params, 2) == workspace.batch_size ||
         throw(DimensionMismatch("expected $(workspace.batch_size) batch elements, got $(size(params, 2))"))
 

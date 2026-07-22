@@ -482,6 +482,21 @@ function _transform_to_constrained!(
     return destination
 end
 
+# Signature-aware transform: the constrained/unconstrained split and the
+# expected vector length follow the conditioning signature (which addresses are
+# observed), so a length mismatch names the conditioning. The three-argument
+# forms above keep operating on the model's default (unconditioned) layout.
+function transform_to_constrained(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    resolved = _resolve_signature_plan(model, constraints)
+    constrained, _ = _transform_to_constrained_with_logabsdet(model, resolved, params, args, constraints)
+    return constrained
+end
+
 function transform_to_constrained_with_logabsdet(model::TeaModel, params::AbstractVector, args::Tuple=())
     layout = parameterlayout(model)
     expected = parametercount(layout)
@@ -507,6 +522,56 @@ function transform_to_unconstrained(model::TeaModel, params::AbstractVector, arg
     unconstrained = similar(params, parametercount(layout))
     if _has_dependent_transforms(layout)
         _dependent_transform_walk!(unconstrained, model, params, args, true)
+        return unconstrained
+    end
+    for slot in layout.slots
+        _transform_slot_to_unconstrained!(unconstrained, slot, params)
+    end
+    return unconstrained
+end
+
+function transform_to_constrained_with_logabsdet(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    resolved = _resolve_signature_plan(model, constraints)
+    return _transform_to_constrained_with_logabsdet(model, resolved, params, args, constraints)
+end
+
+function transform_to_unconstrained(
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    resolved = _resolve_signature_plan(model, constraints)
+    layout = resolved.plan.parameter_layout
+    expected = parametervaluecount(layout)
+    length(params) == expected || throw(
+        _signature_length_error(
+            model,
+            layout,
+            constraints,
+            expected,
+            length(params);
+            space="constrained-space parameters",
+        ),
+    )
+
+    unconstrained = similar(params, parametercount(layout))
+    if _has_dependent_transforms(layout)
+        _dependent_transform_walk!(
+            unconstrained,
+            model,
+            resolved.plan,
+            resolved.compiled,
+            params,
+            args,
+            true,
+            constraints,
+        )
         return unconstrained
     end
     for slot in layout.slots

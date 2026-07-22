@@ -55,6 +55,10 @@ mutable struct DeviceBatchedWorkspace{T,B<:KernelAbstractions.Backend,P<:DeviceE
     # is a `DeviceDual{T}` scratch laid out (slot_count x parameter_count x batch).
     gradients_device::Any
     grad_slots_device::Any
+    # Signature layout + representative constraints kept so a params-width
+    # mismatch can name the conditioning (issue #95, PR-5).
+    layout::ParameterLayout
+    signature_constraints::ChoiceMap
 end
 
 function DeviceBatchedWorkspace(
@@ -115,6 +119,8 @@ function DeviceBatchedWorkspace(
         args,
         nothing,
         nothing,
+        resolved.plan.parameter_layout,
+        _representative_constraints(constraints),
     )
 end
 
@@ -219,8 +225,15 @@ per-column unconstrained logjoint (including the transform log-abs-det). Success
 calls with different `params` are independent (staging is not mutated).
 """
 function device_batched_logjoint!(workspace::DeviceBatchedWorkspace{T}, params::AbstractMatrix) where {T}
-    size(params, 1) == workspace.parameter_count ||
-        throw(DimensionMismatch("expected $(workspace.parameter_count) parameters, got $(size(params, 1))"))
+    size(params, 1) == workspace.parameter_count || throw(
+        _signature_length_error(
+            workspace.model,
+            workspace.layout,
+            workspace.signature_constraints,
+            workspace.parameter_count,
+            size(params, 1),
+        ),
+    )
     size(params, 2) == workspace.batch_size ||
         throw(DimensionMismatch("expected $(workspace.batch_size) batch elements, got $(size(params, 2))"))
 

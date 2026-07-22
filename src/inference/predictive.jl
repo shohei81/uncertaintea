@@ -35,6 +35,15 @@ end
 # Shared per-draw kernel: for each latent parameter vector, constrain the model
 # to those latents, run `generate`, and keep only the addresses that are NOT
 # latent parameters (i.e. the predictive / observation addresses).
+#
+# Observation classification here follows the same conditioning rule as the rest
+# of the system (issue #95): the pinned latents are the sampler's latent slots
+# and `generate` honors the constraints, so the kept (predictive) addresses are
+# exactly the non-latent choices. The latent set is fixed by how the incoming
+# chains/particles were parameterized (the CPU samplers use the default layout,
+# which coincides with the signature layout for every conditioning they support),
+# so predict stays consistent with its input by construction; it does not take
+# the inference-time constraints and so never re-derives a different split.
 function _predictive_from_param_columns(
     model::TeaModel,
     args::Tuple,
