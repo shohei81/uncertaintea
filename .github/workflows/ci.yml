@@ -38,18 +38,45 @@ jobs:
       - run: julia -e 'using JuliaFormatter; format(".")'
       - run: git diff --exit-code
 
+  # Build the test matrix per event. The latest-Julia leg (1.12) is ~2x the
+  # compat-floor leg (1.10) in wall-clock -- intrinsic 1.12 compile cost, not
+  # cache churn (measured). So on pull_request we run 1.10 across ALL shards
+  # (the compat floor is where version-specific failures have historically
+  # surfaced) plus 1.12 only on the fast shards that fit inside the 1.10
+  # wall-clock envelope; the three heavy 1.12 shards (sampling, crosscheck,
+  # device) run on push to main, before anything ships. 1.12 is pinned to a
+  # concrete minor so its precompile cache stays warm across runs; bump
+  # deliberately.
+  matrix:
+    name: build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.set.outputs.include }}
+    steps:
+      - id: set
+        run: |
+          all="dsl dist backend device inference sampling crosscheck"
+          pr112="dsl dist backend inference"
+          pairs=""
+          for g in $all; do pairs="$pairs 1.10:$g"; done
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            for g in $pr112; do pairs="$pairs 1.12:$g"; done
+          else
+            for g in $all; do pairs="$pairs 1.12:$g"; done
+          fi
+          include=$(printf '%s\n' $pairs \
+            | jq -R 'split(":") | {"julia-version": .[0], "test-group": .[1]}' \
+            | jq -sc .)
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: matrix
     name: julia ${{ matrix.julia-version }} / ${{ matrix.test-group }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Compat floor and a pinned recent stable. The latest leg is pinned to a
-        # concrete minor (not the floating "1") so the version-keyed Julia
-        # precompile cache stays warm across runs instead of being invalidated
-        # every time a new Julia is released; bump it deliberately.
-        julia-version: ["1.10", "1.12"]
-        test-group: [dsl, dist, backend, device, inference, sampling, crosscheck]
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
