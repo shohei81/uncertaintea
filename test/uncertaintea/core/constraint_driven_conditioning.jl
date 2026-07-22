@@ -23,6 +23,40 @@ end
     return mu
 end
 
+# PR-3 value-resolution models. Each threads a possibly-observed `:y` through a
+# downstream expression, so the evaluator must resolve `:y` to its constrained
+# value (when observed) or its latent value (when not) via one path, in both the
+# scoring fold and the dependent-transform walk.
+
+# `:y` observed value feeds a deterministic step that also depends on the latent
+# `mu`, so the latent gradient must pick up the observed contribution.
+@tea static function cdc_downstream()
+    mu ~ normal(0.0, 1.0)
+    y = ({:y} ~ normal(mu, 1.0))
+    w = y * 2.0 + mu
+    {:z} ~ normal(w, 1.0)
+    return mu
+end
+
+# `:y` observed value feeds a reparam=:noncentered loc/scale (theta = y + z).
+# Before PR-3 the transform walk poisoned the slotless `:y` binding and this
+# raised, even though the observed value is known. Centered twin for crosscheck.
+@tea static function cdc_noncentered_obs()
+    mu ~ normal(0.0, 1.0)
+    y = ({:y} ~ normal(mu, 1.0))
+    theta ~ normal(y, 1.0; reparam=:noncentered)
+    {:z} ~ normal(theta, 1.0)
+    return mu
+end
+
+@tea static function cdc_centered_obs()
+    mu ~ normal(0.0, 1.0)
+    y = ({:y} ~ normal(mu, 1.0))
+    theta ~ normal(y, 1.0)
+    {:z} ~ normal(theta, 1.0)
+    return mu
+end
+
 @testset "constraint_driven_conditioning" begin
     normlogpdf(mean, sd, x) = UncertainTea.logpdf(normal(mean, sd), x)
 
@@ -119,5 +153,99 @@ end
         # A different signature (empty vs {:y}) gets its own cached entry.
         logjoint(cdc_memo, [0.1, 0.2], (), choicemap())
         @test length(cdc_memo.signature_cache[]) == 2
+    end
+
+    # PR-3: unified value resolution in the evaluator. The bound value of a
+    # choice resolves to the constraint value when observed and to the
+    # transformed parameter value when latent, through one path -- so a
+    # downstream deterministic step / noncentered loc/scale expression sees the
+    # right value regardless of classification.
+    @testset "observed value used downstream in a deterministic step" begin
+        mu0 = 0.4
+        yv = 3.0
+        zv = 0.5
+        cons = choicemap(:y => yv, :z => zv)
+        w = yv * 2.0 + mu0
+
+        # scoring resolves the observed `:y` and feeds it to the deterministic
+        # `w`; matches the manual density and `assess` on the same choices.
+        manual = normlogpdf(0.0, 1.0, mu0) + normlogpdf(mu0, 1.0, yv) + normlogpdf(w, 1.0, zv)
+        lj = logjoint(cdc_downstream, [mu0], (), cons)
+        assessed = assess(cdc_downstream, (), choicemap(:mu => mu0, :y => yv, :z => zv))
+        @test lj ≈ manual atol = 1e-9
+        @test lj ≈ assessed atol = 1e-9
+        # no dependent transform here, so the unconstrained path agrees exactly.
+        @test logjoint_unconstrained(cdc_downstream, [mu0], (), cons) ≈ lj atol = 1e-9
+
+        # the constrained observation genuinely reaches `w`: a different `:y`
+        # value shifts the density (via the z term through w).
+        @test logjoint(cdc_downstream, [mu0], (), choicemap(:y => yv, :z => zv)) !=
+              logjoint(cdc_downstream, [mu0], (), choicemap(:y => yv + 1.0, :z => zv))
+
+        # scalar gradient w.r.t. the latent `mu` is correct even though an
+        # observed value feeds the downstream expression (it is a constant
+        # w.r.t. the parameters). Analytic + finite-difference crosscheck.
+        grad = logjoint_gradient_unconstrained(cdc_downstream, [mu0], (), cons)
+        analytic = -mu0 + (yv - mu0) + (zv - w)
+        f(m) = logjoint_unconstrained(cdc_downstream, [m], (), cons)
+        h = 1e-6
+        fd = (f(mu0 + h) - f(mu0 - h)) / (2h)
+        @test grad[1] ≈ analytic atol = 1e-9
+        @test grad[1] ≈ fd atol = 1e-5
+    end
+
+    @testset "constrained vs unconstrained with the address used downstream" begin
+        mu0 = 0.4
+        yv = 3.0
+        zv = 0.5
+        # `:y` observed -> latent {mu}; `:y` latent -> latents {mu, y}. With the
+        # latent y set to the observed value the two agree, and `y` flows into
+        # `w` in both roles (observation and prior draw).
+        con_layout =
+            UncertainTea._resolve_signature_plan(cdc_downstream, choicemap(:y => yv, :z => zv)).plan.parameter_layout
+        unc_layout =
+            UncertainTea._resolve_signature_plan(cdc_downstream, choicemap(:z => zv)).plan.parameter_layout
+        @test parametervaluecount(con_layout) == 1
+        @test parametervaluecount(unc_layout) == 2
+
+        l_con = logjoint(cdc_downstream, [mu0], (), choicemap(:y => yv, :z => zv))
+        l_unc = logjoint(cdc_downstream, [mu0, yv], (), choicemap(:z => zv))
+        @test l_con ≈ l_unc atol = 1e-9
+    end
+
+    @testset "observed value feeds a reparam=:noncentered loc/scale" begin
+        mu0 = 0.4
+        yv = 3.0
+        zv = 0.5
+        zstd = 0.1
+        cons = choicemap(:y => yv, :z => zv)
+        theta = yv + zstd  # theta = location(y) + scale(1) * z
+
+        # Before PR-3 the transform walk poisoned the slotless observed `:y`
+        # feeding theta's location and this raised; now it resolves to yv.
+        lj_nc = logjoint_unconstrained(cdc_noncentered_obs, [mu0, zstd], (), cons)
+        manual =
+            normlogpdf(0.0, 1.0, mu0) +
+            normlogpdf(mu0, 1.0, yv) +
+            normlogpdf(yv, 1.0, theta) +
+            normlogpdf(theta, 1.0, zv)
+        @test lj_nc ≈ manual atol = 1e-9
+
+        # centered twin at the matching constrained theta gives the same joint
+        # (scale 1 -> zero log-abs-det), confirming the noncentered walk used the
+        # observed location.
+        lj_centered = logjoint_unconstrained(cdc_centered_obs, [mu0, theta], (), cons)
+        @test lj_nc ≈ lj_centered atol = 1e-9
+
+        # gradient w.r.t. [mu, z] crosschecks against finite differences with the
+        # observed location flowing into theta.
+        grad = logjoint_gradient_unconstrained(cdc_noncentered_obs, [mu0, zstd], (), cons)
+        g(p) = logjoint_unconstrained(cdc_noncentered_obs, p, (), cons)
+        h = 1e-6
+        fd = [
+            (g([mu0 + h, zstd]) - g([mu0 - h, zstd])) / (2h),
+            (g([mu0, zstd + h]) - g([mu0, zstd - h])) / (2h),
+        ]
+        @test grad ≈ fd atol = 1e-5
     end
 end

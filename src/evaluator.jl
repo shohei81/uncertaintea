@@ -659,7 +659,7 @@ function logjoint_unconstrained(
     constraints::ChoiceMap=choicemap(),
 )
     resolved = _resolve_signature_plan(model, constraints)
-    constrained, logabsdet = _transform_to_constrained_with_logabsdet(model, resolved, params, args)
+    constrained, logabsdet = _transform_to_constrained_with_logabsdet(model, resolved, params, args, constraints)
     return _logjoint(model, resolved, constrained, args, constraints) + logabsdet
 end
 
@@ -714,13 +714,22 @@ function _dependent_transform_walk!(
     params::AbstractVector,
     args::Tuple,
     inverse::Bool,
+    constraints::ChoiceMap=choicemap(),
 )
     args = _complete_model_args(model, args)
     env = PlanEnvironment(plan.environment_layout)
     for (slot, value) in zip(plan.environment_layout.argument_slots, args)
         _environment_set!(env, slot, value)
     end
-    return _walk_transform_steps!(destination, compiled_plan.steps, env, plan.parameter_layout, params, inverse)
+    return _walk_transform_steps!(
+        destination,
+        compiled_plan.steps,
+        env,
+        plan.parameter_layout,
+        params,
+        inverse,
+        constraints,
+    )
 end
 
 function _dependent_transform_walk!(
@@ -729,6 +738,7 @@ function _dependent_transform_walk!(
     params::AbstractVector,
     args::Tuple,
     inverse::Bool,
+    constraints::ChoiceMap=choicemap(),
 )
     return _dependent_transform_walk!(
         destination,
@@ -738,6 +748,7 @@ function _dependent_transform_walk!(
         params,
         args,
         inverse,
+        constraints,
     )
 end
 
@@ -749,6 +760,7 @@ function _transform_to_constrained_with_logabsdet(
     resolved::ResolvedSignaturePlan,
     params::AbstractVector,
     args::Tuple,
+    constraints::ChoiceMap=choicemap(),
 )
     layout = resolved.plan.parameter_layout
     expected = parametercount(layout)
@@ -757,8 +769,16 @@ function _transform_to_constrained_with_logabsdet(
 
     constrained = similar(params, parametervaluecount(layout))
     if _has_dependent_transforms(layout)
-        logabsdet =
-            _dependent_transform_walk!(constrained, model, resolved.plan, resolved.compiled, params, args, false)
+        logabsdet = _dependent_transform_walk!(
+            constrained,
+            model,
+            resolved.plan,
+            resolved.compiled,
+            params,
+            args,
+            false,
+            constraints,
+        )
         return constrained, logabsdet
     end
     logabsdet = expected == 0 ? 0.0 : zero(params[firstindex(params)])
@@ -768,37 +788,45 @@ function _transform_to_constrained_with_logabsdet(
     return constrained, logabsdet
 end
 
-_walk_transform_steps!(destination, ::Tuple{}, env, layout, params, inverse) = zero(eltype(destination))
+_walk_transform_steps!(destination, ::Tuple{}, env, layout, params, inverse, constraints) =
+    zero(eltype(destination))
 
-function _walk_transform_steps!(destination, steps::Tuple, env, layout, params, inverse)
-    return _walk_transform_step!(destination, first(steps), env, layout, params, inverse) +
-           _walk_transform_steps!(destination, Base.tail(steps), env, layout, params, inverse)
+function _walk_transform_steps!(destination, steps::Tuple, env, layout, params, inverse, constraints)
+    return _walk_transform_step!(destination, first(steps), env, layout, params, inverse, constraints) +
+           _walk_transform_steps!(destination, Base.tail(steps), env, layout, params, inverse, constraints)
 end
 
-function _walk_transform_step!(destination, step::CompiledDeterministicPlanStep, env, layout, params, inverse)
+function _walk_transform_step!(destination, step::CompiledDeterministicPlanStep, env, layout, params, inverse, constraints)
     _environment_set!(env, step.binding_slot, _walk_transform_eval(env, step.expr))
     return zero(eltype(destination))
 end
 
-function _walk_transform_step!(destination, step::CompiledLoopPlanStep, env, layout, params, inverse)
+function _walk_transform_step!(destination, step::CompiledLoopPlanStep, env, layout, params, inverse, constraints)
     iterable = _walk_transform_eval(env, step.iterable)
     had_previous = _environment_hasvalue(env, step.iterator_slot)
     previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
     total = zero(eltype(destination))
     for item in iterable
         _environment_set!(env, step.iterator_slot, item)
-        total += _walk_transform_steps!(destination, step.body, env, layout, params, inverse)
+        total += _walk_transform_steps!(destination, step.body, env, layout, params, inverse, constraints)
     end
     _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
     return total
 end
 
-function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, layout, params, inverse)
+function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, layout, params, inverse, constraints)
     if isnothing(step.parameter_slot)
-        # observation or slotless latent: its value is unknown during a
-        # transform; poison the binding so any dependence fails loudly
-        isnothing(step.binding_slot) ||
-            _environment_set!(env, step.binding_slot, _TransformUnknownValue())
+        # Slotless choice. Unified value resolution (issue #95, doc section 2):
+        # an OBSERVATION resolves to its constrained value and is bound so
+        # downstream deterministic steps and noncentered loc/scale expressions
+        # see the real value; a genuinely-unknown slotless latent (a
+        # marginalized discrete site) has no single value during the transform
+        # and is poisoned so any dependence fails loudly.
+        if !isnothing(step.binding_slot)
+            address = _concrete_address(env, step.address)
+            found, constrained_value = _choice_tryget_normalized(constraints, address)
+            _environment_set!(env, step.binding_slot, found ? constrained_value : _TransformUnknownValue())
+        end
         return zero(eltype(destination))
     end
     slot = layout.slots[step.parameter_slot]
