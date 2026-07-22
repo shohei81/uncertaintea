@@ -116,12 +116,14 @@ end
     @test parametercount(mvd_obs_layout) == 1
     @test mvd_obs_layout.slots[1].transform isa IdentityTransform
 
-    # generate/logjoint agreement over the full joint.
+    # generate/logjoint agreement over the full joint: `mu` is scored as a
+    # latent (from the parameter vector) and only the observation `:y` is
+    # conditioned on (docs/constraint-driven-conditioning.md, issue #95).
     mvd_obs_full = choicemap((:mu, 0.4f0), (:y, [0.3, -0.2]))
     mvd_obs_trace, _ = generate(mvd_obs_model, (mvd_obs_L,), mvd_obs_full; rng=MersenneTwister(11))
     mvd_obs_pv = parameter_vector(mvd_obs_trace)
     @test mvd_obs_trace.log_weight ≈
-          logjoint(mvd_obs_model, mvd_obs_pv, (mvd_obs_L,), mvd_obs_full) atol = 1e-6
+          logjoint(mvd_obs_model, mvd_obs_pv, (mvd_obs_L,), choicemap((:y, [0.3, -0.2]))) atol = 1e-6
 
     # Batched logjoint (ForwardDiff fallback) matches the per-column value.
     mvd_obs = choicemap((:y, [0.3, -0.2]))
@@ -166,12 +168,14 @@ const mvd_latent_L = [1.0 0.0; 0.8 0.6]
     @test mvd_latent_layout.slots[1].transform isa VectorIdentityTransform
 
     # generate/logjoint agreement, exercising `z[1]`/`z[2]` indexing of the
-    # vector latent binding in both the impl and the compiled plan path.
+    # vector latent binding in both the impl and the compiled plan path. `z` is
+    # scored as a latent (from the parameter vector); only the observation `:y`
+    # is conditioned on (docs/constraint-driven-conditioning.md, issue #95).
     mvd_latent_full = choicemap((:z, [0.2, -0.1]), (:y, 0.5))
     mvd_latent_trace, _ = generate(mvd_latent_model, (), mvd_latent_full; rng=MersenneTwister(12))
     mvd_latent_pv = parameter_vector(mvd_latent_trace)
     @test mvd_latent_trace.log_weight ≈
-          logjoint(mvd_latent_model, mvd_latent_pv, (), mvd_latent_full) atol = 1e-6
+          logjoint(mvd_latent_model, mvd_latent_pv, (), choicemap((:y, 0.5))) atol = 1e-6
 
     # NUTS runs finite; observing the sum z1 + z2 bends the positively
     # correlated prior (cor 0.8) into a negatively correlated posterior along

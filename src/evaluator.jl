@@ -347,13 +347,14 @@ function _reject_branchful_compiled_scoring(model::TeaModel)
     )
 end
 
-function _compile_execution_plan(model::TeaModel)
-    raw_plan = executionplan(model)
+function _compile_execution_plan(model::TeaModel, raw_plan::ExecutionPlan)
     compiled_steps = tuple(
         (_compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step) for step in raw_plan.steps)...,
     )
     return CompiledExecutionPlan(compiled_steps)
 end
+
+_compile_execution_plan(model::TeaModel) = _compile_execution_plan(model, executionplan(model))
 
 function _compiled_execution_plan(model::TeaModel)
     _reject_branchful_compiled_scoring(model)
@@ -364,6 +365,56 @@ function _compiled_execution_plan(model::TeaModel)
     end
     return cached::CompiledExecutionPlan
 end
+
+# --- conditioning-signature resolution (issue #95) ---------------------------
+#
+# The compiled scoring path classifies latents/observations from the CONDITIONING
+# SIGNATURE (docs/constraint-driven-conditioning.md): the set of constrained
+# addresses that name a static, unscoped choice. The signature-specific execution
+# plan (and its parameter layout) is memoized per `(model, signature)` in the
+# model's `signature_cache`, so re-running inference with new data at the same
+# observed addresses reuses the compiled plan.
+
+struct ResolvedSignaturePlan
+    plan::ExecutionPlan
+    compiled::CompiledExecutionPlan
+end
+
+# The observed set is the canonical signature: the normalized addresses of the
+# model's static, unscoped choices that are present in `constraints`. Values are
+# never part of it, so it is a value-independent memoization key. Constrained
+# addresses that do not name a static choice (templated loop indices, unknown
+# addresses) never carry a parameter slot and so do not enter the signature.
+function _conditioning_signature(model::TeaModel, constraints::ChoiceMap)
+    observed = Set{Address}()
+    for step in executionplan(model).steps
+        step isa ChoicePlanStep || continue
+        (isempty(step.scopes) && isstaticaddress(step.address)) || continue
+        address = _static_choice_address(step)
+        found, _ = _choice_tryget_normalized(constraints, address)
+        found && push!(observed, address)
+    end
+    return observed
+end
+
+function _resolve_signature_plan(model::TeaModel, signature::Set{Address})
+    _reject_branchful_compiled_scoring(model)
+    cache = model.signature_cache[]
+    if isnothing(cache)
+        cache = Dict{Set{Address},ResolvedSignaturePlan}()
+        model.signature_cache[] = cache
+    end
+    store = cache::Dict{Set{Address},ResolvedSignaturePlan}
+    existing = get(store, signature, nothing)
+    isnothing(existing) || return existing
+    plan = _signature_execution_plan(executionplan(model), signature)
+    resolved = ResolvedSignaturePlan(plan, _compile_execution_plan(model, plan))
+    store[signature] = resolved
+    return resolved
+end
+
+_resolve_signature_plan(model::TeaModel, constraints::ChoiceMap) =
+    _resolve_signature_plan(model, _conditioning_signature(model, constraints))
 
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledLiteralExpr)
     return expr.value
@@ -577,8 +628,18 @@ function logjoint(
     args::Tuple=(),
     constraints::ChoiceMap=choicemap(),
 )
-    plan = executionplan(model)
-    compiled_plan = _compiled_execution_plan(model)
+    resolved = _resolve_signature_plan(model, constraints)
+    return _logjoint(model, resolved, params, args, constraints)
+end
+
+function _logjoint(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    params::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    plan = resolved.plan
     expected = parametervaluecount(plan.parameter_layout)
     length(params) == expected || throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
     args = _complete_model_args(model, args)
@@ -588,7 +649,7 @@ function logjoint(
         _environment_set!(env, slot, value)
     end
 
-    return _score_compiled_steps(compiled_plan.steps, env, params, constraints)
+    return _score_compiled_steps(resolved.compiled.steps, env, params, constraints)
 end
 
 function logjoint_unconstrained(
@@ -597,8 +658,9 @@ function logjoint_unconstrained(
     args::Tuple=(),
     constraints::ChoiceMap=choicemap(),
 )
-    constrained, logabsdet = transform_to_constrained_with_logabsdet(model, params, args)
-    return logjoint(model, constrained, args, constraints) + logabsdet
+    resolved = _resolve_signature_plan(model, constraints)
+    constrained, logabsdet = _transform_to_constrained_with_logabsdet(model, resolved, params, args)
+    return _logjoint(model, resolved, constrained, args, constraints) + logabsdet
 end
 
 # --- dependent-transform plan walk (reparam=:noncentered) ---------------------
@@ -647,18 +709,63 @@ end
 function _dependent_transform_walk!(
     destination::AbstractVector,
     model::TeaModel,
+    plan::ExecutionPlan,
+    compiled_plan::CompiledExecutionPlan,
     params::AbstractVector,
     args::Tuple,
     inverse::Bool,
 )
-    plan = executionplan(model)
-    compiled_plan = _compiled_execution_plan(model)
     args = _complete_model_args(model, args)
     env = PlanEnvironment(plan.environment_layout)
     for (slot, value) in zip(plan.environment_layout.argument_slots, args)
         _environment_set!(env, slot, value)
     end
     return _walk_transform_steps!(destination, compiled_plan.steps, env, plan.parameter_layout, params, inverse)
+end
+
+function _dependent_transform_walk!(
+    destination::AbstractVector,
+    model::TeaModel,
+    params::AbstractVector,
+    args::Tuple,
+    inverse::Bool,
+)
+    return _dependent_transform_walk!(
+        destination,
+        model,
+        executionplan(model),
+        _compiled_execution_plan(model),
+        params,
+        args,
+        inverse,
+    )
+end
+
+# Signature-aware constrained transform used by `logjoint_unconstrained`: it
+# transforms against the resolved signature layout so the unconstrained
+# parameter vector and the scored plan agree on which choices are latent.
+function _transform_to_constrained_with_logabsdet(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    params::AbstractVector,
+    args::Tuple,
+)
+    layout = resolved.plan.parameter_layout
+    expected = parametercount(layout)
+    length(params) == expected ||
+        throw(DimensionMismatch("expected $expected parameters, got $(length(params))"))
+
+    constrained = similar(params, parametervaluecount(layout))
+    if _has_dependent_transforms(layout)
+        logabsdet =
+            _dependent_transform_walk!(constrained, model, resolved.plan, resolved.compiled, params, args, false)
+        return constrained, logabsdet
+    end
+    logabsdet = expected == 0 ? 0.0 : zero(params[firstindex(params)])
+    for slot in layout.slots
+        logabsdet += _transform_slot_to_constrained!(constrained, slot, params)
+    end
+    return constrained, logabsdet
 end
 
 _walk_transform_steps!(destination, ::Tuple{}, env, layout, params, inverse) = zero(eltype(destination))
