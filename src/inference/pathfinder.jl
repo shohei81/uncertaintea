@@ -390,3 +390,17 @@ function _initial_hmc_position(
     )
     return initial_params.draws[:, rand(rng, 1:size(initial_params.draws, 2))]
 end
+
+# Resolved-plan variant (the batched initial-position loop threads the resolved
+# signature plan, issue #156): a Pathfinder init never draws from the prior, so
+# the plan is unused and the position comes from the fit's draws unchanged.
+function _initial_hmc_position(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    args::Tuple,
+    constraints::ChoiceMap,
+    initial_params::PathfinderResult,
+    rng::AbstractRNG,
+)
+    return _initial_hmc_position(model, args, constraints, initial_params, rng)
+end

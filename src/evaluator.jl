@@ -697,6 +697,93 @@ function _score_plan_step!(
     return total
 end
 
+# --- signature-aware prior draw (issue #156) ----------------------------------
+#
+# One prior draw of the SIGNATURE latents, walked over the compiled signature
+# plan instead of a traced `generate`: the traced walk re-visits every
+# observation address (normalize_address/_pushchoice! dominate with many
+# observations), so drawing initial positions per chain paid O(observations)
+# per chain before sampling started. The walk mirrors the traced execution
+# site-for-site -- a constrained site reads its value from `constraints`
+# without touching the RNG (exactly like `choice` in runtime.jl), an
+# unconstrained site draws `rand(rng, dist)` from the same distribution in the
+# same execution order -- so the drawn values are bitwise identical to the
+# traced path, while trace recording, duplicate-address checks, and
+# observation scoring are skipped.
+function _sample_prior_steps!(
+    ::Tuple{},
+    env::PlanEnvironment,
+    layout::ParameterLayout,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    rng::AbstractRNG,
+)
+    return nothing
+end
+
+function _sample_prior_steps!(
+    steps::Tuple,
+    env::PlanEnvironment,
+    layout::ParameterLayout,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    rng::AbstractRNG,
+)
+    _sample_prior_step!(first(steps), env, layout, params, constraints, rng)
+    return _sample_prior_steps!(Base.tail(steps), env, layout, params, constraints, rng)
+end
+
+function _sample_prior_step!(
+    step::CompiledChoicePlanStep,
+    env::PlanEnvironment,
+    layout::ParameterLayout,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    rng::AbstractRNG,
+)
+    address = _concrete_address(env, step.address)
+    found, value = _choice_tryget_normalized(constraints, address)
+    if !found
+        value = rand(rng, _compiled_distribution(step, env))
+    end
+    isnothing(step.parameter_slot) || _write_slot_value!(params, layout.slots[step.parameter_slot], value)
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return nothing
+end
+
+function _sample_prior_step!(
+    step::CompiledDeterministicPlanStep,
+    env::PlanEnvironment,
+    layout::ParameterLayout,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    rng::AbstractRNG,
+)
+    _environment_set!(env, step.binding_slot, _eval_compiled_expr(env, step.expr))
+    return nothing
+end
+
+function _sample_prior_step!(
+    step::CompiledLoopPlanStep,
+    env::PlanEnvironment,
+    layout::ParameterLayout,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    rng::AbstractRNG,
+)
+    iterable = _eval_compiled_expr(env, step.iterable)
+    had_previous = _environment_hasvalue(env, step.iterator_slot)
+    previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
+
+    for item in iterable
+        _environment_set!(env, step.iterator_slot, item)
+        _sample_prior_steps!(step.body, env, layout, params, constraints, rng)
+    end
+
+    _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
+    return nothing
+end
+
 function logjoint(
     model::TeaModel,
     params::AbstractVector,
