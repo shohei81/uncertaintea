@@ -71,6 +71,7 @@ core_test_files = [
     ("nuts_fixed_step_moments.jl", "sampling"),
     ("warmup_driver_regression.jl", "sampling"),
     ("per_chain_warmup_batched.jl", "sampling"),
+    ("reject_invalid_parameters.jl", "sampling"),
     ("dense_mass_matrix_single_chain.jl", "sampling"),
     ("masked_batched_nuts.jl", "sampling"),
     ("sbc_calibration.jl", "sampling"),

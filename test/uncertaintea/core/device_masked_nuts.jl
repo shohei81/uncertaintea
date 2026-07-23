@@ -79,6 +79,9 @@ end
     kwargs = (
         num_chains=6, num_samples=250, num_warmup=0, step_size=0.05,
         adapt_step_size=false, adapt_mass_matrix=false, tree_strategy=:masked,
+        # the device path runs shared adaptation; pin the host leg to the same
+        # mode (issue #137 made per-chain the host default)
+        per_chain_adaptation=false,
     )
     device = batched_nuts(dnuts_two_param, (), choicemap((:y, 0.7)); backend=CPU(), rng=MersenneTwister(7), kwargs...)
     host = batched_nuts(dnuts_two_param, (), choicemap((:y, 0.7)); rng=MersenneTwister(7), kwargs...)
@@ -95,7 +98,11 @@ end
 
 @testset "dnuts_device_vs_host_masked_adaptive" begin
     # Full adaptation: statistically (not bitwise) equivalent to the host path.
-    kwargs = (num_chains=4, num_samples=300, num_warmup=200, tree_strategy=:masked)
+    kwargs = (
+        num_chains=4, num_samples=300, num_warmup=200, tree_strategy=:masked,
+        # compare like with like: the device leg uses shared adaptation
+        per_chain_adaptation=false,
+    )
     device = batched_nuts(dnuts_conjugate_gauss, (), choicemap((:y, 0.3)); backend=CPU(), rng=MersenneTwister(512), kwargs...)
     host = batched_nuts(dnuts_conjugate_gauss, (), choicemap((:y, 0.3)); rng=MersenneTwister(512), kwargs...)
 

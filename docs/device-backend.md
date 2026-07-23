@@ -68,7 +68,10 @@ the per-iteration inner loop runs on the device:
   averaging and running-variance mass adaptation stay on the host (they need accept
   statistics and positions), so warmup iterations additionally download the
   position/gradient matrices. Diagonal mass only; `per_chain_adaptation=true` with a
-  backend raises an `ArgumentError`.
+  backend raises an `ArgumentError`. Note the HOST batched samplers default to
+  per-chain adaptation (issue #137); an unset `per_chain_adaptation` resolves to
+  `backend === nothing`, so device calls keep working without the kwarg but use
+  shared adaptation.
 - **ADVI:** the host draws the reparameterized particles and uploads them; the fused
   device gradient kernel scores them and a reduction kernel
   (`src/device/advi_kernels.jl`) produces the mean location gradient and the

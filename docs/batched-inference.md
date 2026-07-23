@@ -132,7 +132,13 @@ The first `batched_hmc` implementation is intentionally narrower than the
 single-chain HMC, but it now supports the same basic warmup structure:
 
 - fixed-step HMC only
-- a shared diagonal mass matrix across the whole batch
+- per-chain warmup adaptation (independent step size + diagonal mass per
+  chain) is the DEFAULT on the host path (issue #137: a shared step size
+  permanently strands prior-initialized chains in high-curvature starts);
+  `per_chain_adaptation=false` selects the pooled shared adaptation below,
+  and is what an unset value resolves to when a device `backend` is given
+- with `per_chain_adaptation=false`: a shared diagonal mass matrix across
+  the whole batch
 - dual-averaging step-size adaptation during warmup
 - windowed shared mass-matrix adaptation from pooled chain positions
 - optional initial step-size search

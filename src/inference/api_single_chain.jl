@@ -70,7 +70,8 @@ function hmc(
     current_logjoint = logjoint_unconstrained(model, position, args, constraints)
     isfinite(current_logjoint) ||
         throw(ArgumentError("initial HMC parameters produced a non-finite unconstrained logjoint"))
-    gradient_cache = _logjoint_gradient_cache(model, position, args, constraints)
+    # sampler-owned evaluation: Stan-style reject semantics (issue #157)
+    gradient_cache = _logjoint_gradient_cache(model, position, args, constraints; reject_invalid_parameters=true)
 
     unconstrained_samples = Matrix{Float64}(undef, num_params, num_samples)
     constrained_samples = Matrix{Float64}(undef, constrained_num_params, num_samples)
@@ -247,7 +248,8 @@ function nuts(
     current_logjoint = logjoint_unconstrained(model, position, args, constraints)
     isfinite(current_logjoint) ||
         throw(ArgumentError("initial NUTS parameters produced a non-finite unconstrained logjoint"))
-    gradient_cache = _logjoint_gradient_cache(model, position, args, constraints)
+    # sampler-owned evaluation: Stan-style reject semantics (issue #157)
+    gradient_cache = _logjoint_gradient_cache(model, position, args, constraints; reject_invalid_parameters=true)
     current_gradient = copy(_logjoint_gradient!(gradient_cache, position))
     all(isfinite, current_gradient) ||
         throw(ArgumentError("initial NUTS parameters produced a non-finite unconstrained gradient"))

@@ -27,6 +27,8 @@
         @test 0.01 < warmup_driver_hmc.mass_matrix[1] < 10.0
     end
 
+    # per_chain_adaptation=false: this regression pins the SHARED driver;
+    # since issue #137 the host default is per-chain adaptation.
     warmup_driver_bn = batched_nuts(
         warmup_driver_model,
         (),
@@ -34,6 +36,7 @@
         num_chains=3,
         num_samples=20,
         num_warmup=30,
+        per_chain_adaptation=false,
         rng=MersenneTwister(404),
     )
     warmup_driver_bn_chain = warmup_driver_bn.chains[1]

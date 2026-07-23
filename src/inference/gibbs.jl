@@ -518,7 +518,8 @@ function gibbs(
     nuts_target_accept = Float64(target_accept)
     nuts_max_delta_energy = Float64(max_delta_energy)
     if has_continuous
-        gradient_cache = _logjoint_gradient_cache(model, position, args, merged)
+        # sampler-owned evaluation: Stan-style reject semantics (issue #157)
+        gradient_cache = _logjoint_gradient_cache(model, position, args, merged; reject_invalid_parameters=true)
         current_gradient = copy(_logjoint_gradient!(gradient_cache, position))
         all(isfinite, current_gradient) ||
             throw(ArgumentError("initial gibbs state produced a non-finite unconstrained gradient"))

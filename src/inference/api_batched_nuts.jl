@@ -11,7 +11,7 @@ function batched_nuts(
     target_accept::Real=0.8,
     adapt_step_size::Bool=true,
     adapt_mass_matrix::Bool=true,
-    per_chain_adaptation::Bool=false,
+    per_chain_adaptation::Union{Nothing,Bool}=nothing,
     find_reasonable_step_size::Bool=false,
     max_delta_energy::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
@@ -25,6 +25,16 @@ function batched_nuts(
 )
     tree_strategy in (:hybrid, :masked) ||
         throw(ArgumentError("batched_nuts tree_strategy must be :hybrid or :masked, got $(repr(tree_strategy))"))
+
+    # Per-chain step-size/mass adaptation is the DEFAULT on the host paths
+    # (issue #137): with shared adaptation, prior-draw initialization strands
+    # the chains whose initial curvature the shared step size never fits (~5%
+    # divergence on the gauss benchmark at every chain count), while per-chain
+    # warmup drivers recover all of them (0% in the issue's experiment). The
+    # device backend still requires shared adaptation, so an unspecified value
+    # resolves per call: `nothing` -> `backend === nothing`. An explicit user
+    # value is always respected (explicit true + backend errors below).
+    per_chain_adaptation = something(per_chain_adaptation, backend === nothing)
 
     # Device-resident masked NUTS. When `backend` is given the masked doubling
     # trajectory runs device-resident (host-side RNG + O(num_chains) bookkeeping,
@@ -44,7 +54,8 @@ function batched_nuts(
         per_chain_adaptation && throw(
             ArgumentError(
                 "batched_nuts per-chain adaptation is not supported on the device backend; " *
-                "run with backend=nothing or per_chain_adaptation=false",
+                "run with backend=nothing, or leave per_chain_adaptation unset / pass " *
+                "per_chain_adaptation=false to use shared adaptation on the device",
             ),
         )
         device_precision = precision === nothing ? default_device_precision(backend) : precision

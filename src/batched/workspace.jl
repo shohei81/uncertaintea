@@ -127,14 +127,18 @@ struct BatchedLogjointGradientCache{C,B,F,G<:AbstractMatrix}
     batch_size::Int
 end
 
-function BatchedLogjointWorkspace(model::TeaModel, constraints=choicemap())
+# `reject_invalid_parameters=true` puts the workspace's compiled-plan walk in
+# Stan-style reject mode (issue #157): invalid distribution parameters score
+# -Inf instead of throwing. Sampler-owned workspaces enable it; the public
+# batched logjoint/gradient APIs keep the throwing default.
+function BatchedLogjointWorkspace(model::TeaModel, constraints=choicemap(); reject_invalid_parameters::Bool=false)
     resolved = _resolve_signature_plan(model, _representative_constraints(constraints))
     plan = resolved.plan
     layout = plan.parameter_layout
     return BatchedLogjointWorkspace(
         _signature_backend_plan(model, resolved),
         resolved.compiled,
-        PlanEnvironment(plan.environment_layout),
+        PlanEnvironment(plan.environment_layout; reject_invalid_parameters=reject_invalid_parameters),
         plan,
         layout,
         parametercount(layout),
@@ -379,8 +383,16 @@ function _logjoint_with_workspace!(
             # Pair/Tuple argument, an unsupported conditioning value, ...)
             # drops to the compiled plan, which scores those natively; the
             # environment is re-prepared because the aborted backend pass may
-            # have partially mutated it
-            err isa BatchedBackendFallback || rethrow()
+            # have partially mutated it. In reject mode (issue #157) the
+            # backend's own parameter-validation throws (ArgumentError /
+            # DomainError, e.g. poisson lambda <= 0) also drop to the compiled
+            # plan, whose walk then scores the invalid step as -Inf.
+            if !(
+                err isa BatchedBackendFallback ||
+                (env.reject_invalid_parameters && (err isa ArgumentError || err isa DomainError))
+            )
+                rethrow()
+            end
             env = _prepare_environment!(workspace, args)
         end
     end
@@ -594,7 +606,16 @@ function _batched_logjoint_unconstrained_with_workspace!(
         try
             return _logjoint_unconstrained_batched_backend!(destination, model, workspace, params, args, constraints)
         catch err
-            if !(err isa BatchedBackendFallback)
+            # reject mode (issue #157): a vectorized-backend parameter-validation
+            # throw for ONE lane must not kill the batch -- drop to the per-column
+            # fallback, where only the offending column scores -Inf
+            if !(
+                err isa BatchedBackendFallback ||
+                (
+                    workspace.environment.reject_invalid_parameters &&
+                    (err isa ArgumentError || err isa DomainError)
+                )
+            )
                 rethrow()
             end
         end
