@@ -99,9 +99,27 @@ function _score_backend_step_and_gradient!(
     had_previous = env.assigned[step.iterator_slot]
     previous_value = had_previous ? copy(env.index_values[step.iterator_slot, :]) : Int[]
 
-    for item in reference_iterable
-        _batched_environment_set_shared!(env, step.iterator_slot, item)
-        _score_backend_steps_and_gradient!(step.body, totals, gradients, cache, env, params, constraints)
+    # Observed-loop shared-address fast path (issue #140): a single observed
+    # scalar choice with an iterator-only address resolves the constraint once
+    # per iteration instead of once per iteration x chain.
+    loop_choice = _backend_loop_observed_choice(step)
+    if _BATCHED_GRADIENT_OBSERVED_LOOP_FAST_PATH[] && _backend_observed_loop_gradient_supported(loop_choice)
+        _score_backend_observed_loop_and_gradient!(
+            loop_choice,
+            step,
+            reference_iterable,
+            totals,
+            gradients,
+            cache,
+            env,
+            params,
+            constraints,
+        )
+    else
+        for item in reference_iterable
+            _batched_environment_set_shared!(env, step.iterator_slot, item)
+            _score_backend_steps_and_gradient!(step.body, totals, gradients, cache, env, params, constraints)
+        end
     end
 
     _batched_environment_restore!(env, step.iterator_slot, previous_value, had_previous)
