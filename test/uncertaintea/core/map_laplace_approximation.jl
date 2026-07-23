@@ -13,7 +13,11 @@
     end
 
     map_gaussian_constraints = choicemap((:y, 0.3f0))
-    map_gaussian_result = map_estimate(map_gaussian_model, (), map_gaussian_constraints)
+    # Seed the default random init: map_estimate's start point is drawn from the
+    # passed rng, so a fixed seed makes the `converged`/`gradient_norm` assertions
+    # deterministic across processes instead of depending on the unseeded global
+    # RNG (issue #124). The mode values below are start-independent (convex).
+    map_gaussian_result = map_estimate(map_gaussian_model, (), map_gaussian_constraints; rng=MersenneTwister(1))
     @test map_gaussian_result.converged
     @test map_gaussian_result.unconstrained_mode ≈ [0.15] atol=1e-6
     @test map_gaussian_result.constrained_mode ≈ [0.15] atol=1e-6
@@ -24,7 +28,7 @@
         map_gaussian_constraints,
     ) atol=1e-10
 
-    map_gaussian_laplace = laplace_approximation(map_gaussian_model, (), map_gaussian_constraints)
+    map_gaussian_laplace = laplace_approximation(map_gaussian_model, (), map_gaussian_constraints; rng=MersenneTwister(2))
     @test map_gaussian_laplace.covariance ≈ [0.5;;] atol=1e-6
     @test map_gaussian_laplace.map.unconstrained_mode ≈ [0.15] atol=1e-6
 
@@ -37,7 +41,8 @@
     end
 
     map_lognormal_constraints = choicemap((:y, 1.2f0))
-    map_lognormal_result = map_estimate(map_lognormal_model, (), map_lognormal_constraints)
+    # Seeded init (issue #124): makes `converged`/`gradient_norm` deterministic.
+    map_lognormal_result = map_estimate(map_lognormal_model, (), map_lognormal_constraints; rng=MersenneTwister(3))
     @test map_lognormal_result.converged
     @test map_lognormal_result.gradient_norm < 1e-6
     @test map_lognormal_result.constrained_mode[1] > 0
