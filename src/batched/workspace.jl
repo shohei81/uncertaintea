@@ -90,6 +90,12 @@ struct BatchedBackendGradientCache{W,S,G,A,C}
     # (simplex/cholesky) slot. Entries with no unconstrained counterpart (the
     # extra simplex/cholesky value rows) hold 0.
     seed_rows::Vector{Int}
+    # observed-loop observation staging (issue #141): loop step -> (iterable,
+    # gathered observation vector). The cache's constraints are fixed for its
+    # lifetime, so the per-address constraint lookups run once per (step,
+    # iterable) instead of once per gradient call; entries are revalidated
+    # against the loop's current iterable before reuse.
+    observed_loop_values::IdDict{Any,Any}
 end
 
 function _backend_gradient_seed_rows(layout::ParameterLayout)
