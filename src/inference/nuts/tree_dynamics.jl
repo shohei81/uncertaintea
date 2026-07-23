@@ -152,7 +152,10 @@ function _continue_nuts_proposal!(
                 continuation.log_weight,
                 tree_workspace.summary.log_weight,
             )
-            if log(rand(rng)) < tree_workspace.summary.log_weight - combined_log_weight
+            # Biased progressive sampling at the doubling merge (Stan
+            # base_nuts; Betancourt 2017 App. A.3.2): P(swap) =
+            # min(1, w_subtree / w_continuation). See _merge_subtree_stats.
+            if log(rand(rng)) < tree_workspace.summary.log_weight - continuation.log_weight
                 _copy_nuts_continuation_proposal_from_tree!(
                     continuation,
                     tree_workspace,
@@ -253,10 +256,12 @@ function _continue_batched_nuts_proposal!(
                 workspace.continuation_log_weight[chain_index],
                 workspace.continuation_candidate_log_weight[chain_index],
             )
+            # Biased progressive sampling at the doubling merge (Stan
+            # base_nuts; Betancourt 2017 App. A.3.2). See _merge_subtree_stats.
             workspace.continuation_select_proposal[chain_index] =
                 log(rand(rng)) <
                 workspace.continuation_candidate_log_weight[chain_index] -
-                workspace.continuation_combined_log_weight[chain_index]
+                workspace.continuation_log_weight[chain_index]
             workspace.tree_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
             if workspace.continuation_select_proposal[chain_index]
                 _copy_single_batched_continuation_proposal_from_tree!(

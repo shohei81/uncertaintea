@@ -121,6 +121,10 @@ function _initialize_nuts_first_step!(
     continuation.accept_stat_count = 1
     candidate_log_weight = -proposed_hamiltonian
     combined_log_weight = _logaddexp(continuation.log_weight, candidate_log_weight)
+    # Unbiased multinomial between the initial point and the first leaf: this
+    # builds the initial two-point trajectory, so it stays unbiased like all
+    # within-trajectory selection; only the doubling merges in the expansion
+    # loop use the Stan-style biased swap (_merge_subtree_stats).
     moved = log(rand(rng)) < candidate_log_weight - combined_log_weight
     if moved
         _copyto_nuts_state!(continuation.proposal, proposed_state)
@@ -227,6 +231,8 @@ function _initialize_batched_nuts_first_step!(
         workspace.continuation_log_weight[chain_index],
         workspace.continuation_candidate_log_weight[chain_index],
     )
+    # Unbiased multinomial between the initial point and the first leaf (see
+    # _initialize_nuts_first_step!); doubling merges bias instead.
     workspace.continuation_select_proposal[chain_index] =
         log(rand(rng)) <
         workspace.continuation_candidate_log_weight[chain_index] -

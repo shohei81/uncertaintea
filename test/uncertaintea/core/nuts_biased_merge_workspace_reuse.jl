@@ -1,6 +1,65 @@
 # Issue #159: Stan-style biased progressive sampling at doubling merges and
 # per-iteration workspace hoisting for the single-chain NUTS proposal.
 @testset "nuts_biased_merge_workspace_reuse" begin
+    @testset "doubling merge uses Stan's biased progressive swap" begin
+        # A subtree at least as heavy as the continuation is ALWAYS selected
+        # (P = min(1, w_new/w_old) = 1), independent of the RNG draw.
+        for seed = 1:32
+            merge_equal = UncertainTea._merge_subtree_stats(
+                -3.0,
+                -3.0,
+                MersenneTwister(seed),
+            )
+            @test merge_equal.select_proposal
+            merge_heavier = UncertainTea._merge_subtree_stats(
+                -3.0,
+                -2.0,
+                MersenneTwister(seed),
+            )
+            @test merge_heavier.select_proposal
+        end
+
+        # Combined log weight is untouched by the bias: still logaddexp.
+        merge_stats = UncertainTea._merge_subtree_stats(-1.0, -2.0, MersenneTwister(7))
+        @test merge_stats.combined_log_weight ≈
+              UncertainTea._logaddexp(-1.0, -2.0)
+        @test merge_stats.candidate_log_weight == -2.0
+
+        # A -Inf subtree never merges and never consumes a draw.
+        merge_rng = MersenneTwister(11)
+        merge_invalid = UncertainTea._merge_subtree_stats(-1.0, -Inf, merge_rng)
+        @test !merge_invalid.select_proposal
+        @test merge_invalid.combined_log_weight == -1.0
+        @test merge_rng == MersenneTwister(11)
+
+        # Empirical swap rate for w_new/w_old = 1/2: biased P = 0.5 (the
+        # unbiased rule would give 1/3). 20k draws => 3-sigma band ~ +-0.011.
+        rate_rng = MersenneTwister(20260723)
+        swap_count = 0
+        num_draws = 20_000
+        for _ = 1:num_draws
+            merge = UncertainTea._merge_subtree_stats(0.0, -log(2.0), rate_rng)
+            swap_count += merge.select_proposal
+        end
+        @test abs(swap_count / num_draws - 0.5) < 0.015
+
+        # WITHIN-subtree leaf selection stays unbiased: candidate with equal
+        # weight is selected with P = 1/2 (biased would be 1), and a candidate
+        # with half the running weight with P = 1/3.
+        leaf_rng = MersenneTwister(20260724)
+        leaf_select_equal = 0
+        leaf_select_half = 0
+        for _ = 1:num_draws
+            leaf_equal = UncertainTea._advance_tree_leaf(1.0, 1.0, 1000.0, -1.0, leaf_rng)
+            leaf_select_equal += leaf_equal.select_proposal
+            leaf_half =
+                UncertainTea._advance_tree_leaf(1.0, 1.0, 1000.0, -1.0 + log(2.0), leaf_rng)
+            leaf_select_half += leaf_half.select_proposal
+        end
+        @test abs(leaf_select_equal / num_draws - 0.5) < 0.015
+        @test abs(leaf_select_half / num_draws - 1.0 / 3.0) < 0.015
+    end
+
     @testset "hoisted workspace reuse is bitwise-identical to fresh allocation" begin
         reuse_constraints = choicemap((:y, 0.4f0))
         reuse_position = [0.3]

@@ -103,11 +103,22 @@ function _dyadic_turning(
     return false
 end
 
-# Per-particle subtree-into-continuation merge: combined log weight and the
-# proposal swap decision (one rand draw, consumed only when the subtree log
-# weight is finite). Callers must only invoke this for VALID subtrees --
-# canonical multinomial NUTS discards a subtree with an internal U-turn or
-# divergence entirely, so no merge (and no rand draw) happens for it.
+# Per-particle subtree-into-continuation merge at a TOP-LEVEL DOUBLING: the
+# combined log weight and the biased progressive proposal swap. Following
+# Stan's base_nuts (Betancourt 2017, "A Conceptual Introduction to HMC",
+# App. A.3.2) the swap is biased toward the fresh subtree,
+#
+#   P(swap) = min(1, w_subtree / w_continuation),
+#
+# which provably increases expected jump distance while leaving the target
+# invariant. The bias is only valid here, at the progressive merge of the
+# already-sampled trajectory with the freshly built subtree; WITHIN-subtree
+# multinomial selection must stay unbiased (_advance_tree_leaf). One rand draw,
+# consumed only when the subtree log weight is finite (log(rand) < 0 always
+# fires when the subtree outweighs the continuation, so no draw is skipped).
+# Callers must only invoke this for VALID subtrees -- canonical multinomial
+# NUTS discards a subtree with an internal U-turn or divergence entirely, so
+# no merge (and no rand draw) happens for it.
 function _merge_subtree_stats(
     continuation_log_weight::Float64,
     subtree_log_weight::Float64,
@@ -118,6 +129,6 @@ function _merge_subtree_stats(
     end
     combined_log_weight = _logaddexp(continuation_log_weight, subtree_log_weight)
     select_proposal =
-        log(rand(rng)) < subtree_log_weight - combined_log_weight
+        log(rand(rng)) < subtree_log_weight - continuation_log_weight
     return _NUTSSubtreeMerge(subtree_log_weight, combined_log_weight, select_proposal)
 end

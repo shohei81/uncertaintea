@@ -31,7 +31,8 @@
 #   4. per merge: one draw per merging chain in chain order, consumed only
 #      when that chain's subtree is valid (no internal U-turn or divergence --
 #      invalid subtrees are discarded whole and never merge) and its log
-#      weight is finite (_merge_subtree_stats).
+#      weight is finite; the draw decides the biased progressive swap
+#      P = min(1, w_subtree / w_continuation) (_merge_subtree_stats).
 
 function _batched_nuts_proposals_masked!(
     workspace::BatchedNUTSWorkspace,
