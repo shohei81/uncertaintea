@@ -1,3 +1,54 @@
+# Multi-chain drivers (issue #136): chains run in parallel across Julia
+# threads when more than one is available. Per-chain seeds are pre-drawn from
+# the caller's `rng` BEFORE any chain runs and every chain samples from its own
+# `MersenneTwister(seed)`, so thread scheduling cannot change results -- each
+# chain's draws are bitwise identical to a sequential run with the same caller
+# rng. Each per-chain `hmc`/`nuts` call builds its own gradient cache, warmup
+# driver, and sample buffers; the compiled signature plan is resolved once up
+# front by `_conditioned_parameter_layout` and the plan memo itself is
+# lock-protected (`_PLAN_MEMO_LOCK`, src/evaluator.jl), so the only shared
+# mutable state left is the user `callback`. Callbacks are serialized behind a
+# per-call lock: at most one callback invocation runs at a time, but
+# invocations from different chains may interleave in any order.
+
+# Run `run_chain(chain_index)` for every chain, writing into `chains`.
+# Exceptions are captured per chain and the first (by chain index) is rethrown
+# with its original type -- callers and tests match on ArgumentError /
+# DimensionMismatch, so a TaskFailedException wrapper must not escape. The
+# rethrow carries the original exception but not its original backtrace.
+function _run_chains!(run_chain::F, chains::Vector{HMCChain}) where {F}
+    num_chains = length(chains)
+    if Threads.nthreads() == 1 || num_chains == 1
+        for chain_index = 1:num_chains
+            chains[chain_index] = run_chain(chain_index)
+        end
+        return chains
+    end
+    errors = Vector{Any}(nothing, num_chains)
+    Threads.@threads for chain_index = 1:num_chains
+        try
+            chains[chain_index] = run_chain(chain_index)
+        catch err
+            errors[chain_index] = err
+        end
+    end
+    for err in errors
+        isnothing(err) || throw(err)
+    end
+    return chains
+end
+
+# Wrap the user callback for one chain: tag the info NamedTuple with the chain
+# index and serialize invocations across chains behind `callback_lock`.
+function _chain_progress_callback(callback, callback_lock::ReentrantLock, chain_index::Int)
+    isnothing(callback) && return nothing
+    return function (info)
+        lock(callback_lock) do
+            callback(merge(info, (chain=chain_index,)))
+        end
+    end
+end
+
 function hmc_chains(
     model::TeaModel,
     args::Tuple=(),
@@ -26,12 +77,12 @@ function hmc_chains(
     constrained_num_params = parametervaluecount(layout)
     seeds = rand(rng, UInt, num_chains)
     chains = Vector{HMCChain}(undef, num_chains)
+    callback_lock = ReentrantLock()
 
-    for chain_index = 1:num_chains
+    _run_chains!(chains) do chain_index
         chain_rng = MersenneTwister(seeds[chain_index])
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
-        chain_callback = isnothing(callback) ? nothing : info -> callback(merge(info, (chain=chain_index,)))
-        chains[chain_index] = hmc(
+        hmc(
             model,
             args,
             constraints;
@@ -48,7 +99,7 @@ function hmc_chains(
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
             metric=metric,
-            callback=chain_callback,
+            callback=_chain_progress_callback(callback, callback_lock, chain_index),
             callback_every=callback_every,
             rng=chain_rng,
         )
@@ -85,12 +136,12 @@ function nuts_chains(
     constrained_num_params = parametervaluecount(layout)
     seeds = rand(rng, UInt, num_chains)
     chains = Vector{HMCChain}(undef, num_chains)
+    callback_lock = ReentrantLock()
 
-    for chain_index = 1:num_chains
+    _run_chains!(chains) do chain_index
         chain_rng = MersenneTwister(seeds[chain_index])
         chain_initial_params = _chain_initial_params(initial_params, chain_index, num_params, constrained_num_params, num_chains)
-        chain_callback = isnothing(callback) ? nothing : info -> callback(merge(info, (chain=chain_index,)))
-        chains[chain_index] = nuts(
+        nuts(
             model,
             args,
             constraints;
@@ -107,7 +158,7 @@ function nuts_chains(
             mass_matrix_regularization=mass_matrix_regularization,
             mass_matrix_min_samples=mass_matrix_min_samples,
             metric=metric,
-            callback=chain_callback,
+            callback=_chain_progress_callback(callback, callback_lock, chain_index),
             callback_every=callback_every,
             rng=chain_rng,
         )

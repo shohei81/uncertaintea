@@ -364,14 +364,24 @@ end
 
 _compile_execution_plan(model::TeaModel) = _compile_execution_plan(model, executionplan(model))
 
+# Serializes the lazy plan memoizations (`model.evaluator_cache` below and
+# `model.signature_cache` in `_resolve_signature_plan`) so concurrent inference
+# -- e.g. `hmc_chains`/`nuts_chains` running chains on threads -- cannot insert
+# into a memo Dict while another thread reads it. One process-wide reentrant
+# lock: compilation is rare (once per model / per signature) and the guarded
+# lookup is cheap next to a logjoint evaluation.
+const _PLAN_MEMO_LOCK = ReentrantLock()
+
 function _compiled_execution_plan(model::TeaModel)
     _reject_branchful_compiled_scoring(model)
-    cached = model.evaluator_cache[]
-    if isnothing(cached)
-        cached = _compile_execution_plan(model)
-        model.evaluator_cache[] = cached
+    return lock(_PLAN_MEMO_LOCK) do
+        cached = model.evaluator_cache[]
+        if isnothing(cached)
+            cached = _compile_execution_plan(model)
+            model.evaluator_cache[] = cached
+        end
+        cached::CompiledExecutionPlan
     end
-    return cached::CompiledExecutionPlan
 end
 
 # --- conditioning-signature resolution (issue #95) ---------------------------
@@ -423,18 +433,21 @@ end
 
 function _resolve_signature_plan(model::TeaModel, signature::Set{Address})
     _reject_branchful_compiled_scoring(model)
-    cache = model.signature_cache[]
-    if isnothing(cache)
-        cache = Dict{Set{Address},ResolvedSignaturePlan}()
-        model.signature_cache[] = cache
+    return lock(_PLAN_MEMO_LOCK) do
+        cache = model.signature_cache[]
+        if isnothing(cache)
+            cache = Dict{Set{Address},ResolvedSignaturePlan}()
+            model.signature_cache[] = cache
+        end
+        store = cache::Dict{Set{Address},ResolvedSignaturePlan}
+        existing = get(store, signature, nothing)
+        isnothing(existing) && begin
+            plan = _signature_execution_plan(executionplan(model), signature)
+            existing = ResolvedSignaturePlan(plan, _compile_execution_plan(model, plan))
+            store[signature] = existing
+        end
+        existing
     end
-    store = cache::Dict{Set{Address},ResolvedSignaturePlan}
-    existing = get(store, signature, nothing)
-    isnothing(existing) || return existing
-    plan = _signature_execution_plan(executionplan(model), signature)
-    resolved = ResolvedSignaturePlan(plan, _compile_execution_plan(model, plan))
-    store[signature] = resolved
-    return resolved
 end
 
 _resolve_signature_plan(model::TeaModel, constraints::ChoiceMap) =
