@@ -116,6 +116,63 @@ end
     return latent_loc
 end
 
+# --- reachability of the noncentered transform walk (issue #100) -------------
+#
+# The transform walk must only evaluate deterministic steps that a noncentered
+# loc/scale actually depends on. Here the enumerated `k` (a slotless choice
+# bound to a poison value during the walk) flows through the deterministic
+# binding `w` into the OBSERVATION mean only -- it never reaches the noncentered
+# loc/scale (theta ~ normal(0, tau)). Eager evaluation of `w` used to poison the
+# walk and throw a misleading error; the reachability fix leaves `w` unevaluated.
+@tea static function ncc_reach_marginalize()
+    tau ~ lognormal(0.0, 1.0)
+    theta ~ normal(0.0, tau; reparam=:noncentered)
+    k ~ bernoulli(0.5; marginalize=:enumerate)
+    w = k * 2.0
+    {:y} ~ normal(w + theta, 1.0)
+end
+
+# same model with `k` used directly in the observation's distribution
+# arguments -- no deterministic binding in between. This spelling already
+# worked before the fix and is the reference the walk must reproduce.
+@tea static function ncc_reach_marginalize_direct()
+    tau ~ lognormal(0.0, 1.0)
+    theta ~ normal(0.0, tau; reparam=:noncentered)
+    k ~ bernoulli(0.5; marginalize=:enumerate)
+    {:y} ~ normal(k * 2.0 + theta, 1.0)
+end
+
+# centered twin of ncc_reach_marginalize (theta without reparam): the
+# noncentered unconstrained logjoint equals this one at the matching theta plus
+# the log|scale| Jacobian.
+@tea static function ncc_reach_marginalize_centered()
+    tau ~ lognormal(0.0, 1.0)
+    theta ~ normal(0.0, tau)
+    k ~ bernoulli(0.5; marginalize=:enumerate)
+    w = k * 2.0
+    {:y} ~ normal(w + theta, 1.0)
+end
+
+# a plain (non-marginalized) discrete latent conditioned through the
+# constraints, flowing through a deterministic step into the observation only.
+@tea static function ncc_reach_conditioned_discrete()
+    tau ~ lognormal(0.0, 1.0)
+    theta ~ normal(0.0, tau; reparam=:noncentered)
+    k ~ bernoulli(0.5)
+    w = k * 2.0
+    {:y} ~ normal(w + theta, 1.0)
+end
+
+# NEGATIVE case: the enumerated `k` genuinely flows (through a deterministic
+# step) into a noncentered SCALE, so the walk cannot proceed and must still
+# raise the (now-accurate) error.
+@tea static function ncc_reach_negative()
+    k ~ bernoulli(0.5; marginalize=:enumerate)
+    s = k * 1.0 + 1.0
+    theta ~ normal(0.0, s; reparam=:noncentered)
+    {:y} ~ normal(theta, 1.0)
+end
+
 @testset "reparam_noncentered_cpu" begin
     ncc_constraints = choicemap((:y, 0.5))
 
@@ -498,5 +555,101 @@ end
         )
         @test all(result.pvalues .> 0.005)
         @test !has_warnings(result)
+    end
+
+    @testset "ncc_walk_reachability" begin
+        reach_params = [0.2, 0.7]
+        reach_constraints = choicemap((:y, 1.0))
+
+        @testset "marginalize_through_deterministic_step" begin
+            # the #100 repro now computes rather than throwing
+            value = logjoint_unconstrained(ncc_reach_marginalize, reach_params, (), reach_constraints)
+            @test isfinite(value)
+
+            # oracle 1: identical to the spelling that feeds `k` directly into
+            # the observation (no deterministic binding in between)
+            direct =
+                logjoint_unconstrained(ncc_reach_marginalize_direct, reach_params, (), reach_constraints)
+            @test value ≈ direct atol = 1e-12
+
+            # oracle 2: marginalizing k == logsumexp of conditioning on each of
+            # its support values (docs/discrete-enumeration.md). Conditioning
+            # changes the signature and takes the observed-value path.
+            branch_false = logjoint_unconstrained(
+                ncc_reach_marginalize,
+                reach_params,
+                (),
+                choicemap((:y, 1.0), (:k, false)),
+            )
+            branch_true = logjoint_unconstrained(
+                ncc_reach_marginalize,
+                reach_params,
+                (),
+                choicemap((:y, 1.0), (:k, true)),
+            )
+            m = max(branch_false, branch_true)
+            marginal = m + log(exp(branch_false - m) + exp(branch_true - m))
+            @test value ≈ marginal atol = 1e-10
+
+            # cross-check against the centered-equivalent model: the noncentered
+            # unconstrained logjoint equals the centered twin at the matching
+            # theta = tau * z, plus exactly the log|scale| Jacobian (log(tau)).
+            tau = exp(reach_params[1])
+            theta = tau * reach_params[2]
+            centered =
+                logjoint_unconstrained(ncc_reach_marginalize_centered, [reach_params[1], theta], (), reach_constraints)
+            @test value ≈ centered + log(tau) atol = 1e-10
+
+            # gradient matches ForwardDiff through the marginalized walk
+            gradient =
+                logjoint_gradient_unconstrained(ncc_reach_marginalize, reach_params, (), reach_constraints)
+            fd = UncertainTea.ForwardDiff.gradient(
+                p -> logjoint_unconstrained(ncc_reach_marginalize, p, (), reach_constraints),
+                reach_params,
+            )
+            @test gradient ≈ fd atol = 1e-10
+        end
+
+        @testset "conditioned_discrete_through_deterministic_step" begin
+            for k_value in (false, true)
+                cond = choicemap((:y, 1.0), (:k, k_value))
+                value =
+                    logjoint_unconstrained(ncc_reach_conditioned_discrete, reach_params, (), cond)
+                @test isfinite(value)
+                # oracle: hand-built z-space density with the observed k folded
+                # into the observation mean (theta = tau * z, Jacobian log(tau))
+                tau = exp(reach_params[1])
+                theta = tau * reach_params[2]
+                w = (k_value ? 1.0 : 0.0) * 2.0
+                manual =
+                    UncertainTea.logpdf(lognormal(0.0, 1.0), tau) +
+                    log(tau) +
+                    UncertainTea.logpdf(normal(0.0, 1.0), reach_params[2]) +
+                    UncertainTea.logpdf(bernoulli(0.5), k_value) +
+                    UncertainTea.logpdf(normal(w + theta, 1.0), 1.0)
+                @test value ≈ manual atol = 1e-10
+
+                gradient =
+                    logjoint_gradient_unconstrained(ncc_reach_conditioned_discrete, reach_params, (), cond)
+                fd = UncertainTea.ForwardDiff.gradient(
+                    p -> logjoint_unconstrained(ncc_reach_conditioned_discrete, p, (), cond),
+                    reach_params,
+                )
+                @test gradient ≈ fd atol = 1e-10
+            end
+        end
+
+        @testset "slotless_into_noncentered_scale_still_rejected" begin
+            err = try
+                logjoint_unconstrained(ncc_reach_negative, [0.3], (), choicemap((:y, 0.5)))
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            message = sprint(showerror, err)
+            @test occursin("noncentered", message)
+            @test occursin("marginalize=:enumerate", message)
+        end
     end
 end

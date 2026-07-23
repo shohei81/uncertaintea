@@ -148,6 +148,14 @@ end
 
 struct CompiledExecutionPlan{S<:Tuple}
     steps::S
+    # Environment slots that some reparam=:noncentered location/scale expression
+    # transitively depends on (issue #100). The dependent-transform walk evaluates
+    # deterministic steps and loops only when they populate one of these slots;
+    # steps outside this dependency cone are irrelevant to the change of variables,
+    # and eagerly evaluating them would poison the walk whenever an unrelated
+    # slotless choice (a marginalize=:enumerate site or a loop-scoped binding)
+    # feeds them. Empty when the plan has no noncentered site.
+    required_walk_slots::Set{Int}
 end
 
 # If `callee` is a dotted operator symbol (e.g. `.*`, `.+`), return the underlying
@@ -351,7 +359,7 @@ function _compile_execution_plan(model::TeaModel, raw_plan::ExecutionPlan)
     compiled_steps = tuple(
         (_compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step) for step in raw_plan.steps)...,
     )
-    return CompiledExecutionPlan(compiled_steps)
+    return CompiledExecutionPlan(compiled_steps, _required_walk_slots(compiled_steps))
 end
 
 _compile_execution_plan(model::TeaModel) = _compile_execution_plan(model, executionplan(model))
@@ -758,9 +766,11 @@ _noncentered_location_scale_indices(family::Symbol) = family === :studentt ? (2,
 struct _TransformUnknownValue end
 
 const _TRANSFORM_UNKNOWN_MESSAGE =
-    "reparam=:noncentered location/scale expressions may only depend on model arguments " *
-    "and earlier latents with parameter slots; this model routes a choice without a slot " *
-    "(an observation or a discrete latent) into one"
+    "reparam=:noncentered location/scale expressions may only depend on model arguments, " *
+    "earlier latents with parameter slots, and observed (constrained) values; this model " *
+    "routes a choice with no fixed value during the change of variables -- a " *
+    "marginalize=:enumerate discrete latent or a loop-scoped binding -- into a noncentered " *
+    "location/scale"
 
 Base.:(==)(::_TransformUnknownValue, ::Any) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
 Base.:(==)(::Any, ::_TransformUnknownValue) = throw(ArgumentError(_TRANSFORM_UNKNOWN_MESSAGE))
@@ -780,6 +790,98 @@ function _walk_transform_eval(env::PlanEnvironment, expr)
         end
         rethrow()
     end
+end
+
+# --- reachability: which bindings a noncentered loc/scale actually needs ------
+#
+# Only expressions reachable from a reparam=:noncentered location/scale take part
+# in the change of variables, so only those deterministic steps and loops need to
+# run during the transform walk (issue #100). We compute, over the compiled plan,
+# the set of environment slots a noncentered loc/scale transitively depends on;
+# the walk then evaluates a deterministic step (or a loop) only when it populates
+# one of those slots. A step that a poisoned (slotless) binding feeds but that
+# never reaches a noncentered loc/scale is left unevaluated -- exactly the steps
+# whose eager evaluation used to throw spuriously.
+
+_collect_slot_refs!(::Set{Int}, ::CompiledLiteralExpr) = nothing
+function _collect_slot_refs!(acc::Set{Int}, expr::CompiledSlotExpr)
+    push!(acc, expr.slot)
+    return nothing
+end
+function _collect_slot_refs!(acc::Set{Int}, expr::CompiledCallExpr)
+    _collect_slot_refs!(acc, expr.callee)
+    for arg in expr.arguments
+        _collect_slot_refs!(acc, arg)
+    end
+    return nothing
+end
+function _collect_slot_refs!(acc::Set{Int}, expr::Union{CompiledTupleExpr,CompiledVectorExpr,CompiledBlockExpr})
+    for arg in expr.arguments
+        _collect_slot_refs!(acc, arg)
+    end
+    return nothing
+end
+# CompiledNoncentered stores loc/scale untyped; dispatch resolves on the concrete
+# compiled-expr subtype at runtime.
+_collect_slot_refs!(acc::Set{Int}, expr) = nothing
+
+# Seed = slots read directly by any noncentered loc/scale; `defs` maps a slot to
+# the slots the step producing it reads (deterministic bindings and loop
+# iterators), recursing into loop bodies.
+_collect_walk_dependencies!(seed::Set{Int}, defs::Dict{Int,Set{Int}}, steps::Tuple) =
+    (foreach(step -> _collect_walk_dependencies!(seed, defs, step), steps); nothing)
+function _collect_walk_dependencies!(seed::Set{Int}, defs::Dict{Int,Set{Int}}, step::CompiledDeterministicPlanStep)
+    refs = Set{Int}()
+    _collect_slot_refs!(refs, step.expr)
+    defs[step.binding_slot] = refs
+    return nothing
+end
+function _collect_walk_dependencies!(seed::Set{Int}, defs::Dict{Int,Set{Int}}, step::CompiledChoicePlanStep)
+    if !isnothing(step.noncentered)
+        _collect_slot_refs!(seed, step.noncentered.location)
+        _collect_slot_refs!(seed, step.noncentered.scale)
+    end
+    return nothing
+end
+function _collect_walk_dependencies!(seed::Set{Int}, defs::Dict{Int,Set{Int}}, step::CompiledLoopPlanStep)
+    refs = Set{Int}()
+    _collect_slot_refs!(refs, step.iterable)
+    defs[step.iterator_slot] = refs
+    _collect_walk_dependencies!(seed, defs, step.body)
+    return nothing
+end
+
+function _required_walk_slots(steps::Tuple)
+    seed = Set{Int}()
+    defs = Dict{Int,Set{Int}}()
+    _collect_walk_dependencies!(seed, defs, steps)
+    required = Set{Int}()
+    isempty(seed) && return required
+    worklist = collect(seed)
+    while !isempty(worklist)
+        slot = pop!(worklist)
+        slot in required && continue
+        push!(required, slot)
+        edges = get(defs, slot, nothing)
+        isnothing(edges) && continue
+        for dep in edges
+            dep in required || push!(worklist, dep)
+        end
+    end
+    return required
+end
+
+# Whether walking this step (or its loop subtree) can populate a required slot.
+_subtree_defines_required(step::CompiledDeterministicPlanStep, required::Set{Int}) =
+    step.binding_slot in required
+_subtree_defines_required(step::CompiledChoicePlanStep, required::Set{Int}) =
+    !isnothing(step.binding_slot) && step.binding_slot in required
+function _subtree_defines_required(step::CompiledLoopPlanStep, required::Set{Int})
+    step.iterator_slot in required && return true
+    for inner in step.body
+        _subtree_defines_required(inner, required) && return true
+    end
+    return false
 end
 
 function _dependent_transform_walk!(
@@ -805,6 +907,7 @@ function _dependent_transform_walk!(
         params,
         inverse,
         constraints,
+        compiled_plan.required_walk_slots,
     )
 end
 
@@ -864,33 +967,50 @@ function _transform_to_constrained_with_logabsdet(
     return constrained, logabsdet
 end
 
-_walk_transform_steps!(destination, ::Tuple{}, env, layout, params, inverse, constraints) =
+_walk_transform_steps!(destination, ::Tuple{}, env, layout, params, inverse, constraints, required) =
     zero(eltype(destination))
 
-function _walk_transform_steps!(destination, steps::Tuple, env, layout, params, inverse, constraints)
-    return _walk_transform_step!(destination, first(steps), env, layout, params, inverse, constraints) +
-           _walk_transform_steps!(destination, Base.tail(steps), env, layout, params, inverse, constraints)
+function _walk_transform_steps!(destination, steps::Tuple, env, layout, params, inverse, constraints, required)
+    return _walk_transform_step!(destination, first(steps), env, layout, params, inverse, constraints, required) +
+           _walk_transform_steps!(destination, Base.tail(steps), env, layout, params, inverse, constraints, required)
 end
 
-function _walk_transform_step!(destination, step::CompiledDeterministicPlanStep, env, layout, params, inverse, constraints)
-    _environment_set!(env, step.binding_slot, _walk_transform_eval(env, step.expr))
+function _walk_transform_step!(
+    destination,
+    step::CompiledDeterministicPlanStep,
+    env,
+    layout,
+    params,
+    inverse,
+    constraints,
+    required,
+)
+    # Only evaluate when the binding feeds a noncentered loc/scale (issue #100);
+    # otherwise the step is irrelevant to the change of variables and evaluating
+    # it would poison the walk on unrelated slotless choices.
+    if step.binding_slot in required
+        _environment_set!(env, step.binding_slot, _walk_transform_eval(env, step.expr))
+    end
     return zero(eltype(destination))
 end
 
-function _walk_transform_step!(destination, step::CompiledLoopPlanStep, env, layout, params, inverse, constraints)
+function _walk_transform_step!(destination, step::CompiledLoopPlanStep, env, layout, params, inverse, constraints, required)
+    # Skip the loop entirely unless walking it populates a required binding; a
+    # loop-scoped binding never reaches a noncentered loc/scale otherwise.
+    _subtree_defines_required(step, required) || return zero(eltype(destination))
     iterable = _walk_transform_eval(env, step.iterable)
     had_previous = _environment_hasvalue(env, step.iterator_slot)
     previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
     total = zero(eltype(destination))
     for item in iterable
         _environment_set!(env, step.iterator_slot, item)
-        total += _walk_transform_steps!(destination, step.body, env, layout, params, inverse, constraints)
+        total += _walk_transform_steps!(destination, step.body, env, layout, params, inverse, constraints, required)
     end
     _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
     return total
 end
 
-function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, layout, params, inverse, constraints)
+function _walk_transform_step!(destination, step::CompiledChoicePlanStep, env, layout, params, inverse, constraints, required)
     if isnothing(step.parameter_slot)
         # Slotless choice. Unified value resolution (issue #95, doc section 2):
         # an OBSERVATION resolves to its constrained value and is bound so
