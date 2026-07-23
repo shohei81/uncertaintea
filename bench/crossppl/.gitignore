@@ -1,0 +1,7 @@
+results/raw/
+python/.cmdstan/
+python/.venv/
+python/__pycache__/
+# compiled Stan model binaries (cmdstanpy puts them next to the .stan file)
+python/stan/*
+!python/stan/*.stan
