@@ -188,12 +188,21 @@ end
 # ill-defined: its prior can depend on the enumerated value and would reweight the
 # enumeration, which the per-observation decomposition cannot represent. A nested
 # marginalize step is not itself a free latent; the recursion handles it.
-function _marginal_suffix_has_free_latent(steps::Tuple)
+#
+# The scan runs over a `Vector{Any}` rather than the heterogeneous compiled-step
+# `Tuple`: a `for` loop over such a tuple combined with the recursion into loop bodies
+# (each a differently-typed tuple) blows Julia 1.10's type inference recursion bound
+# ("fatal error in type inference (type bound)"). The `Vector{Any}` function barrier
+# fixes the element and recursion-argument types, so inference stays bounded on both
+# 1.10 and 1.12. This is a structural check run off the hot path, so the boxing is fine.
+_marginal_suffix_has_free_latent(steps::Tuple) = _marginal_suffix_has_free_latent(collect(Any, steps))
+
+function _marginal_suffix_has_free_latent(steps::Vector{Any})
     for step in steps
         if step isa CompiledChoicePlanStep
             isnothing(step.marginalize) && !isnothing(step.parameter_value_indices) && return true
         elseif step isa CompiledLoopPlanStep
-            _marginal_suffix_has_free_latent(step.body) && return true
+            _marginal_suffix_has_free_latent(collect(Any, step.body)) && return true
         end
     end
     return false
