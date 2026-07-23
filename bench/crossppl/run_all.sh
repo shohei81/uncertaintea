@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Orchestrates the cross-PPL benchmark (issue #121).
+#
+#   ./run_all.sh cpu      correctness pass + CPU scaling legs
+#                         (run natively, or inside the docker/ container for
+#                         the pinned fair-comparison environment)
+#   ./run_all.sh metal    Metal scaling legs (native macOS only)
+#   ./run_all.sh pinned   diagnostic sweep with pinned initialization — the
+#                         issue #137 workaround; rows are labelled
+#                         "-pinned-init" and must never be quoted as
+#                         default-configuration results
+#   ./run_all.sh analyze  shared ArviZ diagnostics -> results/summary.{json,md}
+#
+# All legs append to results/raw/; analyze reads everything found there.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# Correctness pass settings (4 chains is the conventional cross-PPL setup).
+CHAINS=4
+SAMPLES=1000
+WARMUP=1000
+REPS=3
+SEED=100
+
+# Scaling sweep settings (short chains, many of them).  500 draws/chain so a
+# healthy sampler clears the R-hat<1.01 gate (200 was inside its noise
+# floor).  Capped at 4096 chains: the 16384 points cost hours and add no new
+# information until issues #137/#138 are fixed.  Large-chain runs are minutes
+# long, so timer dispersion is negligible and one repetition keeps the sweep
+# tractable; short runs keep 3 repetitions.
+SCALE_CHAINS=(64 512 4096)
+SCALE_SAMPLES=500
+SCALE_WARMUP=200
+SCALE_SEED=200
+# Unconstrained posterior-mode init for the gauss model (mu, log s) — the
+# issue #137 diagnostic workaround used by the `pinned` mode.
+GAUSS_PINNED_INIT="0.5,0.18232155679395463"
+scale_reps() { if [[ "$1" -ge 4096 ]]; then echo 1; else echo 3; fi; }
+
+MODELS=(eight_schools_centered eight_schools_noncentered logistic gauss)
+
+if [[ "${CROSSPPL_IN_CONTAINER:-0}" == "1" ]]; then
+    PY=(uv run --project /opt/bench-python --no-sync python)
+else
+    PY=(uv run --project python python)
+fi
+# -t auto: only the batched-cpu-ka variant uses threads; harmless elsewhere.
+JL=(julia -t auto --project=julia)
+
+run_cpu() {
+    "${JL[@]}" -e 'using Pkg; Pkg.instantiate()'
+    for model in "${MODELS[@]}"; do
+        echo "=== $model: correctness pass ==="
+        "${PY[@]}" python/run_stan.py --model "$model" \
+            --chains $CHAINS --samples $SAMPLES --warmup $WARMUP --seed $SEED --reps $REPS
+        "${PY[@]}" python/run_numpyro.py --model "$model" --chain-method parallel \
+            --chains $CHAINS --samples $SAMPLES --warmup $WARMUP --seed $SEED --reps $REPS
+        "${JL[@]}" julia/run.jl --model "$model" --variant cpu \
+            --chains $CHAINS --samples $SAMPLES --warmup $WARMUP --seed $SEED --reps $REPS
+        "${JL[@]}" julia/run.jl --model "$model" --variant batched-cpu \
+            --chains $CHAINS --samples $SAMPLES --warmup $WARMUP --seed $SEED --reps $REPS
+    done
+    echo "=== gauss: CPU scaling sweep ==="
+    for k in "${SCALE_CHAINS[@]}"; do
+        r=$(scale_reps "$k")
+        "${PY[@]}" python/run_numpyro.py --model gauss --chain-method vectorized --no-x64 \
+            --chains "$k" --samples $SCALE_SAMPLES --warmup $SCALE_WARMUP \
+            --seed $SCALE_SEED --reps "$r"
+        "${JL[@]}" julia/run.jl --model gauss --variant batched-cpu \
+            --chains "$k" --samples $SCALE_SAMPLES --warmup $SCALE_WARMUP \
+            --seed $SCALE_SEED --reps "$r"
+        "${JL[@]}" julia/run.jl --model gauss --variant batched-cpu-ka \
+            --chains "$k" --samples $SCALE_SAMPLES --warmup $SCALE_WARMUP \
+            --seed $SCALE_SEED --reps "$r"
+    done
+}
+
+run_metal() {
+    "${JL[@]}" -e 'using Pkg; Pkg.instantiate()'
+    echo "=== gauss: Metal scaling sweep (native) ==="
+    for k in "${SCALE_CHAINS[@]}"; do
+        "${JL[@]}" julia/run.jl --model gauss --variant batched-metal \
+            --chains "$k" --samples $SCALE_SAMPLES --warmup $SCALE_WARMUP \
+            --seed $SCALE_SEED --reps "$(scale_reps "$k")"
+    done
+}
+
+run_pinned() {
+    "${JL[@]}" -e 'using Pkg; Pkg.instantiate()'
+    echo "=== gauss: pinned-init diagnostic sweep (issue #137 workaround) ==="
+    for v in batched-cpu-ka batched-metal; do
+        for k in "${SCALE_CHAINS[@]}"; do
+            "${JL[@]}" julia/run.jl --model gauss --variant "$v" \
+                --init "$GAUSS_PINNED_INIT" \
+                --chains "$k" --samples $SCALE_SAMPLES --warmup $SCALE_WARMUP \
+                --seed $SCALE_SEED --reps "$(scale_reps "$k")"
+        done
+    done
+}
+
+case "${1:-}" in
+    cpu) run_cpu ;;
+    metal) run_metal ;;
+    pinned) run_pinned ;;
+    analyze) "${PY[@]}" python/analyze.py ;;
+    *) echo "usage: $0 {cpu|metal|pinned|analyze}" >&2; exit 1 ;;
+esac

@@ -11,6 +11,7 @@ This folder tracks the current design direction of UncertainTea.
 - [gpu-native-nuts.md](gpu-native-nuts.md): the design constraints and staged plan for iterative, GPU-oriented NUTS
 - [vector-backend-lowering.md](vector-backend-lowering.md): staged design notes for bringing vector-valued latent families into the backend-native GPU subset
 - [noncentered-reparam.md](noncentered-reparam.md): staged design for automatic non-centered reparameterization with address preservation
+- [benchmarks.md](benchmarks.md): cross-PPL correctness + performance results (NumPyro/Stan) with the methodology behind them; harness in `bench/crossppl/`
 
 ## Documentation Rules
 

@@ -1,0 +1,15 @@
+[project]
+name = "uncertaintea-crossppl-bench"
+version = "0.1.0"
+description = "Cross-PPL benchmark runners and shared diagnostics (issue #121)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.0",
+    "jax>=0.6",
+    "numpyro>=0.18",
+    "cmdstanpy>=1.2",
+    "arviz>=0.21,<1",
+]
+
+[tool.uv]
+package = false
