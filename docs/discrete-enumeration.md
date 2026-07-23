@@ -224,6 +224,57 @@ user-side marginalization:
   extraction (`infer_discrete`-style posterior for `z`); track 2
   MH-within-Gibbs for unbounded supports.
 
+## Pointwise log-likelihood (issue #88)
+
+`pointwise_loglikelihood` / `observation_addresses` (and the WAIC / PSIS-LOO
+model-comparison APIs that consume them) treat a `marginalize=:enumerate`
+latent as what it is: a latent that is summed out, never an observation. For
+each observation in the enumerated latent's suffix the recorded pointwise
+value is the *marginal* likelihood, integrating the discrete latent out with
+the same logsumexp the marginalized logjoint uses. For the repro
+`z ~ bernoulli(0.3; marginalize=:enumerate); {:y} ~ normal(mu + z, 1)` the
+recorded value for `:y` is `log(0.7 * N(y; mu, 1) + 0.3 * N(y; mu + 1, 1))`.
+
+Concretely, writing the observations in the latent's suffix as `y_k`,
+
+```
+p(data | theta) = sum_z p(z) * prod_k p(y_k | z)
+                = [prod_{k in I} p(y_k)] * sum_z p(z) prod_{k in D} p(y_k | z)
+```
+
+where `I` are the observations whose density does not depend on `z` and `D`
+are those that do. The z-independent factors decompose per observation
+directly; the dependent block is one joint term over all of `D` and
+decomposes into per-observation pointwise terms only when `|D| <= 1`.
+
+**Supported (the pointwise marginal factorizes):**
+
+- An enumerated latent local to a single observation (`|D| == 1`): that
+  observation gets `log sum_z p(z) p(y | z)`; any z-independent observations
+  are recorded as their own logpdf. This is the common case.
+- Independent enumerated latents each feeding their own observation: the
+  columns are conditionally independent, so each factorizes.
+- Several enumerated latents all feeding a *single* observation (nested /
+  product enumeration): that one column gets its full multi-sum marginal.
+- A *constrained* enumerated latent: it is an ordinary fixed observation,
+  recorded and scored once at the provided value.
+
+**Rejected with a specific error (genuinely non-factorizing):**
+
+- One enumerated latent shared across two or more observations that both
+  depend on it (`|D| >= 2`): `log sum_z p(z) prod_i p(y_i | z)` does not
+  factorize into independent per-observation terms.
+- A free (slotted) continuous latent inside the enumeration suffix: its prior
+  may depend on the enumerated value and reweight the enumeration in a way the
+  per-observation decomposition cannot represent. Place the enumerated site
+  *after* all continuous latents so its suffix scores only observations.
+- An enumerated latent whose value changes the *set* of downstream
+  observations.
+
+The classification uses the constraint-driven rule
+(`docs/constraint-driven-conditioning.md`): the enumerated latent is slotless
+and unconstrained, hence never in the observed set.
+
 ## Non-goals
 
 - Variable elimination / smarter enumeration orders (NumPyro-style):
