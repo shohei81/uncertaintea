@@ -55,6 +55,7 @@ core_test_files = [
     ("mcmc_diagnostics_ess_mcse.jl", "inference"),
     ("predictive_sampling_smc_resampling.jl", "inference"),
     ("waic_psis_loo.jl", "inference"),
+    ("pointwise_marginal_enum.jl", "inference"),
     ("map_laplace_approximation.jl", "inference"),
     ("advi_structured_guides.jl", "inference"),
     ("pathfinder_init.jl", "inference"),
