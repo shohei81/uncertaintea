@@ -258,11 +258,22 @@ function _stage_step!(
     previous = had_previous ? copy(env.index_values[step.iterator_slot, :]) : Int[]
     for item in reference
         _batched_environment_set_shared!(env, step.iterator_slot, item)
-        for inner in step.body
-            _stage_step!(rows, inner, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, T)
-        end
+        _stage_steps!(rows, step.body, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, T)
     end
     _batched_environment_restore!(env, step.iterator_slot, previous, had_previous)
+    return nothing
+end
+
+# Function barrier for the recursive step walk: iterate the heterogeneous
+# compiled-step tuple as a `Vector{Any}` so type inference/codegen does not
+# specialize the whole (nested) tuple recursion. On the Julia 1.10 aarch64 build
+# that specialization degrades into a SIGILL codegen crash (issue #131); the same
+# over-specialization class was handled the same way for #88. This is the
+# one-time host staging path, so the dynamic dispatch cost is immaterial.
+function _stage_steps!(rows, steps, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, ::Type{T}) where {T}
+    for step in collect(Any, steps)
+        _stage_step!(rows, step, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, T)
+    end
     return nothing
 end
 
@@ -289,9 +300,7 @@ function _stage_device_observations(
     trip_counts = zeros(Int32, Int(plan.loop_count))
     loop_starts = zeros(Int32, Int(plan.loop_count))
     loop_counter = Ref(0)
-    for step in backend.steps
-        _stage_step!(rows, step, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, Float64)
-    end
+    _stage_steps!(rows, backend.steps, env, constraints, dummy_params, trip_counts, loop_starts, loop_counter, Float64)
 
     observed = Matrix{T}(undef, length(rows), batch_size)
     observed_int = Matrix{Int64}(undef, length(rows), batch_size)
