@@ -49,8 +49,12 @@ function batched_nuts(
         )
         device_precision = precision === nothing ? default_device_precision(backend) : precision
     end
-    num_params = parametercount(parameterlayout(model))
-    constrained_num_params = parametervaluecount(parameterlayout(model))
+    # Signature-aware sizing (#95): per-chain position rows and constrained
+    # result width follow the conditioning signature, not the syntactic default
+    # layout, matching the signature-aware batched workspaces (PR-4).
+    signature_layout = _batched_signature_layout(model, constraints)
+    num_params = parametercount(signature_layout)
+    constrained_num_params = parametervaluecount(signature_layout)
     _validate_batched_nuts_arguments(
         num_chains,
         num_params,
@@ -288,14 +292,14 @@ function batched_nuts(
             sample_index += 1
             for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
-                _transform_to_constrained!(
-                    view(workspace.constrained_position, :, chain_index),
+                _write_signature_constrained_sample!(
+                    constrained_samples,
                     model,
                     view(position, :, chain_index),
-                )
-                copyto!(
-                    view(constrained_samples, :, sample_index, chain_index),
-                    view(workspace.constrained_position, :, chain_index),
+                    sample_index,
+                    _batched_args(batch_args, chain_index),
+                    _batched_constraints(batch_constraints, chain_index),
+                    chain_index,
                 )
                 logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
                 acceptance_stats[sample_index, chain_index] = workspace.accept_prob[chain_index]
@@ -519,14 +523,14 @@ function _batched_nuts_per_chain!(
             sample_index += 1
             for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
-                _transform_to_constrained!(
-                    view(workspace.constrained_position, :, chain_index),
+                _write_signature_constrained_sample!(
+                    constrained_samples,
                     model,
                     view(position, :, chain_index),
-                )
-                copyto!(
-                    view(constrained_samples, :, sample_index, chain_index),
-                    view(workspace.constrained_position, :, chain_index),
+                    sample_index,
+                    _batched_args(batch_args, chain_index),
+                    _batched_constraints(batch_constraints, chain_index),
+                    chain_index,
                 )
                 logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
                 acceptance_stats[sample_index, chain_index] = workspace.accept_prob[chain_index]

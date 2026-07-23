@@ -655,9 +655,12 @@ function BatchedNUTSWorkspace(
 )
     num_params, num_chains = size(position)
     checkpoint_columns = max(max_tree_depth + 1, 1)
-    constrained_num_params = parametervaluecount(parameterlayout(model))
     batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
+    # constrained-space width follows the conditioning signature (issue #95),
+    # matching BatchedHMCWorkspace; the syntactic default layout would mis-size
+    # the constrained-sample buffer under a bound-observation signature.
+    constrained_num_params = parametervaluecount(_batched_signature_layout(model, batch_constraints))
     gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
     tree_current_position = Matrix{Float64}(undef, num_params, num_chains)
     tree_next_position = Matrix{Float64}(undef, num_params, num_chains)

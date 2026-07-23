@@ -7,7 +7,10 @@ function batched_importance_sampling(
     proposal_log_scale=0.0,
     rng::AbstractRNG=Random.default_rng(),
 )
-    layout = parameterlayout(model)
+    # Signature-aware sizing (#95 PR-7): the latent set (and thus the particle
+    # row count, proposal, and result columns) is a function of the conditioning
+    # signature, not the syntactic default layout. Memoized in signature_cache.
+    layout = _conditioned_parameter_layout(model, constraints)
     parameter_total = parametercount(layout)
     parameter_total > 0 || throw(ArgumentError("batched_importance_sampling requires at least one parameterized latent choice"))
     num_particles > 0 || throw(ArgumentError("batched_importance_sampling requires num_particles > 0"))
@@ -41,7 +44,7 @@ function batched_importance_sampling(
     effective_sample_size = inv(effective_sample_size)
 
     constrained_particles = Matrix{Float64}(undef, parametervaluecount(layout), num_particles)
-    _batched_transform_to_constrained!(constrained_particles, model, particles)
+    _signature_batched_transform_to_constrained!(constrained_particles, model, particles, args, constraints)
 
     return ImportanceSamplingResult(
         model,
@@ -111,7 +114,10 @@ function batched_smc(
 )
     resampling in (:systematic, :stratified, :residual, :multinomial) ||
         throw(ArgumentError("batched_smc resampling must be :systematic, :stratified, :residual, or :multinomial"))
-    layout = parameterlayout(model)
+    # Signature-aware sizing (#95 PR-7): particle rows, proposal, tempering move
+    # scratch, and result columns all derive from the conditioned latent set, not
+    # the syntactic default layout. Memoized in signature_cache.
+    layout = _conditioned_parameter_layout(model, constraints)
     parameter_total = parametercount(layout)
     parameter_total > 0 || throw(ArgumentError("batched_smc requires at least one parameterized latent choice"))
     num_particles > 0 || throw(ArgumentError("batched_smc requires num_particles > 0"))
@@ -295,7 +301,7 @@ function batched_smc(
     end
 
     constrained_particles = Matrix{Float64}(undef, parametervaluecount(layout), num_particles)
-    _batched_transform_to_constrained!(constrained_particles, model, particles)
+    _signature_batched_transform_to_constrained!(constrained_particles, model, particles, args, constraints)
     importance = ImportanceSamplingResult(
         model,
         args,

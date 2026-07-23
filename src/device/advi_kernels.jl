@@ -63,7 +63,9 @@ function _run_device_batched_advi(
     rng::AbstractRNG,
 )
     T = precision
-    layout = parameterlayout(model)
+    # Signature-aware sizing (#95): match the CPU batched_advi path, which sizes
+    # from the conditioning signature rather than the syntactic default layout.
+    layout = _batched_signature_layout(model, constraints)
     parameter_total = parametercount(layout)
     parameter_total > 0 || throw(ArgumentError("batched_advi requires at least one parameterized latent choice"))
     num_steps > 0 || throw(ArgumentError("batched_advi requires num_steps > 0"))

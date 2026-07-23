@@ -335,6 +335,96 @@ end
         @test all(isfinite, res.constrained_samples)
     end
 
+    @testset "#95 smc/sir condition on a bound address (closed-form posterior)" begin
+        # Same conjugate setup as the HMC/NUTS acceptance: signature {:y, :z}
+        # leaves exactly one latent (mu) with posterior N(yobs/2, 1/2). Before
+        # PR-7 the SMC path sized from the syntactic default layout ([mu, y, z])
+        # and threw a DimensionMismatch against the signature-sized logjoint; now
+        # it sizes particles, proposal, tempering, and result from the signature.
+        yobs = 3.0
+        cons = choicemap(:y => yobs, :z => 1.0)
+        post_mean = yobs / 2
+        post_var = 0.5
+
+        layout = UncertainTea._conditioned_parameter_layout(cdc_chain, cons)
+        @test parametervaluecount(layout) == 1
+
+        wmean(v, w) = sum(v .* w)
+        wvar(v, w, mn) = sum(w .* abs2.(v .- mn))
+
+        smc = batched_smc(
+            cdc_chain,
+            (),
+            cons;
+            num_particles=6000,
+            move_kernel=:random_walk,
+            move_steps=4,
+            rng=MersenneTwister(95),
+        )
+        @test size(smc.importance.constrained_particles, 1) == 1
+        smc_mu = vec(smc.importance.constrained_particles[1, :])
+        smc_w = smc.importance.normalized_weights
+        smc_mean = wmean(smc_mu, smc_w)
+        # posterior mean / variance match the conjugate closed form within Monte
+        # Carlo error (not merely cross-path agreement).
+        @test smc_mean ≈ post_mean atol = 0.1
+        @test wvar(smc_mu, smc_w, smc_mean) ≈ post_var atol = 0.12
+
+        # SIR shares the smc/api.jl sizing; a proposal centered at the posterior
+        # keeps the importance estimator low-variance for the closed-form check.
+        sir = batched_sir(
+            cdc_chain,
+            (),
+            cons;
+            num_particles=20000,
+            proposal_loc=[post_mean],
+            rng=MersenneTwister(95),
+        )
+        @test size(sir.importance.constrained_particles, 1) == 1
+        sir_mu = vec(sir.importance.constrained_particles[1, :])
+        sir_w = sir.importance.normalized_weights
+        @test wmean(sir_mu, sir_w) ≈ post_mean atol = 0.1
+    end
+
+    @testset "#95 smc with :y unconstrained samples the larger latent set" begin
+        # Only `:z` observed: `:y` becomes a latent, so SMC sizes [mu, y].
+        cons = choicemap(:z => 0.5)
+        layout = UncertainTea._conditioned_parameter_layout(cdc_chain, cons)
+        @test parametervaluecount(layout) == 2
+
+        smc = batched_smc(cdc_chain, (), cons; num_particles=2000, rng=MersenneTwister(7))
+        @test size(smc.importance.constrained_particles, 1) == 2
+        @test all(isfinite, smc.importance.constrained_particles)
+    end
+
+    @testset "#95 batched hmc/nuts condition on a bound address (closed-form posterior)" begin
+        # The multichain batched samplers sized their position and constrained
+        # buffers from the syntactic default layout ([mu, y, z]) and threw a
+        # DimensionMismatch against the signature-aware batched workspaces; now
+        # they size and reconstruct from the conditioning signature {:y, :z},
+        # leaving the single latent mu with posterior N(yobs/2, 1/2).
+        yobs = 3.0
+        cons = choicemap(:y => yobs, :z => 1.0)
+        post_mean = yobs / 2
+        post_var = 0.5
+        sample_mean(v) = sum(v) / length(v)
+        sample_var(v) = sum(abs2, v .- sample_mean(v)) / (length(v) - 1)
+
+        for sampler in (batched_hmc, batched_nuts)
+            res = sampler(cdc_chain, (), cons; num_chains=4, num_samples=1500, num_warmup=1000, rng=MersenneTwister(95))
+            @test size(res.chains[1].constrained_samples, 1) == 1
+            mus = reduce(vcat, [vec(chain.constrained_samples[1, :]) for chain in res.chains])
+            @test sample_mean(mus) ≈ post_mean atol = 0.1
+            @test sample_var(mus) ≈ post_var atol = 0.1
+        end
+
+        # same model, :y unconstrained -> larger [mu, y] latent set.
+        cons_wide = choicemap(:z => 0.5)
+        wide = batched_nuts(cdc_chain, (), cons_wide; num_chains=2, num_samples=400, num_warmup=400, rng=MersenneTwister(7))
+        @test size(wide.chains[1].constrained_samples, 1) == 2
+        @test all(isfinite, wide.chains[1].constrained_samples)
+    end
+
     @testset "observed value feeds a reparam=:noncentered loc/scale" begin
         mu0 = 0.4
         yv = 3.0

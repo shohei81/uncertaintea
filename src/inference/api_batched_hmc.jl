@@ -59,8 +59,13 @@ function batched_hmc(
         )
     end
 
-    num_params = parametercount(parameterlayout(model))
-    constrained_num_params = parametervaluecount(parameterlayout(model))
+    # Signature-aware sizing (#95): the latent set (and thus per-chain position
+    # rows and constrained result width) follows the conditioning signature, not
+    # the syntactic default layout. The batched workspaces are already
+    # signature-aware (PR-4), so this keeps the API buffers consistent with them.
+    signature_layout = _batched_signature_layout(model, constraints)
+    num_params = parametercount(signature_layout)
+    constrained_num_params = parametervaluecount(signature_layout)
     _validate_batched_hmc_arguments(
         num_chains,
         num_params,
@@ -284,14 +289,14 @@ function batched_hmc(
             sample_index += 1
             for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
-                _transform_to_constrained!(
-                    view(workspace.constrained_position, :, chain_index),
+                _write_signature_constrained_sample!(
+                    constrained_samples,
                     model,
                     view(position, :, chain_index),
-                )
-                copyto!(
-                    view(constrained_samples, :, sample_index, chain_index),
-                    view(workspace.constrained_position, :, chain_index),
+                    sample_index,
+                    _batched_args(batch_args, chain_index),
+                    _batched_constraints(batch_constraints, chain_index),
+                    chain_index,
                 )
                 logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
                 acceptance_stats[sample_index, chain_index] = accept_prob[chain_index]
@@ -528,14 +533,14 @@ function _batched_hmc_per_chain!(
             sample_index += 1
             for chain_index = 1:num_chains
                 copyto!(view(unconstrained_samples, :, sample_index, chain_index), view(position, :, chain_index))
-                _transform_to_constrained!(
-                    view(workspace.constrained_position, :, chain_index),
+                _write_signature_constrained_sample!(
+                    constrained_samples,
                     model,
                     view(position, :, chain_index),
-                )
-                copyto!(
-                    view(constrained_samples, :, sample_index, chain_index),
-                    view(workspace.constrained_position, :, chain_index),
+                    sample_index,
+                    _batched_args(batch_args, chain_index),
+                    _batched_constraints(batch_constraints, chain_index),
+                    chain_index,
                 )
                 logjoint_values[sample_index, chain_index] = current_logjoint[chain_index]
                 acceptance_stats[sample_index, chain_index] = accept_prob[chain_index]

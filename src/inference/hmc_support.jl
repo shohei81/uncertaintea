@@ -142,6 +142,27 @@ function _initial_hmc_position(
     )
 end
 
+# Signature-aware reconstruction of one stored draw's constrained column (#95):
+# the latent set follows the chain's conditioning signature, so the constrained
+# value is read through the signature transform (observations resolved from the
+# chain's constraints), not the syntactic default `parameterlayout(model)`. Used
+# by the batched HMC/NUTS samplers and their device counterparts.
+function _write_signature_constrained_sample!(
+    constrained_samples::AbstractArray,
+    model::TeaModel,
+    position_column::AbstractVector,
+    sample_index::Int,
+    chain_args::Tuple,
+    chain_constraints::ChoiceMap,
+    chain_index::Int,
+)
+    copyto!(
+        view(constrained_samples, :, sample_index, chain_index),
+        transform_to_constrained(model, collect(position_column), chain_args, chain_constraints),
+    )
+    return constrained_samples
+end
+
 function _sample_momentum(rng::AbstractRNG, inverse_mass_matrix::AbstractVector)
     return randn(rng, length(inverse_mass_matrix)) ./ sqrt.(inverse_mass_matrix)
 end
