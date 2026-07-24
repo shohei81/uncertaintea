@@ -234,13 +234,15 @@ function logpdf(dist::CategoricalDist, x)
     return log(dist.probabilities[index])
 end
 
+# Log-factorial of the data count `n`. The count is data, so its derivative is
+# exactly zero: compute `loggamma(n + 1)` in plain Float64 (O(1), and more
+# accurate than summing `log(k)`) and convert to the caller's arithmetic type
+# so dual/Float32 callers keep their element type (issue #148). The device path
+# already does this (src/device/math.jl).
 function _logfactorial_like(value, n::Integer)
-    total = zero(value)
-    unit = one(value)
-    for k = 2:n
-        total += log(unit * k)
-    end
-    return total
+    zero_like = log(one(value))
+    n < 2 && return zero_like
+    return oftype(zero_like, loggamma(n + 1.0))
 end
 
 function _logbinomial_like(value, n::Integer, k::Integer)

@@ -34,6 +34,7 @@ core_test_files = [
     ("dist_lkj_cholesky.jl", "dist"),
     ("transform_logit_saturation.jl", "dist"),
     ("dist_integer_params.jl", "dist"),
+    ("dist_count_logfactorial.jl", "dist"),
     ("dist_bernoulli.jl", "dist"),
     # "backend": CPU/backend batched scoring and vector-latent paths.
     ("vector_backend_sampler.jl", "backend"),
