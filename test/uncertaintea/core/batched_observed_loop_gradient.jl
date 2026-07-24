@@ -47,16 +47,22 @@ function bolg_gradient_pair(cache, params)
     return destination, copy(cache.gradient_buffer)
 end
 
-function bolg_with_seams(body; fast::Bool=true, hoist::Bool=true)
+# The issue #146 sufficient-statistics tier sits above the tiers under test
+# here (see batched_observed_loop_suffstats.jl); pinning suffstats=false keeps
+# each arm on exactly the tier its testset names.
+function bolg_with_seams(body; fast::Bool=true, hoist::Bool=true, suffstats::Bool=true)
     previous_fast = UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_FAST_PATH[]
     previous_hoist = UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_HOIST[]
+    previous_suffstats = UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_SUFFSTATS[]
     UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_FAST_PATH[] = fast
     UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_HOIST[] = hoist
+    UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_SUFFSTATS[] = suffstats
     try
         return body()
     finally
         UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_FAST_PATH[] = previous_fast
         UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_HOIST[] = previous_hoist
+        UncertainTea._BATCHED_GRADIENT_OBSERVED_LOOP_SUFFSTATS[] = previous_suffstats
     end
 end
 
@@ -86,7 +92,7 @@ end
             # #140 (+ #141 staged observations): the per-iteration fast path is
             # bitwise identical to the generic body walk
             fast_logjoint, fast_gradient =
-                bolg_with_seams(() -> bolg_gradient_pair(cache, params); hoist=false)
+                bolg_with_seams(() -> bolg_gradient_pair(cache, params); hoist=false, suffstats=false)
             generic_logjoint, generic_gradient =
                 bolg_with_seams(() -> bolg_gradient_pair(cache, params); fast=false)
             @test fast_logjoint == generic_logjoint
@@ -135,13 +141,15 @@ end
         params = randn(MersenneTwister(seed), 2, num_chains) .* 0.4
         cache = BatchedLogjointGradientCache(bolg_gauss_model, params, (observation_count,), constraints)
         @test cache.backend_cache !== nothing
-        hoisted_logjoint, hoisted_gradient = bolg_gradient_pair(cache, params)
+        hoisted_logjoint, hoisted_gradient =
+            bolg_with_seams(() -> bolg_gradient_pair(cache, params); suffstats=false)
         loop_logjoint, loop_gradient =
-            bolg_with_seams(() -> bolg_gradient_pair(cache, params); hoist=false)
+            bolg_with_seams(() -> bolg_gradient_pair(cache, params); hoist=false, suffstats=false)
         @test isapprox(hoisted_logjoint, loop_logjoint; rtol=1e-9)
         @test isapprox(hoisted_gradient, loop_gradient; rtol=1e-9)
         # repeated calls reuse the staged observation vector deterministically
-        repeat_logjoint, repeat_gradient = bolg_gradient_pair(cache, params)
+        repeat_logjoint, repeat_gradient =
+            bolg_with_seams(() -> bolg_gradient_pair(cache, params); suffstats=false)
         @test repeat_logjoint == hoisted_logjoint
         @test repeat_gradient == hoisted_gradient
     end
@@ -162,8 +170,8 @@ end
         num_warmup=150,
         rng=MersenneTwister(42),
     )
-    hoisted_chains = run_nuts()
-    loop_chains = bolg_with_seams(run_nuts; hoist=false)
+    hoisted_chains = bolg_with_seams(run_nuts; suffstats=false)
+    loop_chains = bolg_with_seams(run_nuts; hoist=false, suffstats=false)
     # a fixed-seed run through the hoisted gradient walks identical
     # trajectories: per-draw tree depths match the per-iteration tier exactly
     for (hoisted, loop) in zip(hoisted_chains.chains, loop_chains.chains)

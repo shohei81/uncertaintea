@@ -96,6 +96,12 @@ struct BatchedBackendGradientCache{W,S,G,A,C}
     # iterable) instead of once per gradient call; entries are revalidated
     # against the loop's current iterable before reuse.
     observed_loop_values::IdDict{Any,Any}
+    # observed-loop sufficient statistics (issue #146): loop step -> (iterable,
+    # family stats or nothing). For an iid exponential-family loop with
+    # loop-invariant parameters the whole observation reduction collapses to a
+    # few cached numbers; `nothing` records that the staged data cannot take
+    # the closed form (so the O(observations) scan runs once, not per call).
+    observed_loop_stats::IdDict{Any,Any}
 end
 
 function _backend_gradient_seed_rows(layout::ParameterLayout)

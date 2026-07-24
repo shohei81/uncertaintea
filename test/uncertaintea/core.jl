@@ -43,6 +43,7 @@ core_test_files = [
     ("vectorized_obs_iid_latents.jl", "backend"),
     ("backend_native_families.jl", "backend"),
     ("batched_observed_loop_gradient.jl", "backend"),
+    ("batched_observed_loop_suffstats.jl", "backend"),
     # "device": the KernelAbstractions device kernels (heavier compile).
     ("device_lowering_parity.jl", "device"),
     ("signature_batched_device_parity.jl", "device"),
