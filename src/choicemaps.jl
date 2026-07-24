@@ -3,7 +3,18 @@ const Address = Tuple{Vararg{Any}}
 mutable struct ChoiceMap
     entries::Vector{Pair{Address,Any}}
     index_by_address::Dict{Address,Int}
+    # Monotonic mutation counter (issue #145): the dense observation staging in
+    # evaluator.jl snapshots constrained values at gradient-cache construction
+    # and assumes the constraints stay immutable for the cache's lifetime. Every
+    # `_pushchoice!` bumps this counter (insert AND value replacement), so the
+    # staged scorer can verify the assumption in O(1) and fall back to live
+    # ChoiceMap lookups when it no longer holds (gibbs mutates its merged
+    # constraints in place between gradient evaluations).
+    mutation_count::Int
 end
+
+ChoiceMap(entries::Vector{Pair{Address,Any}}, index_by_address::Dict{Address,Int}) =
+    ChoiceMap(entries, index_by_address, 0)
 
 function ChoiceMap(entries::Vector{Pair{Address,Any}})
     index_by_address = Dict{Address,Int}()
@@ -85,6 +96,7 @@ end
 function _pushchoice!(cm::ChoiceMap, address, value)
     normalized = normalize_address(address)
     index = _choice_index_normalized(cm, normalized)
+    cm.mutation_count += 1
     if !isnothing(index)
         cm.entries[index] = normalized => value
         return cm
