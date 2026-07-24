@@ -629,9 +629,12 @@ function BatchedHMCWorkspace(
     length(inverse_mass_matrix) == num_params ||
         throw(DimensionMismatch("expected inverse mass matrix of length $num_params, got $(length(inverse_mass_matrix))"))
 
+    # sampler-owned evaluation: Stan-style reject semantics (issue #157) --
+    # invalid distribution parameters mid-trajectory score -Inf (per-chain
+    # divergence) instead of killing the whole batched run
     return BatchedHMCWorkspace(
-        BatchedLogjointWorkspace(model, batch_constraints),
-        BatchedLogjointGradientCache(model, position, batch_args, batch_constraints),
+        BatchedLogjointWorkspace(model, batch_constraints; reject_invalid_parameters=true),
+        BatchedLogjointGradientCache(model, position, batch_args, batch_constraints; reject_invalid_parameters=true),
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
         Matrix{Float64}(undef, num_params, num_chains),
@@ -667,7 +670,10 @@ function BatchedNUTSWorkspace(
     # matching BatchedHMCWorkspace; the syntactic default layout would mis-size
     # the constrained-sample buffer under a bound-observation signature.
     constrained_num_params = parametervaluecount(_batched_signature_layout(model, batch_constraints))
-    gradient_cache = BatchedLogjointGradientCache(model, position, batch_args, batch_constraints)
+    # sampler-owned evaluation: Stan-style reject semantics (issue #157)
+    gradient_cache = BatchedLogjointGradientCache(
+        model, position, batch_args, batch_constraints; reject_invalid_parameters=true,
+    )
     tree_current_position = Matrix{Float64}(undef, num_params, num_chains)
     tree_next_position = Matrix{Float64}(undef, num_params, num_chains)
     tree_left_position = Matrix{Float64}(undef, num_params, num_chains)
@@ -857,7 +863,8 @@ function _batched_nuts_column_gradient_caches(
         collect(view(position, :, 1)),
         batch_args,
         batch_constraints,
-        view(gradient_buffer, :, 1),
+        view(gradient_buffer, :, 1);
+        reject_invalid_parameters=true,
     )
     caches = Vector{typeof(first_cache)}(undef, num_chains)
     caches[1] = first_cache
@@ -886,7 +893,8 @@ function _batched_nuts_column_gradient_caches(
             collect(view(position, :, chain_index)),
             _batched_args(batch_args, chain_index),
             _batched_constraints(batch_constraints, chain_index),
-            view(gradient_buffer, :, chain_index),
+            view(gradient_buffer, :, chain_index);
+            reject_invalid_parameters=true,
         )
     end
     return caches

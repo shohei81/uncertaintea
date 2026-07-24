@@ -182,6 +182,10 @@
         max_tree_depth=6,
         rng=MersenneTwister(62),
     )
+    # per_chain_adaptation=false: the assertions below pin the SHARED pooled
+    # mass-window bookkeeping (issue #137 made per-chain the host default; a
+    # per-chain driver pools only its own 10 window samples, under the
+    # mass_matrix_min_samples=10 update threshold at this warmup length).
     gaussian_batched_chain = batched_hmc(
         gaussian_mean,
         (),
@@ -192,6 +196,7 @@
         step_size=0.18,
         num_leapfrog_steps=6,
         initial_params=gaussian_batch_params,
+        per_chain_adaptation=false,
         rng=MersenneTwister(52),
     )
     gaussian_batched_baseline_chain = batched_hmc(
@@ -218,6 +223,7 @@
         step_size=0.18,
         num_leapfrog_steps=6,
         initial_params=gaussian_batch_params,
+        per_chain_adaptation=false,
         rng=MersenneTwister(52),
     )
     gaussian_batched_nuts_chain = batched_nuts(

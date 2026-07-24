@@ -9,7 +9,12 @@ struct ModelDensityTarget{M<:TeaModel,A<:Tuple,C<:ChoiceMap,G<:LogjointGradientC
 end
 
 function target_logdensity(target::ModelDensityTarget, position::AbstractVector)
-    return logjoint_unconstrained(target.model, position, target.args, target.constraints)
+    # sampler-owned evaluation: Stan-style reject semantics (issue #157) --
+    # invalid distribution parameters at a trajectory position score -Inf (a
+    # rejected proposal / divergence) instead of aborting the run
+    return logjoint_unconstrained(
+        target.model, position, target.args, target.constraints; reject_invalid_parameters=true,
+    )
 end
 
 function target_gradient!(target::ModelDensityTarget, position::AbstractVector)

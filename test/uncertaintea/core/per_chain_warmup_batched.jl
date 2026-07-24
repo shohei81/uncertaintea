@@ -1,6 +1,8 @@
 # PR 39: per-chain warmup adaptation for the batched samplers.
-# Contract: batched_hmc / batched_nuts accept per_chain_adaptation (default
-# false). When false the run is bitwise identical to the shared-driver path;
+# Contract: batched_hmc / batched_nuts accept per_chain_adaptation. Since
+# issue #137 the HOST default is per-chain (an unset value resolves to
+# `backend === nothing`; device runs keep shared adaptation).
+# When false the run is bitwise identical to the shared-driver path;
 # when true each chain owns a WarmupDriver, adapting its own step size and
 # diagonal inverse mass matrix. The batched integrators / momentum sampling /
 # Hamiltonians gain per-chain overloads (step-size vector + inverse-mass
@@ -131,4 +133,44 @@
     @test all(e -> e.phase === :warmup || e.phase === :sample, pca_cb_events)
     @test all(e -> haskey(e, :step_size) && haskey(e, :divergences), pca_cb_events)
     @test all(e -> isfinite(e.step_size), pca_cb_events)
+end
+
+# Issue #137: with prior-draw initialization and SHARED step-size adaptation,
+# the chains whose initial `s` sits in the high-curvature small-scale region
+# never get a usable step size and diverge on every iteration (~5-7% overall
+# divergence, a handful of fully stranded chains at 64 chains). Per-chain
+# adaptation -- the host default since #137 -- recovers all of them. The model
+# is the gauss shape from the #121 benchmark (mu ~ normal, s ~ gamma, loop
+# observations).
+@testset "pca_default_per_chain_unstrands_gauss" begin
+    @tea static function pca_strand_gauss_model(n)
+        mu ~ normal(0.0, 1.0)
+        s ~ gamma(2.0, 1.0)
+        for i = 1:n
+            {:y => i} ~ normal(mu, s)
+        end
+        return mu
+    end
+
+    pca_strand_n = 200
+    pca_strand_data_rng = MersenneTwister(42)
+    pca_strand_y = 0.5 .+ 1.2 .* randn(pca_strand_data_rng, pca_strand_n)
+    pca_strand_cm = choicemap(((:y => i, pca_strand_y[i]) for i = 1:pca_strand_n)...)
+
+    pca_strand_chains = batched_nuts(
+        pca_strand_gauss_model,
+        (pca_strand_n,),
+        pca_strand_cm;
+        num_chains=64,
+        num_samples=200,
+        num_warmup=200,
+        tree_strategy=:hybrid,
+        rng=MersenneTwister(11),
+    )
+    pca_strand_rates = [sum(pca_chain.divergent) / length(pca_chain.divergent) for pca_chain in pca_strand_chains]
+    pca_strand_total = sum(sum(pca_chain.divergent) for pca_chain in pca_strand_chains)
+    # On the shared-adaptation default this seed realizes ~6% divergence with
+    # 4/64 chains stranded above 50%; per-chain adaptation gives 0.0%.
+    @test pca_strand_total / (64 * 200) < 0.01
+    @test all(<(0.5), pca_strand_rates)
 end

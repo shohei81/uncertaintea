@@ -228,6 +228,11 @@ end
         num_chains=num_chains,
         num_samples=150,
         num_warmup=150,
+        # per_chain_adaptation=false: the fused/unfused tiers differ by a
+        # reduction-order ~1e-16; identical tree depths across the run hold only
+        # without per-chain dual-averaging amplification (host default since
+        # issue #137).
+        per_chain_adaptation=false,
         rng=MersenneTwister(42),
     )
     fused_chains = run_nuts()

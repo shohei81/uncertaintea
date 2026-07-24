@@ -12,7 +12,7 @@ function batched_hmc(
     target_accept::Real=0.8,
     adapt_step_size::Bool=true,
     adapt_mass_matrix::Bool=true,
-    per_chain_adaptation::Bool=false,
+    per_chain_adaptation::Union{Nothing,Bool}=nothing,
     find_reasonable_step_size::Bool=false,
     divergence_threshold::Real=1000.0,
     mass_matrix_regularization::Real=1e-3,
@@ -23,6 +23,10 @@ function batched_hmc(
     precision=nothing,
     rng::AbstractRNG=Random.default_rng(),
 )
+    # Host default is per-chain adaptation (issue #137); the device backend
+    # requires shared adaptation, so `nothing` resolves to `backend === nothing`.
+    # An explicit user value is always respected.
+    per_chain_adaptation = something(per_chain_adaptation, backend === nothing)
     if backend !== nothing
         # Device-resident inner loop. RNG stays host-side, so results are statistically
         # equivalent to (not bitwise identical to) the CPU path. The CPU path below is
@@ -32,7 +36,8 @@ function batched_hmc(
         per_chain_adaptation && throw(
             ArgumentError(
                 "batched_hmc per-chain adaptation is not supported on the device backend; " *
-                "run with backend=nothing or per_chain_adaptation=false",
+                "run with backend=nothing, or leave per_chain_adaptation unset / pass " *
+                "per_chain_adaptation=false to use shared adaptation on the device",
             ),
         )
         device_precision = precision === nothing ? default_device_precision(backend) : precision
@@ -421,7 +426,8 @@ function _batched_hmc_per_chain!(
                 model,
                 collect(view(position, :, chain_index)),
                 _batched_args(batch_args, chain_index),
-                _batched_constraints(batch_constraints, chain_index),
+                _batched_constraints(batch_constraints, chain_index);
+                reject_invalid_parameters=true,
             ),
             _batched_args(batch_args, chain_index),
             _batched_constraints(batch_constraints, chain_index),

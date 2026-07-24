@@ -97,6 +97,9 @@ end
         num_chains=2,
         num_samples=300,
         num_warmup=150,
+        # compare like with like: the device leg runs shared adaptation
+        # (issue #137 made per-chain the host default)
+        per_chain_adaptation=false,
         rng=MersenneTwister(52),
     )
     @test isapprox(devh_mean(posterior_array(device_chains)), devh_mean(posterior_array(cpu_chains)); atol=0.1)

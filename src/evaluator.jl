@@ -6,10 +6,23 @@ mutable struct PlanEnvironment
     layout::EnvironmentLayout
     values::Vector{Any}
     assigned::BitVector
+    # Stan-style reject semantics for sampling-context evaluation (issue #157):
+    # when true, invalid distribution parameters at a choice step (a constructor
+    # ArgumentError/DomainError, e.g. `normal` with an exp-underflowed sigma == 0
+    # reached mid-trajectory) score as log-density -Inf for THAT evaluation
+    # instead of throwing, so one bad chain/lane registers a divergence rather
+    # than killing a whole batched run. Off (throwing) for the public logjoint
+    # APIs, where an invalid parameter is a model/user error to surface.
+    reject_invalid_parameters::Bool
 end
 
-function PlanEnvironment(layout::EnvironmentLayout)
-    return PlanEnvironment(layout, Vector{Any}(undef, length(layout.symbols)), falses(length(layout.symbols)))
+function PlanEnvironment(layout::EnvironmentLayout; reject_invalid_parameters::Bool=false)
+    return PlanEnvironment(
+        layout,
+        Vector{Any}(undef, length(layout.symbols)),
+        falses(length(layout.symbols)),
+        reject_invalid_parameters,
+    )
 end
 
 function _environment_slot(layout::EnvironmentLayout, symbol::Symbol)
@@ -676,9 +689,27 @@ function _concrete_address(env::PlanEnvironment, address::CompiledAddressSpec)
     return _normalize_concrete_address(_concrete_compiled_address_parts(env, address.parts))
 end
 
-function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
+function _construct_compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
     arguments = _eval_compiled_exprs(env, step.arguments)
     return step.constructor(arguments...)
+end
+
+# Returns the step's distribution, or `nothing` when the environment is in
+# reject mode and the parameters are invalid (issue #157). The catch is narrow
+# -- only the argument evaluation + constructor of this one choice step, and
+# only the parameter-validation error types (`ArgumentError` from the CPU
+# distribution constructors, `DomainError` from math in an argument
+# expression) -- so structural errors (BoundsError, MethodError, dimension
+# mismatches, ...) still propagate. Catching here instead of duplicating every
+# family's validity predicate keeps registered custom distributions covered.
+function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
+    env.reject_invalid_parameters || return _construct_compiled_distribution(step, env)
+    try
+        return _construct_compiled_distribution(step, env)
+    catch err
+        (err isa ArgumentError || err isa DomainError) && return nothing
+        rethrow()
+    end
 end
 
 function _parameter_slot_value(layout::ParameterLayout, slot_index::Int, params::AbstractVector)
@@ -779,6 +810,9 @@ function _score_marginalized_choice!(
 )
     address = _concrete_address(env, step.address)
     dist = _compiled_distribution(step, env)
+    # reject mode (issue #157): invalid parameters make the whole marginal -Inf.
+    # The marginalized choice owns its suffix, so returning here is complete.
+    isnothing(dist) && return -Inf
     found, constrained_value = _choice_tryget_normalized(constraints, address)
     if found
         isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
@@ -859,6 +893,10 @@ function _score_plan_step!(
         if staged_value isa Float64
             dist = _compiled_distribution(step, env)
             isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, staged_value)
+            # reject mode (issue #157): staged reads bypass constraint lookups,
+            # not distribution construction -- an invalid parameter still
+            # rejects the draw as -Inf here
+            isnothing(dist) && return -Inf
             return logpdf(dist, staged_value)
         end
     end
@@ -872,7 +910,15 @@ function _score_plan_step!(
     end
 
     dist = _compiled_distribution(step, env)
+    # the binding still happens when the parameters reject (issue #157):
+    # subsequent steps may reference the value, and it never depends on the
+    # distribution
     isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    # reject mode (issue #157): a plain -Inf constant carries clean (zero)
+    # ForwardDiff partials, so the lane's value is non-finite -- which the
+    # leapfrog guards already turn into a per-chain divergence -- without
+    # poisoning other lanes' gradients
+    isnothing(dist) && return -Inf
     return logpdf(dist, value)
 end
 
@@ -1148,7 +1194,8 @@ function _logjoint(
     params::AbstractVector,
     args::Tuple,
     constraints::ChoiceMap,
-    stage::_MaybeObservationStage=nothing,
+    stage::_MaybeObservationStage=nothing;
+    reject_invalid_parameters::Bool=false,
 )
     plan = resolved.plan
     expected = parametervaluecount(plan.parameter_layout)
@@ -1164,7 +1211,7 @@ function _logjoint(
     )
     args = _complete_model_args(model, args)
 
-    env = PlanEnvironment(plan.environment_layout)
+    env = PlanEnvironment(plan.environment_layout; reject_invalid_parameters=reject_invalid_parameters)
     for (slot, value) in zip(plan.environment_layout.argument_slots, args)
         _environment_set!(env, slot, value)
     end
@@ -1176,14 +1223,21 @@ function _logjoint(
     return _score_compiled_steps(resolved.compiled.steps, env, params, constraints, active_stage)
 end
 
+# `reject_invalid_parameters=true` selects Stan-style reject semantics (issue
+# #157): invalid distribution parameters yield -Inf instead of throwing. The
+# samplers evaluate with it on; the default keeps the public throwing contract.
 function logjoint_unconstrained(
     model::TeaModel,
     params::AbstractVector,
     args::Tuple=(),
-    constraints::ChoiceMap=choicemap(),
+    constraints::ChoiceMap=choicemap();
+    reject_invalid_parameters::Bool=false,
 )
     resolved = _resolve_signature_plan(model, constraints)
-    return _logjoint_unconstrained(model, resolved, params, args, constraints, nothing)
+    return _logjoint_unconstrained(
+        model, resolved, params, args, constraints, nothing;
+        reject_invalid_parameters=reject_invalid_parameters,
+    )
 end
 
 function _logjoint_unconstrained(
@@ -1192,10 +1246,19 @@ function _logjoint_unconstrained(
     params::AbstractVector,
     args::Tuple,
     constraints::ChoiceMap,
-    stage::_MaybeObservationStage,
+    stage::_MaybeObservationStage;
+    reject_invalid_parameters::Bool=false,
 )
     constrained, logabsdet = _transform_to_constrained_with_logabsdet(model, resolved, params, args, constraints)
-    return _logjoint(model, resolved, constrained, args, constraints, stage) + logabsdet
+    return _logjoint(
+        model,
+        resolved,
+        constrained,
+        args,
+        constraints,
+        stage;
+        reject_invalid_parameters=reject_invalid_parameters,
+    ) + logabsdet
 end
 
 # --- dependent-transform plan walk (reparam=:noncentered) ---------------------
@@ -1539,9 +1602,13 @@ function _gradient_objective(
     resolved::ResolvedSignaturePlan,
     args::Tuple,
     constraints::ChoiceMap,
-    stage::_MaybeObservationStage,
+    stage::_MaybeObservationStage;
+    reject_invalid_parameters::Bool=false,
 )
-    return theta -> _logjoint_unconstrained(model, resolved, theta, args, constraints, stage)
+    return theta -> _logjoint_unconstrained(
+        model, resolved, theta, args, constraints, stage;
+        reject_invalid_parameters=reject_invalid_parameters,
+    )
 end
 
 function _logjoint_gradient_cache(
@@ -1549,14 +1616,18 @@ function _logjoint_gradient_cache(
     params::AbstractVector,
     args::Tuple=(),
     constraints::ChoiceMap=choicemap(),
-    buffer::AbstractVector=similar(collect(params)),
+    buffer::AbstractVector=similar(collect(params));
+    reject_invalid_parameters::Bool=false,
 )
     seed = collect(params)
     length(buffer) == length(seed) ||
         throw(DimensionMismatch("expected gradient buffer of length $(length(seed)), got $(length(buffer))"))
     resolved = _resolve_signature_plan(model, constraints)
     stage = _stage_observations(model, resolved, seed, args, constraints)
-    objective = _gradient_objective(model, resolved, args, constraints, stage)
+    objective = _gradient_objective(
+        model, resolved, args, constraints, stage;
+        reject_invalid_parameters=reject_invalid_parameters,
+    )
     config = ForwardDiff.GradientConfig(objective, seed)
     return LogjointGradientCache(objective, config, buffer)
 end

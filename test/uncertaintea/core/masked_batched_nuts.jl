@@ -59,8 +59,21 @@ end
     # fixes (which shifted both samplers' seeded trajectories) pushed the mean
     # difference past 0.1 on the 1.10 CI entry; the larger budget converges
     # both means to the posterior mean (0.15) with margin on 1.10 and latest.
-    hybrid = mnuts_run(mnuts_conjugate_gauss, constraints, :hybrid, 481; num_samples=1500, num_warmup=500)
-    masked = mnuts_run(mnuts_conjugate_gauss, constraints, :masked, 481; num_samples=1500, num_warmup=500)
+    # per_chain_adaptation=false: these strategy-equivalence checks compare
+    # two independently seeded samplers with tight mean/std agreement bounds;
+    # they are pinned to the long-standing shared-adaptation trajectories so
+    # the bounds stay platform-stable (issue #137 made per-chain the host
+    # default and shifted the seeded draws; the 1.10 randn stream then landed
+    # a two-param mean difference at 0.102 vs the 0.1 bound). Per-chain masked
+    # coverage lives in mnuts_masked_per_chain_adaptation below.
+    hybrid = mnuts_run(
+        mnuts_conjugate_gauss, constraints, :hybrid, 481;
+        num_samples=1500, num_warmup=500, per_chain_adaptation=false,
+    )
+    masked = mnuts_run(
+        mnuts_conjugate_gauss, constraints, :masked, 481;
+        num_samples=1500, num_warmup=500, per_chain_adaptation=false,
+    )
 
     hybrid_draws = posterior_array(hybrid)
     masked_draws = posterior_array(masked)
@@ -79,8 +92,9 @@ end
 
 @testset "mnuts_two_param_hybrid_vs_masked" begin
     constraints = choicemap((:y, 0.7))
-    hybrid = mnuts_run(mnuts_two_param, constraints, :hybrid, 482)
-    masked = mnuts_run(mnuts_two_param, constraints, :masked, 482)
+    # pinned to shared adaptation -- see mnuts_conjugate_gauss_hybrid_vs_masked
+    hybrid = mnuts_run(mnuts_two_param, constraints, :hybrid, 482; per_chain_adaptation=false)
+    masked = mnuts_run(mnuts_two_param, constraints, :masked, 482; per_chain_adaptation=false)
 
     hybrid_draws = posterior_array(hybrid)
     masked_draws = posterior_array(masked)

@@ -3,10 +3,13 @@ function _batched_backend_gradient_cache(
     gradient_buffer::AbstractMatrix,
     params::AbstractMatrix,
     batch_args,
-    batch_constraints,
+    batch_constraints;
+    reject_invalid_parameters::Bool=false,
 )
     element_type = float(eltype(params))
-    workspace = BatchedLogjointWorkspace(model, batch_constraints)
+    workspace = BatchedLogjointWorkspace(
+        model, batch_constraints; reject_invalid_parameters=reject_invalid_parameters,
+    )
     backend_plan = workspace.backend_plan
     isnothing(backend_plan) && return nothing
     _backend_gradient_supported(backend_plan) || return nothing
@@ -51,10 +54,13 @@ function _batched_gradient_column_cache(
     params::AbstractMatrix,
     batch_args,
     batch_constraints,
-    batch_index::Int,
+    batch_index::Int;
+    reject_invalid_parameters::Bool=false,
 )
     column_constraints = _batched_constraints(batch_constraints, batch_index)
-    workspace = BatchedLogjointWorkspace(model, column_constraints)
+    workspace = BatchedLogjointWorkspace(
+        model, column_constraints; reject_invalid_parameters=reject_invalid_parameters,
+    )
     objective = BatchedGradientObjective(
         model,
         workspace,
@@ -72,9 +78,12 @@ function _batched_flat_gradient_cache(
     gradient_buffer::AbstractMatrix,
     params::AbstractMatrix,
     batch_args,
-    batch_constraints,
+    batch_constraints;
+    reject_invalid_parameters::Bool=false,
 )
-    workspace = BatchedLogjointWorkspace(model, batch_constraints)
+    workspace = BatchedLogjointWorkspace(
+        model, batch_constraints; reject_invalid_parameters=reject_invalid_parameters,
+    )
     objective = BatchedFlatGradientObjective(
         model,
         workspace,
@@ -95,11 +104,15 @@ function _batched_flat_gradient_cache(
     return BatchedFlatGradientCache(objective, config, vec(gradient_buffer))
 end
 
+# `reject_invalid_parameters=true` selects Stan-style reject semantics for the
+# compiled-plan evaluation tiers of this cache (issue #157); samplers construct
+# their caches with it on, the public gradient APIs keep the throwing default.
 function BatchedLogjointGradientCache(
     model::TeaModel,
     params::AbstractMatrix,
     args=(),
-    constraints=choicemap(),
+    constraints=choicemap();
+    reject_invalid_parameters::Bool=false,
 )
     batch_size = _validate_batched_unconstrained_params(model, params, constraints)
     batch_args = _validate_batched_args(model, args, batch_size)
@@ -110,19 +123,28 @@ function BatchedLogjointGradientCache(
         return BatchedLogjointGradientCache(model, Any[], nothing, nothing, gradient_buffer, parameter_count, batch_size)
     end
 
-    backend_cache = _batched_backend_gradient_cache(model, gradient_buffer, params, batch_args, batch_constraints)
+    backend_cache = _batched_backend_gradient_cache(
+        model, gradient_buffer, params, batch_args, batch_constraints;
+        reject_invalid_parameters=reject_invalid_parameters,
+    )
     if !isnothing(backend_cache)
         return BatchedLogjointGradientCache(model, Any[], backend_cache, nothing, gradient_buffer, parameter_count, batch_size)
     end
 
     flat_cache =
         isnothing(_backend_execution_plan(model)) ? nothing :
-        _batched_flat_gradient_cache(model, gradient_buffer, params, batch_args, batch_constraints)
+        _batched_flat_gradient_cache(
+            model, gradient_buffer, params, batch_args, batch_constraints;
+            reject_invalid_parameters=reject_invalid_parameters,
+        )
     if !isnothing(flat_cache)
         return BatchedLogjointGradientCache(model, Any[], nothing, flat_cache, gradient_buffer, parameter_count, batch_size)
     end
 
-    first_cache = _batched_gradient_column_cache(model, gradient_buffer, params, batch_args, batch_constraints, 1)
+    first_cache = _batched_gradient_column_cache(
+        model, gradient_buffer, params, batch_args, batch_constraints, 1;
+        reject_invalid_parameters=reject_invalid_parameters,
+    )
     column_caches = Vector{typeof(first_cache)}(undef, batch_size)
     column_caches[1] = first_cache
     for batch_index = 2:batch_size
@@ -132,7 +154,8 @@ function BatchedLogjointGradientCache(
             params,
             batch_args,
             batch_constraints,
-            batch_index,
+            batch_index;
+            reject_invalid_parameters=reject_invalid_parameters,
         )
     end
 
@@ -161,7 +184,18 @@ function _batched_backend_gradient_or_columns!(
         )
         return totals, cache.gradient_buffer
     catch err
-        err isa BatchedBackendFallback || rethrow()
+        # reject mode (issue #157): an analytic-tier parameter-validation throw
+        # for one lane degrades this call to the per-column path, where only the
+        # offending column scores -Inf
+        if !(
+            err isa BatchedBackendFallback ||
+            (
+                backend_cache.workspace.environment.reject_invalid_parameters &&
+                (err isa ArgumentError || err isa DomainError)
+            )
+        )
+            rethrow()
+        end
     end
     for batch_index = 1:cache.batch_size
         column_args = _batched_args(backend_cache.args, batch_index)
