@@ -643,7 +643,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 version = "1.11.0"
 
 [[deps.UncertainTea]]
-deps = ["ForwardDiff", "KernelAbstractions", "LinearAlgebra", "Random", "SpecialFunctions"]
+deps = ["ForwardDiff", "KernelAbstractions", "LinearAlgebra", "PrecompileTools", "Random", "SpecialFunctions"]
 path = "../../.."
 uuid = "9b1291ec-f7ff-476f-9e6f-459056809ae0"
 version = "0.1.0"
