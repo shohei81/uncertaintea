@@ -168,6 +168,13 @@ end
         num_chains=num_chains,
         num_samples=150,
         num_warmup=150,
+        # per_chain_adaptation=false: this test asserts the hoisted tier walks
+        # the SAME trajectory as the loop tier, which the two tiers'
+        # reduction-order difference (~1e-16, checked with tolerance in
+        # bolg_hoisted_reduction_tolerance) only allows when adaptation does not
+        # amplify it -- per-chain dual averaging (the host default since issue
+        # #137) diverges the two runs' step sizes and tree depths.
+        per_chain_adaptation=false,
         rng=MersenneTwister(42),
     )
     hoisted_chains = bolg_with_seams(run_nuts; suffstats=false)
