@@ -71,5 +71,6 @@ include("batched.jl")
 include("inference.jl")
 include("frontend.jl")
 include("device.jl")
+include("precompile.jl")
 
 end
