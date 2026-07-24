@@ -557,6 +557,20 @@ function transform_to_unconstrained(
     constraints::ChoiceMap,
 )
     resolved = _resolve_signature_plan(model, constraints)
+    return _transform_to_unconstrained(model, resolved, params, args, constraints)
+end
+
+# Resolved-plan core of the signature-aware transform: callers that already
+# hold the `ResolvedSignaturePlan` (the batched initial-position loop resolves
+# it once per batch, issue #156) skip re-deriving the conditioning signature.
+# `resolved` is untyped because parameters.jl loads before evaluator.jl.
+function _transform_to_unconstrained(
+    model::TeaModel,
+    resolved,
+    params::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
     layout = resolved.plan.parameter_layout
     expected = parametervaluecount(layout)
     length(params) == expected || throw(

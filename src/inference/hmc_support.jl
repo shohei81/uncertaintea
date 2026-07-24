@@ -119,13 +119,27 @@ function _initial_hmc_position(
     rng::AbstractRNG,
 )
     resolved = _resolve_signature_plan(model, constraints)
+    return _initial_hmc_position(model, resolved, args, constraints, initial_params, rng)
+end
+
+# Resolved-plan core: the batched initial-position loop resolves the signature
+# plan once per batch (issue #156) and threads it through here, so per chain
+# neither the conditioning signature nor the transform re-derives the plan.
+function _initial_hmc_position(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    args::Tuple,
+    constraints::ChoiceMap,
+    initial_params,
+    rng::AbstractRNG,
+)
     layout = resolved.plan.parameter_layout
     if isnothing(initial_params)
         # A prior draw of the SIGNATURE latents (not the syntactic default
         # layout): observations are read from the constraints, so the initial
         # unconstrained vector must match the conditioned latent set (#95 PR-6).
         constrained = _signature_initial_parameters(model, args, resolved, constraints; rng=rng)
-        return transform_to_unconstrained(model, constrained, args, constraints)
+        return _transform_to_unconstrained(model, resolved, constrained, args, constraints)
     end
 
     expected = parametercount(layout)
@@ -133,7 +147,7 @@ function _initial_hmc_position(
     if length(initial_params) == expected
         return Float64[value for value in initial_params]
     elseif length(initial_params) == constrained_expected
-        return transform_to_unconstrained(model, Float64[value for value in initial_params], args, constraints)
+        return _transform_to_unconstrained(model, resolved, Float64[value for value in initial_params], args, constraints)
     end
     throw(
         DimensionMismatch(
@@ -179,6 +193,10 @@ function _initial_batched_hmc_positions(
 )
     batch_args = _validate_batched_args(model, args, num_chains)
     batch_constraints = _validate_batched_constraints(constraints, num_chains)
+    # One signature resolution for the whole batch: every column of a batch
+    # shares one conditioning signature (see `_representative_constraints`), so
+    # re-deriving it per chain is pure setup overhead (issue #156).
+    resolved = _resolve_signature_plan(model, _representative_constraints(batch_constraints))
     positions = Matrix{Float64}(undef, num_params, num_chains)
     seeds = rand(rng, UInt, num_chains)
 
@@ -187,6 +205,7 @@ function _initial_batched_hmc_positions(
         chain_rng = MersenneTwister(seeds[chain_index])
         positions[:, chain_index] = _initial_hmc_position(
             model,
+            resolved,
             _batched_args(batch_args, chain_index),
             _batched_constraints(batch_constraints, chain_index),
             chain_initial_params,

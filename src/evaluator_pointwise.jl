@@ -285,7 +285,10 @@ end
 # Initial parameter vector matching the signature layout (not the default
 # layout): observation_addresses only needs a validly-shaped latent vector to
 # walk the plan and read the constrained addresses, so any prior draw of the
-# signature latents will do.
+# signature latents will do. Drawn by the latent-only plan walk
+# (`_sample_prior_steps!`, issue #156), which consumes the RNG at exactly the
+# sites a traced `generate` would and therefore produces the identical draw
+# without re-tracing every observation address.
 function _signature_initial_parameters(
     model::TeaModel,
     args::Tuple,
@@ -293,12 +296,17 @@ function _signature_initial_parameters(
     constraints::ChoiceMap;
     rng::AbstractRNG=Random.default_rng(),
 )
-    trace, _ = generate(model, args, constraints; rng=rng)
-    layout = resolved.plan.parameter_layout
-    params = Vector{Float64}(undef, parametervaluecount(layout))
-    for slot in layout.slots
-        _write_slot_value!(params, slot, trace[_static_address(slot.address)])
+    plan = resolved.plan
+    layout = plan.parameter_layout
+    completed_args = _complete_model_args(model, args)
+
+    env = PlanEnvironment(plan.environment_layout)
+    for (slot, value) in zip(plan.environment_layout.argument_slots, completed_args)
+        _environment_set!(env, slot, value)
     end
+
+    params = Vector{Float64}(undef, parametervaluecount(layout))
+    _sample_prior_steps!(resolved.compiled.steps, env, layout, params, constraints, rng)
     return params
 end
 
