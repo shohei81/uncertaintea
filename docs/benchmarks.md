@@ -12,58 +12,120 @@ and 5%/95% quantiles within 4 combined MCSEs of the CmdStan reference —
 computed by ONE implementation (ArviZ 0.x) over every framework's raw draws.
 Rows marked FAIL keep their timings visible for context only.
 
-## Provenance
+## Provenance (current)
 
-- **Date:** 2026-07-23
+- **Date:** 2026-07-24 (post-optimization; supersedes the 2026-07-23 baseline
+  preserved at the bottom of this file).
 - **Hardware:** Apple M4 (10 cores, 32 GB), Metal 4; macOS 26.5.1. All
   frameworks measured natively on this one machine.
-- **Software:** Julia 1.12.2, UncertainTea @ `6df3064` (branch
-  `bench-crossppl-121`), NumPyro 0.19 / JAX 0.9 (pinned in
-  `bench/crossppl/python/uv.lock`), CmdStan 2.36.0, Python 3.12.
+- **Software:** Julia 1.12.2, UncertainTea @ `bfca904` (main, after the first
+  performance wave: PRs #164/#165/#166/#167/#168/#169/#171/#172/#173/#170),
+  NumPyro 0.19 / JAX 0.9 (pinned in `bench/crossppl/python/uv.lock`),
+  CmdStan 2.36.0, Python 3.12.
 - **Sampler settings:** NUTS everywhere, `target_accept=0.8`,
   `max_tree_depth=10`, diagonal metric, framework-default warmup schedules.
   Correctness pass: 4 chains × 1000 warmup + 1000 draws × 3 repetitions
   (± is std over repetitions). Scaling sweep: 200 warmup + 500 draws at
-  64–4096 chains.
+  64–4096 chains (3 reps ≤512, 1 rep at 4096).
 - **Metric:** min-over-parameters bulk ESS per second of pure sampling time.
   Warmup and compile/TTFX are excluded and reported in their own columns.
 
-## Key findings
+## Key findings (current)
 
-1. **Sampler quality is competitive; per-observation cost is not.** On
-   eight-schools-noncentered (8 observations) UncertainTea matches NumPyro's
-   ESS/s despite running chains sequentially. On models with 500–1000
-   loop-addressed observations it falls 9–100× behind NumPyro and 350–680×
-   behind Stan — the gap scales with observation count, pointing at
-   per-observation scoring overhead (issue #138), not at NUTS itself.
-2. **The batched paths fail the correctness gate at ≥64 chains in the
-   default configuration.** Prior-draw initialization plus shared step-size
-   adaptation permanently strands the ~6% of chains whose initial `s` lands
-   in the steep small-scale region (divergence rate ≈ P(prior s < 0.4) =
-   6.2%; pinning the init gives div = 0 and reference-matching posteriors).
-   Issue #137 tracks the fix; until then UncertainTea has no gate-passing
-   default-configuration scaling numbers to report.
-3. **With the #137 workaround (pinned init, labelled rows below), the
-   device story is: Metal overtakes the 10-core CPU backend at ~4096 chains
-   (1.2×), but NumPyro's vectorized CPU sweep is still 2.5–10× ahead of
-   both at every measured chain count.** The GPU-native claim needs #137 and
-   #138 fixed before it can be demonstrated honestly.
+1. **On the many-chains vectorized workload UncertainTea now leads NumPyro
+   and is second only to single-chain Stan.** On the `gauss` scaling sweep the
+   host batched CPU backend hits 53,430 bulk ESS/s at 512 chains and 36,879 at
+   4096, versus NumPyro-vectorized's 28,378 and 7,687 — all gate-passing. This
+   is the payoff of the batched-gradient rework (observed-loop fast path #166,
+   sufficient-statistics fusion #146) plus per-chain adaptation becoming the
+   host default (#137), which together took the 512-chain leg from a
+   gate-failing 72 s to a passing 2.0 s. Only Stan's single-chain C++
+   (171,372 ESS/s on this 2-parameter model) is faster.
+2. **Metal now overtakes both at 4096 chains.** The device masked path still
+   runs a host gradient every iteration (#151, not yet fixed), but that
+   gradient inherited the #146 fusion, so Metal's 4096-chain sampling dropped
+   from 228 s to 36.3 s → 41,215 ESS/s, ahead of the 10-core CPU backend
+   (36,879) and NumPyro (7,687). This is the first honest "GPU-native
+   overtakes CPU" crossover in the suite. Fixing #151 (move the per-iteration
+   leaf onto the device) should widen it substantially and lower the
+   crossover chain count.
+3. **Correctness still requires per-chain adaptation, which is default only on
+   the host paths.** The stranding failure (#137: prior-draw init + shared
+   step size permanently strands ~6% of chains, divergence rate ≈
+   P(prior s < 0.4) = 6.2%) is fixed by default on `batched-cpu`, but the
+   KernelAbstractions CPU (`batched-cpu-ka`) and Metal paths are treated as
+   device backends where per-chain step-size adaptation is still deferred
+   (#137 device part) — so their default-config rows FAIL, and the Metal
+   scaling numbers above come from the `-pinned-init` diagnostic workaround.
+   Warmup cost rose with the per-chain default (#158 tracks recovering it via
+   pooled-mass adaptation).
+4. **GLMs still trail.** `logistic` batched-cpu passes the gate now (156
+   ESS/s, was gate-marginal) but stays far behind NumPyro (4,185) because the
+   bernoulli-logit + covariate observation does not lower to the analytic
+   batched path yet (#150/#134/#135). Single-chain `logistic` improved 83 →
+   406 ESS/s from the interpreter rework (#145).
 
-Issues found while building the harness: #134 (broadcast-normal observations
-don't lower to the device path — the DSL's flagship GPU form), #135
-(covariate indexing `xs[i]` doesn't lower — GLMs can't ride the device
-path), #136 (`nuts_chains` runs chains sequentially), #137, #138 (above).
+Open issues from the audit still shaping these numbers: #150/#134/#135 (GLM /
+device lowering), #151/#152/#153 (device engineering), #137-device + #158
+(per-chain/pooled adaptation on device), #144 (generated type-stable scorer,
+the remaining single-chain gap vs Stan).
+
+## Scaling sweep — gauss (mean/scale, N=1000; 200 warmup + 500 draws)
+
+| framework | chains | precision | correct | min bulk ESS/s | sampling s | warmup s | div |
+|---|---|---|---|---|---|---|---|
+| stan (single chain, 1000 draws) | 4 | f64 | PASS | 171,372 ± 32,742 | 0.021 | 0.015 | 0 |
+| uncertaintea-batched-cpu | 4 | f64 | PASS | 38,708 ± 2,955 | 0.05 | 0.086 | 0 |
+| uncertaintea-batched-cpu | 64 | f64 | PASS | 57,519 ± 17,018 | 0.26 | 0.62 | 0 |
+| uncertaintea-batched-cpu | 512 | f64 | PASS | **53,430 ± 5,336** | 2.05 | 4.68 | 0 |
+| uncertaintea-batched-cpu | 4096 | f64 | PASS | **36,879** | 23.2 | 38.7 | 0 |
+| numpyro-vectorized | 64 | f32 | PASS | 14,279 ± 1,205 | 1.70 | 1.63 | 0 |
+| numpyro-vectorized | 512 | f32 | PASS | 28,378 ± 1,773 | 7.08 | 4.23 | 0 |
+| numpyro-vectorized | 4096 | f32 | PASS | 7,687 | 205 | 93.6 | 0 |
+| uncertaintea-batched-metal-pinned-init | 64 | f32 | PASS | 2,975 ± 290 | 8.29 | 6.21 | 0 |
+| uncertaintea-batched-metal-pinned-init | 512 | f32 | PASS | 14,712 ± 3,959 | 13.9 | 6.32 | 0 |
+| uncertaintea-batched-metal-pinned-init | 4096 | f32 | PASS | **41,215** | 36.3 | 13.4 | 0 |
+| uncertaintea-batched-cpu-ka | 64 | f64 | FAIL (#137 dev) | 85.8 | 3.1 | 1.48 | 0.057 |
+| uncertaintea-batched-cpu-ka | 512 | f64 | FAIL (#137 dev) | 43.2 | 37.3 | 13.5 | 0.07 |
+| uncertaintea-batched-metal | 64 | f32 | FAIL (#137 dev) | 9.53 | 29.8 | 15.7 | 0.057 |
+| uncertaintea-batched-metal | 512 | f32 | FAIL (#137 dev) | 24.8 | 66.7 | 21.2 | 0.07 |
+
+`-pinned-init` = the #137 diagnostic workaround (every chain initialized at
+the posterior mode); those rows are not default-configuration results. The
+default-config `-ka` and Metal rows FAIL because per-chain adaptation is not
+yet the device default (#137 device part); their timings are context only.
+`batched-cpu-ka` is also slow here because the masked KernelAbstractions path
+does not use the fused analytic gradient the host `batched-cpu` path got — on
+this shape `batched-cpu` now dominates it.
 
 ## Correctness pass (4 chains × 1000 warmup + 1000 draws)
 
 ### eight_schools_noncentered — all PASS
 
-| framework | correct | min bulk ESS/s | min tail ESS/s | sampling s | warmup s | TTFX/compile s | div rate |
-|---|---|---|---|---|---|---|---|
-| stan | PASS | 114,139 ± 13,223 | 93,461 | 0.019 | 0.012 | 3.5 | 0.00025 |
-| uncertaintea-batched-cpu | PASS | 3,743 ± 180 | 3,824 | 0.335 | 0.42 | 6.6 | 0.0013 |
-| uncertaintea-cpu | PASS | 3,354 ± 210 | 3,135 | 0.376 | 0.485 | 4.0 | 0.00075 |
-| numpyro-parallel | PASS | 3,330 ± 380 | 2,715 | 0.685 | 0.736 | 1.5 | 0.00017 |
+| framework | min bulk ESS/s | sampling s | div rate |
+|---|---|---|---|
+| stan | 52,567 ± 3,823 | 0.02 | 0.0002 |
+| uncertaintea-cpu | 9,554 ± 2,393 | — | ~0 |
+| numpyro-parallel | 1,978 ± 120 | — | ~0 |
+| uncertaintea-batched-cpu | 1,640 ± 330 | — | ~0 |
+
+Single-chain UncertainTea improved 3,354 → 9,554 ESS/s from the biased-merge
+tree change (#159, +54% ESS/gradient) and the interpreter rework (#145). The
+batched path's 4-chain number is lower because per-chain adaptation (now
+default) spends more warmup per chain at tiny chain counts — the batched path
+is built for the many-chains regime above, not 4 chains.
+
+### logistic (N=500, D=8) — all PASS
+
+| framework | min bulk ESS/s | div rate |
+|---|---|---|
+| stan | 23,628 ± 1,951 | 0 |
+| numpyro-parallel | 4,185 ± 500 | 0 |
+| uncertaintea-cpu | 406 ± 32 | 0 |
+| uncertaintea-batched-cpu | 156 ± 6 | 0 |
+
+GLM gap persists (no analytic/​device lowering yet — #150/#134/#135);
+single-chain improved 83 → 406 from #145.
 
 ### eight_schools_centered — all FAIL (funnel; expected)
 
@@ -72,58 +134,16 @@ Every framework, Stan included, exceeds R-hat 1.01 with 2–3% divergences at
 gate rejecting all four implementations equally is evidence it works; this
 model stays in the suite as the honesty check.
 
-### logistic (N=500, D=8)
+## What changed since the 2026-07-23 baseline
 
-| framework | correct | min bulk ESS/s | min tail ESS/s | sampling s | warmup s | TTFX/compile s | div rate |
-|---|---|---|---|---|---|---|---|
-| stan | PASS | 56,304 ± 3,040 | 30,727 | 0.088 | 0.082 | 3.8 | 0 |
-| numpyro-parallel | PASS | 9,804 ± 590 | 5,290 | 0.523 | 0.64 | 1.3 | 0 |
-| uncertaintea-cpu | PASS | 83 ± 6 | 73.9 | 24.5 | 24.2 | 51.5 | 0 |
-| uncertaintea-batched-cpu | FAIL (q95 z=4.1, marginal) | 50.2 | 50.8 | 34.1 | 29 | 63.1 | 0 |
-
-### gauss (mean/scale, N=1000)
-
-| framework | correct | min bulk ESS/s | min tail ESS/s | sampling s | warmup s | TTFX/compile s | div rate |
-|---|---|---|---|---|---|---|---|
-| stan | PASS | 293,495 ± 22,022 | 200,218 | 0.012 | 0.009 | 0.13 | 0 |
-| numpyro-parallel | PASS | 7,676 ± 730 | 5,849 | 0.417 | 0.543 | 0.97 | 0 |
-| uncertaintea-batched-cpu | PASS | 848 ± 50 | 759 | 1.85 | 2.02 | 7.5 | 0 |
-| uncertaintea-cpu | PASS | 173 ± 3.2 | 192 | 6.95 | 7.41 | 16.6 | 0 |
-
-Chain-parallelism differences (documented, reflected in wall-clock): Stan
-forks 4 processes, NumPyro `parallel` uses 4 XLA devices, UncertainTea `cpu`
-is sequential (#136) and `batched-cpu` vectorized single-threaded.
-
-## Scaling sweep (gauss, 200 warmup + 500 draws, 64–4096 chains)
-
-Default-configuration UncertainTea rows all FAIL the gate (issue #137,
-finding 2 above; they ran with 200 draws before the failure was diagnosed
-and are kept only as evidence). The `-pinned-init` rows apply the #137
-workaround — every chain initialized at the posterior mode — and PASS; they
-are diagnostic numbers, not default-configuration results, and NumPyro rows
-below run its default init.
-
-| framework | chains | correct | min bulk ESS/s | sampling s | warmup s | div rate |
-|---|---|---|---|---|---|---|
-| numpyro-vectorized (f32) | 64 | PASS | 19,938 ± 1,392 | 1.21 | 1.11 | 0 |
-| numpyro-vectorized (f32) | 512 | PASS | 42,069 ± 1,762 | 4.76 | 2.94 | 0 |
-| numpyro-vectorized (f32) | 4096 | PASS | 9,188 | 171 | 68.9 | 0 |
-| uncertaintea-batched-cpu-ka-pinned-init (f64) | 64 | PASS | 4,247 ± 170 | 3.26 | 1.67 | 0 |
-| uncertaintea-batched-cpu-ka-pinned-init (f64) | 512 | PASS | 3,910 ± 360 | 27.7 | 11.9 | 0 |
-| uncertaintea-batched-cpu-ka-pinned-init (f64) | 4096 | PASS | 2,975 | 281 | 111 | 0 |
-| uncertaintea-batched-metal-pinned-init (f32) | 64 | PASS | 1,418 ± 25 | 9.57 | 6.08 | 0 |
-| uncertaintea-batched-metal-pinned-init (f32) | 512 | PASS | 3,064 ± 160 | 35 | 15.6 | 0 |
-| uncertaintea-batched-metal-pinned-init (f32) | 4096 | PASS | 3,648 | 228 | 97.2 | 0 |
-
-(`batched-cpu-ka` = masked tree strategy on the KernelAbstractions CPU
-backend with `julia -t auto`, i.e. all 10 cores — the fair CPU counterpart
-to the Metal leg. The single-threaded `batched-cpu` hybrid path is 5–8×
-slower than `-ka` and its 16384-chain point would take hours, so the sweep
-caps at 4096.)
-
-Full tables including the FAIL rows: `bench/crossppl/results/summary.md`
-(regenerated by `./run_all.sh analyze`; raw per-run draws and timings are
-gitignored but reproducible).
+| leg | 2026-07-23 | 2026-07-24 | driver |
+|---|---|---|---|
+| gauss batched-cpu 512 chains | 72 s / FAIL | 2.0 s / **PASS**, 53k ESS/s | #146, #166, #137, #142 |
+| gauss batched-cpu 4096 chains | 763 s / FAIL | 23.2 s / **PASS**, 37k ESS/s | same |
+| gauss Metal 4096 (pinned) | 228 s, 3.6k ESS/s | 36.3 s, **41k ESS/s** | #146 (via the #151 host gradient) |
+| gauss cpu (single chain) | 173 ESS/s | 509 ESS/s | #145, #159 |
+| eight-schools-nc cpu | 3,354 ESS/s | 9,554 ESS/s | #145, #159 |
+| logistic cpu | 83 ESS/s | 406 ESS/s | #145 |
 
 ## Models
 
@@ -135,11 +155,10 @@ gitignored but reproducible).
 | `gauss` | mean/scale, N=1000 | device path; chain-count scaling sweep |
 
 Identical joint densities across frameworks; priors in
-`bench/crossppl/julia/models.jl` and `bench/crossppl/python/stan/*.stan`.
-A discrete-latent model (`marginalize=:enumerate` vs Stan's
-hand-marginalization) and an `lkjcholesky` model are planned additions;
-the scaling model is a loop-addressed gaussian rather than a regression
-because of #134/#135.
+`bench/crossppl/julia/models.jl` and `bench/crossppl/python/stan/*.stan`. A
+discrete-latent model (`marginalize=:enumerate` vs Stan's hand-marginalization)
+and an `lkjcholesky` model are planned additions; the scaling model is a
+loop-addressed gaussian rather than a regression because of #134/#135.
 
 ## Methodology notes
 
@@ -161,5 +180,19 @@ cd bench/crossppl
 ./run_all.sh cpu && ./run_all.sh metal && ./run_all.sh pinned && ./run_all.sh analyze
 ```
 
-Update this document from `results/summary.md` with the date, hardware, and
-commit; keep the correctness-gate framing intact.
+Update the "current" sections above from `results/summary.md` with the date,
+hardware, and commit; move the previous numbers into the history table; keep
+the correctness-gate framing intact.
+
+---
+
+## Baseline archive — 2026-07-23 (pre-optimization, UncertainTea @ `6df3064`)
+
+The original first-cut measurement, kept for the history table above. At that
+commit UncertainTea's batched paths failed the gate at ≥64 chains (#137
+undiagnosed as default), the batched CPU gradient re-fetched observations per
+call (#138), and Metal ran an unfused host gradient every iteration (#151):
+gauss batched-cpu 512 chains took 72 s (FAIL), Metal 4096 chains 228 s at
+3,648 ESS/s (pinned), single-chain gauss 173 ESS/s, and NumPyro-vectorized led
+the gate-passing scaling sweep at every chain count. See the git history of
+this file (`docs/benchmarks.md` at `6df3064`) for the full original tables.
