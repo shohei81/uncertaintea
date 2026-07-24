@@ -579,6 +579,12 @@ mutable struct BatchedNUTSWorkspace
     control::BatchedNUTSControlState
     mass_adaptation_weights::Vector{Float64}
     constrained_position::Matrix{Float64}
+    # Per-iteration buffers (issue #142): sqrt inverse-mass for momentum
+    # refreshes (shared vector / per-chain columns) and the all-chains-active
+    # mask, previously reallocated on every draw.
+    sqrt_inverse_mass::Vector{Float64}
+    sqrt_inverse_mass_columns::Matrix{Float64}
+    all_chains_active::BitVector
     column_gradient_caches::Vector{LogjointGradientCache}
     column_tree_workspaces::Vector{NUTSSubtreeWorkspace}
     column_continuation_states::Vector{NUTSContinuationState}
@@ -828,6 +834,9 @@ function BatchedNUTSWorkspace(
         control,
         Vector{Float64}(undef, num_chains),
         Matrix{Float64}(undef, constrained_num_params, num_chains),
+        Vector{Float64}(undef, num_params),
+        Matrix{Float64}(undef, num_params, num_chains),
+        trues(num_chains),
         column_gradient_caches,
         column_tree_workspaces,
         column_continuation_states,
