@@ -40,21 +40,21 @@
         rng=MersenneTwister(404),
     )
     warmup_driver_bn_chain = warmup_driver_bn.chains[1]
-    # Values re-pinned after the issue #93/#81 fixes: canonical NUTS now
-    # discards invalid (U-turned/divergent) subtrees before the multinomial
-    # merge, which changes the RNG draw sequence and the warmup trajectory,
-    # and the shared reasonable-step-size search now stops at the first
-    # crossing of the 0.5 acceptance target instead of oscillating to the
-    # iteration cap. (Previous re-pin: batched-NUTS merge-cohort stale-select
-    # fix, PR 6.4.)
+    # Values re-pinned after the issue #159 biased progressive merge: the
+    # doubling-merge proposal swap is now Stan's biased
+    # min(1, w_subtree/w_continuation), so the same RNG draws select
+    # different proposals and the warmup trajectory shifts. (Previous
+    # re-pins: issue #93/#81 canonical invalid-subtree discard and
+    # first-crossing step-size search; batched-NUTS merge-cohort
+    # stale-select fix, PR 6.4.)
     if adaptation_pins_exact
-        @test warmup_driver_bn_chain.step_size ≈ 1.0503622683613685 atol = 1e-12
+        @test warmup_driver_bn_chain.step_size ≈ 1.2243640004920302 atol = 1e-12
     else
         @test 0.05 < warmup_driver_bn_chain.step_size < 10.0
     end
     @test length(warmup_driver_bn_chain.mass_matrix) == 1
     if adaptation_pins_exact
-        @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.4462435598021046 atol = 1e-12
+        @test warmup_driver_bn_chain.mass_matrix[1] ≈ 0.3968463881646532 atol = 1e-12
     else
         @test 0.01 < warmup_driver_bn_chain.mass_matrix[1] < 10.0
     end

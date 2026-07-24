@@ -550,6 +550,10 @@ function gibbs(
         )
         refind = ScalarStepSizeSearch(model, gradient_cache, args, merged, rng, position, current_logjoint)
         nuts_target = ModelDensityTarget(model, args, merged, gradient_cache)
+        # Per-iteration NUTS scratch, hoisted out of the sampler loop (issue
+        # #159): _nuts_proposal re-initializes both structs on entry.
+        nuts_tree_workspace = NUTSSubtreeWorkspace(num_params, max_tree_depth)
+        nuts_continuation = NUTSContinuationState(num_params)
     end
 
     unconstrained_samples = Matrix{Float64}(undef, num_params, num_samples)
@@ -602,6 +606,8 @@ function gibbs(
             nuts_step_size = driver.step_size
             inverse_mass_matrix = _driver_metric(driver)
             proposal, accept_stat, _, _, _, _, divergent_step, moved_step = _nuts_proposal(
+                nuts_tree_workspace,
+                nuts_continuation,
                 nuts_target,
                 position,
                 current_logjoint,
@@ -613,9 +619,12 @@ function gibbs(
                 rng,
             )
             if moved_step
-                position = proposal.position
+                # `proposal` aliases the hoisted continuation's state, which
+                # the next iteration mutates in place -- copy the values out
+                # instead of retaining the buffers.
+                copyto!(position, proposal.position)
                 current_logjoint = proposal.logjoint
-                current_gradient = proposal.gradient
+                copyto!(current_gradient, proposal.gradient)
             end
             if iteration <= num_warmup
                 refind.position = position

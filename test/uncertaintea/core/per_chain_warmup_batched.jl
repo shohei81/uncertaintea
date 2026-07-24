@@ -32,16 +32,17 @@
         rng=MersenneTwister(404),
     )
     for pca_reg_chain in pca_reg.chains
-        # Re-pinned after the issue #93/#81 fixes (canonical invalid-subtree
-        # discard changes the warmup RNG stream; first-crossing step-size
-        # search changes the initial step); still matches the
-        # warmup_driver_regression shared-driver regression.
+        # Re-pinned after the issue #159 biased progressive merge (the
+        # doubling-merge swap is now Stan's min(1, w_subtree/w_continuation),
+        # shifting the warmup trajectory under the same RNG draws); still
+        # matches the warmup_driver_regression shared-driver regression.
+        # (Previous re-pin: issue #93/#81 fixes.)
         if adaptation_pins_exact
-            @test pca_reg_chain.step_size ≈ 1.0503622683613685 atol = 1e-12
+            @test pca_reg_chain.step_size ≈ 1.2243640004920302 atol = 1e-12
         end
         @test length(pca_reg_chain.mass_matrix) == 1
         if adaptation_pins_exact
-            @test pca_reg_chain.mass_matrix[1] ≈ 0.4462435598021046 atol = 1e-12
+            @test pca_reg_chain.mass_matrix[1] ≈ 0.3968463881646532 atol = 1e-12
         end
         # Version-independent: per_chain_adaptation=false means the shared
         # driver adapts once for the whole batch.

@@ -21,12 +21,17 @@
     mc_ys = Float32[0.4f0, -0.7f0, 1.1f0]
     mc_constraints = choicemap((:y => i, mc_ys[i]) for i = 1:3)
 
+    # 4x800 draws: the Pareto-k estimator is noisy at smaller draw counts
+    # (its tail-sample size scales with sqrt(S)), and a fixed-seed 4x400 run
+    # left one observation's khat straddling the 0.7 reliability boundary on
+    # some Julia versions after the issue #159 trajectory change (the true k
+    # of this well-specified conjugate model is far below the boundary).
     mc_chains = nuts_chains(
         mc_conjugate_model,
         (3,),
         mc_constraints;
         num_chains=4,
-        num_samples=400,
+        num_samples=800,
         num_warmup=400,
         rng=MersenneTwister(370),
     )
@@ -37,7 +42,7 @@
 
     mc_ll = pointwise_loglikelihood(mc_conjugate_model, (3,), mc_constraints, mc_chains)
     @test size(mc_ll, 2) == 3
-    @test size(mc_ll, 1) == 4 * 400
+    @test size(mc_ll, 1) == 4 * 800
 
     # Pointwise correctness: row-sum of log-likelihoods plus the prior term for mu recovers
     # the full model logjoint for that draw. The pooled draw order matches the column-wise

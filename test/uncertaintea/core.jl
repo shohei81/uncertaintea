@@ -55,6 +55,7 @@ core_test_files = [
     ("batched_advi_particle.jl", "inference"),
     ("proposal_diagnostics_overflow.jl", "inference"),
     ("integrator_nuts_proposal.jl", "inference"),
+    ("nuts_biased_merge_workspace_reuse.jl", "inference"),
     ("nuts_uturn_turning.jl", "inference"),
     ("mcmc_diagnostics_ess_mcse.jl", "inference"),
     ("predictive_sampling_smc_resampling.jl", "inference"),

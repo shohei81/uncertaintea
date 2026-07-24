@@ -152,7 +152,10 @@ function _continue_nuts_proposal!(
                 continuation.log_weight,
                 tree_workspace.summary.log_weight,
             )
-            if log(rand(rng)) < tree_workspace.summary.log_weight - combined_log_weight
+            # Biased progressive sampling at the doubling merge (Stan
+            # base_nuts; Betancourt 2017 App. A.3.2): P(swap) =
+            # min(1, w_subtree / w_continuation). See _merge_subtree_stats.
+            if log(rand(rng)) < tree_workspace.summary.log_weight - continuation.log_weight
                 _copy_nuts_continuation_proposal_from_tree!(
                     continuation,
                     tree_workspace,
@@ -253,10 +256,12 @@ function _continue_batched_nuts_proposal!(
                 workspace.continuation_log_weight[chain_index],
                 workspace.continuation_candidate_log_weight[chain_index],
             )
+            # Biased progressive sampling at the doubling merge (Stan
+            # base_nuts; Betancourt 2017 App. A.3.2). See _merge_subtree_stats.
             workspace.continuation_select_proposal[chain_index] =
                 log(rand(rng)) <
                 workspace.continuation_candidate_log_weight[chain_index] -
-                workspace.continuation_combined_log_weight[chain_index]
+                workspace.continuation_log_weight[chain_index]
             workspace.tree_proposal_logjoint[chain_index] = tree_workspace.proposal.logjoint
             if workspace.continuation_select_proposal[chain_index]
                 _copy_single_batched_continuation_proposal_from_tree!(
@@ -304,7 +309,16 @@ function _continue_batched_nuts_batched_subtree!(
     return true
 end
 
+# Workspace-reusing NUTS transition: `tree_workspace` and `continuation` are
+# scratch state fully re-initialized on entry (the first-step init resets every
+# continuation field and each subtree build resets the tree scratch), so hot
+# sampler loops allocate them once and pass them to every iteration. The
+# returned proposal aliases `continuation.proposal`; callers that reuse the
+# continuation must copy the accepted position/gradient values out instead of
+# retaining the buffers across iterations.
 function _nuts_proposal(
+    tree_workspace::NUTSSubtreeWorkspace,
+    continuation::NUTSContinuationState,
     target::AbstractDensityTarget,
     position::AbstractVector{Float64},
     current_logjoint::Float64,
@@ -315,8 +329,6 @@ function _nuts_proposal(
     max_delta_energy::Float64,
     rng::AbstractRNG,
 )
-    tree_workspace = NUTSSubtreeWorkspace(length(position), max_tree_depth)
-    continuation = NUTSContinuationState(length(position))
     initial_momentum = _sample_momentum(rng, inverse_mass_matrix)
     initial_state = _load_nuts_state!(
         tree_workspace.current,
@@ -367,6 +379,34 @@ function _nuts_proposal(
     energy_error,
     continuation.divergent,
     moved
+end
+
+# Allocating convenience wrapper: builds fresh per-call workspaces. Hot loops
+# (single-chain NUTS, Gibbs) hoist the workspaces and call the method above.
+function _nuts_proposal(
+    target::AbstractDensityTarget,
+    position::AbstractVector{Float64},
+    current_logjoint::Float64,
+    current_gradient::AbstractVector{Float64},
+    inverse_mass_matrix::Union{Vector{Float64},MassMetric},
+    step_size::Float64,
+    max_tree_depth::Int,
+    max_delta_energy::Float64,
+    rng::AbstractRNG,
+)
+    return _nuts_proposal(
+        NUTSSubtreeWorkspace(length(position), max_tree_depth),
+        NUTSContinuationState(length(position)),
+        target,
+        position,
+        current_logjoint,
+        current_gradient,
+        inverse_mass_matrix,
+        step_size,
+        max_tree_depth,
+        max_delta_energy,
+        rng,
+    )
 end
 
 function _batched_nuts_proposals!(

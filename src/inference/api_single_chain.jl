@@ -298,11 +298,18 @@ function nuts(
     sample_index = 0
     cumulative_divergences = 0
     nuts_target = ModelDensityTarget(model, args, constraints, gradient_cache)
+    # Per-iteration NUTS scratch, hoisted out of the sampler loop (issue #159):
+    # _nuts_proposal re-initializes both structs on entry, so they are reused
+    # across every warmup and sampling iteration.
+    nuts_tree_workspace = NUTSSubtreeWorkspace(num_params, max_tree_depth)
+    nuts_continuation = NUTSContinuationState(num_params)
     for iteration = 1:total_iterations
         nuts_step_size = driver.step_size
         inverse_mass_matrix = _driver_metric(driver)
         proposal, accept_stat, tree_depth, integration_steps_used, proposal_energy, energy_error, divergent_step, moved_step =
             _nuts_proposal(
+                nuts_tree_workspace,
+                nuts_continuation,
                 nuts_target,
                 position,
                 current_logjoint,
@@ -315,9 +322,12 @@ function nuts(
             )
 
         if moved_step
-            position = proposal.position
+            # `proposal` aliases the hoisted continuation's state, which the
+            # next iteration mutates in place -- copy the values out instead
+            # of retaining the buffers.
+            copyto!(position, proposal.position)
             current_logjoint = proposal.logjoint
-            current_gradient = proposal.gradient
+            copyto!(current_gradient, proposal.gradient)
         end
 
         divergent_step && (cumulative_divergences += 1)
