@@ -20,10 +20,25 @@
 # the parameter expressions are loop-varying the walk keeps the per-iteration
 # fast path (still fed from the staged observation vector, which IS bitwise).
 
+# On top of the hoisted tier, issue #146 fuses the observation reduction
+# itself: for an iid exponential-family loop (single observed choice, shared
+# constraints, loop-INVARIANT parameter expressions) the per-chain
+# O(observations) sum collapses to a closed form over sufficient statistics
+# cached once per (step, iterable) alongside the staged observation vector —
+# O(observations x chains) becomes O(chains). Normal uses the CENTERED stats
+# (n, ybar, S2c = sum((y - ybar)^2)); the naive sum(y^2) - 2*mu*sum(y) + n*mu^2
+# form cancels catastrophically when |ybar| >> sigma. Exponential fuses over
+# (n, sum(y)); poisson over (n, sum(y), sum(log y!)) with the log-factorial
+# data constant computed once at staging. Data that cannot take the closed
+# form (non-finite values, negative exponential values, non-count poisson
+# values, an empty loop) falls back to the hoisted/per-iteration tiers.
+
 # Test seams: let the validation tests drive the generic walk / the
-# non-hoisted loop on the same model. Always true in production.
+# non-hoisted loop / the unfused reduction on the same model. Always true in
+# production.
 const _BATCHED_GRADIENT_OBSERVED_LOOP_FAST_PATH = Ref(true)
 const _BATCHED_GRADIENT_OBSERVED_LOOP_HOIST = Ref(true)
+const _BATCHED_GRADIENT_OBSERVED_LOOP_SUFFSTATS = Ref(true)
 
 # The family set mirrors the scoring walker's `_score_backend_observed_loop_choice!`
 # methods; anything else (or a non-single-observed-choice body) takes the
@@ -66,6 +81,17 @@ function _score_backend_observed_loop_and_gradient!(
     observed =
         constraints isa ChoiceMap ?
         _gathered_observed_loop_values!(cache, env, step, choice, reference_iterable, constraints) : nothing
+
+    # sufficient-statistics fusion (issue #146): loop-invariant parameters +
+    # shared constraints + closed-form-compatible data replace the whole
+    # observation reduction with a few cached numbers
+    if !isnothing(observed) && _BATCHED_GRADIENT_OBSERVED_LOOP_SUFFSTATS[]
+        stats = _observed_loop_suffstats!(cache, step, choice, observed, reference_iterable)
+        if !isnothing(stats)
+            _score_backend_observed_loop_gradient_fused!(choice, stats, totals, gradients, cache, env)
+            return totals, gradients
+        end
+    end
 
     if !isnothing(observed) &&
        _BATCHED_GRADIENT_OBSERVED_LOOP_HOIST[] &&
@@ -189,6 +215,214 @@ function _score_backend_observed_loop_gradient_hoisted!(
             gradients[parameter_index, batch_index] +=
                 dmu_accumulator * mu_gradients[parameter_index, batch_index] +
                 dsigma_accumulator * sigma_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+# --- sufficient-statistics fusion (issue #146) ---------------------------------
+#
+# The fused tier scores the WHOLE loop per chain from a handful of numbers
+# computed once per (step, iterable) at first use and staged on the gradient
+# cache (the cache's constraints are fixed for its lifetime, like the staged
+# observation vector). The closed forms below are the per-observation
+# `_accumulate_*_gradient!` formulas summed analytically, so they agree with
+# the per-iteration tiers to reassociation (tolerance, not bitwise); the
+# out-of-support parameter behavior matches (NaN totals for a non-positive
+# normal sigma / exponential rate, issue #98; ArgumentError for a non-positive
+# poisson lambda). Data the closed form cannot represent exactly (non-finite
+# values, negative exponential values, non-count poisson values, an empty
+# loop) is detected once at staging and recorded as `nothing`, so the walk
+# falls back to the hoisted/per-iteration tiers without rescanning per call.
+
+struct _NormalObservationStats{T<:AbstractFloat}
+    count::Int
+    mean::T
+    # compensation term sum(y - ybar): zero in exact arithmetic but not in
+    # floats (ybar carries ~1 ulp of the DATA scale, which n amplifies when
+    # |ybar| >> sigma); carrying it makes the moment identities below exact
+    # algebra about the stored float mean
+    residual::T
+    # centered second moment sum((y - ybar)^2): with delta = ybar - mu,
+    #   sum(y - mu)   = n*delta + residual
+    #   sum((y-mu)^2) = S2c + delta*(2*residual + n*delta)
+    # so the fusion is cancellation-free even when |ybar| >> sigma, unlike
+    # the naive power-sum form
+    centered_sum_squares::T
+end
+
+struct _ExponentialObservationStats{T<:AbstractFloat}
+    count::Int
+    total::T
+end
+
+struct _PoissonObservationStats{T<:AbstractFloat}
+    count::Int
+    total::T
+    # sum(log y!) is a data constant, computed at staging with the same
+    # `_logfactorial_like` accumulation the per-observation logpdf uses
+    log_factorial_total::T
+end
+
+# Fusable = every parameter expression is loop-invariant. Families without a
+# fused scorer report false and keep their existing tiers.
+_backend_observed_loop_gradient_fusable(choice, iterator_slot::Int) = false
+_backend_observed_loop_gradient_fusable(choice::BackendNormalChoicePlanStep, iterator_slot::Int) =
+    !_backend_expr_reads_slot(choice.mu, iterator_slot) && !_backend_expr_reads_slot(choice.sigma, iterator_slot)
+_backend_observed_loop_gradient_fusable(choice::BackendExponentialChoicePlanStep, iterator_slot::Int) =
+    !_backend_expr_reads_slot(choice.rate, iterator_slot)
+_backend_observed_loop_gradient_fusable(choice::BackendPoissonChoicePlanStep, iterator_slot::Int) =
+    !_backend_expr_reads_slot(choice.lambda, iterator_slot)
+
+function _observed_loop_suffstats!(
+    cache::BatchedBackendGradientCache,
+    step::BackendLoopPlanStep,
+    choice,
+    observed::Vector{T},
+    reference_iterable,
+) where {T<:AbstractFloat}
+    _backend_observed_loop_gradient_fusable(choice, step.iterator_slot) || return nothing
+    entry = get(cache.observed_loop_stats, step, nothing)
+    if entry isa Tuple{Any,Any} && entry[1] == reference_iterable
+        return entry[2]
+    end
+    stats = _observed_loop_compute_suffstats(choice, observed)
+    cache.observed_loop_stats[step] = (reference_iterable, stats)
+    return stats
+end
+
+function _observed_loop_compute_suffstats(::BackendNormalChoicePlanStep, observed::Vector{T}) where {T<:AbstractFloat}
+    count = length(observed)
+    (count > 0 && all(isfinite, observed)) || return nothing
+    mean = sum(observed) / count
+    residual = sum(value -> value - mean, observed)
+    centered_sum_squares = sum(value -> abs2(value - mean), observed)
+    return _NormalObservationStats{T}(count, mean, residual, centered_sum_squares)
+end
+
+function _observed_loop_compute_suffstats(::BackendExponentialChoicePlanStep, observed::Vector{T}) where {T<:AbstractFloat}
+    count = length(observed)
+    count > 0 || return nothing
+    # a negative observation scores -Inf and contributes no gradient in the
+    # per-observation form; keep those loops on the unfused tiers
+    all(value -> isfinite(value) && value >= zero(T), observed) || return nothing
+    return _ExponentialObservationStats{T}(count, sum(observed))
+end
+
+function _observed_loop_compute_suffstats(::BackendPoissonChoicePlanStep, observed::Vector{T}) where {T<:AbstractFloat}
+    count = length(observed)
+    count > 0 || return nothing
+    total = zero(T)
+    log_factorial_total = zero(T)
+    for value in observed
+        observation_count = _poisson_count(value)
+        # a non-count observation scores -Inf and contributes no gradient in
+        # the per-observation form; keep those loops on the unfused tiers
+        isnothing(observation_count) && return nothing
+        total += T(observation_count)
+        log_factorial_total += _logfactorial_like(one(T), observation_count)
+    end
+    return _PoissonObservationStats{T}(count, total, log_factorial_total)
+end
+
+# Fused normal: per chain, with delta = ybar - mu and the residual-compensated
+# moments above (sum(z) = (n*delta + residual)/sigma, sum(z^2) =
+# (S2c + delta*(2*residual + n*delta))/sigma^2)
+#   logpdf sum = -n*(log sigma + log(2*pi)/2) - sum(z^2)/2
+#   d/dmu     = sum(z)/sigma
+#   d/dsigma  = (sum(z^2) - n) / sigma
+# Scratch depths mirror the hoisted tier.
+function _score_backend_observed_loop_gradient_fused!(
+    choice::BackendNormalChoicePlanStep,
+    stats::_NormalObservationStats{T},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+) where {T<:AbstractFloat}
+    mu_values = _batched_numeric_scratch!(env, 1)
+    mu_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    sigma_values = _batched_numeric_scratch!(env, 2)
+    sigma_gradients = _batched_backend_gradient_scratch!(cache, 3)
+    _eval_backend_numeric_expr_and_gradient!(mu_values, mu_gradients, cache, env, choice.mu, 4)
+    _eval_backend_numeric_expr_and_gradient!(sigma_values, sigma_gradients, cache, env, choice.sigma, 5)
+    observation_count = T(stats.count)
+    half_log_2pi = T(log(2 * pi) / 2)
+    @inbounds for batch_index in eachindex(totals)
+        mu = mu_values[batch_index]
+        sigma = sigma_values[batch_index]
+        inv_sigma = 1 / sigma
+        log_sigma = sigma > zero(T) ? log(sigma) : T(NaN)
+        delta = stats.mean - mu
+        deviation_sum = observation_count * delta + stats.residual
+        squared_z_sum =
+            (stats.centered_sum_squares + delta * (2 * stats.residual + observation_count * delta)) *
+            inv_sigma *
+            inv_sigma
+        totals[batch_index] += -observation_count * (log_sigma + half_log_2pi) - squared_z_sum / 2
+        dmu = deviation_sum * inv_sigma * inv_sigma
+        dsigma = (squared_z_sum - observation_count) * inv_sigma
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] +=
+                dmu * mu_gradients[parameter_index, batch_index] +
+                dsigma * sigma_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+# Fused exponential: per chain
+#   logpdf sum = n*log(rate) - rate*sum(y)
+#   d/drate    = n/rate - sum(y)
+# A non-positive rate scores NaN per observation (issue #98), so the fused
+# total is NaN as well.
+function _score_backend_observed_loop_gradient_fused!(
+    choice::BackendExponentialChoicePlanStep,
+    stats::_ExponentialObservationStats{T},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+) where {T<:AbstractFloat}
+    rate_values = _batched_numeric_scratch!(env, 1)
+    rate_gradients = _batched_backend_gradient_scratch!(cache, 2)
+    _eval_backend_numeric_expr_and_gradient!(rate_values, rate_gradients, cache, env, choice.rate, 3)
+    observation_count = T(stats.count)
+    @inbounds for batch_index in eachindex(totals)
+        rate = rate_values[batch_index]
+        log_rate = rate > zero(T) ? log(rate) : T(NaN)
+        totals[batch_index] += observation_count * log_rate - rate * stats.total
+        drate = observation_count / rate - stats.total
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] += drate * rate_gradients[parameter_index, batch_index]
+        end
+    end
+    return totals, gradients
+end
+
+# Fused poisson: per chain
+#   logpdf sum = sum(y)*log(lambda) - n*lambda - sum(log y!)
+#   d/dlambda  = sum(y)/lambda - n
+# A non-positive lambda throws, matching `_backend_poisson_logpdf`.
+function _score_backend_observed_loop_gradient_fused!(
+    choice::BackendPoissonChoicePlanStep,
+    stats::_PoissonObservationStats{T},
+    totals::AbstractVector{T},
+    gradients::AbstractMatrix{T},
+    cache::BatchedBackendGradientCache,
+    env::BatchedPlanEnvironment{T},
+) where {T<:AbstractFloat}
+    lambda_values = _batched_numeric_scratch!(env, 1)
+    lambda_gradients = _batched_backend_gradient_scratch!(cache, 1)
+    _eval_backend_numeric_expr_and_gradient!(lambda_values, lambda_gradients, cache, env, choice.lambda, 2)
+    observation_count = T(stats.count)
+    @inbounds for batch_index in eachindex(totals)
+        lambda = lambda_values[batch_index]
+        lambda > zero(T) || throw(ArgumentError("poisson requires lambda > 0"))
+        totals[batch_index] += stats.total * log(lambda) - observation_count * lambda - stats.log_factorial_total
+        dlambda = stats.total / lambda - observation_count
+        for parameter_index in axes(gradients, 1)
+            gradients[parameter_index, batch_index] += dlambda * lambda_gradients[parameter_index, batch_index]
         end
     end
     return totals, gradients
