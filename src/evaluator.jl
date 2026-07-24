@@ -133,6 +133,16 @@ struct CompiledChoicePlanStep{A<:Tuple,AD<:CompiledAddressSpec,C} <: AbstractCom
     # compile-time enumeration support for marginalize=:enumerate latents;
     # `nothing` for ordinary choices
     marginalize::Union{Nothing,CompiledMarginalize}
+    # Dense observed-value staging (issue #145). A loop observation whose
+    # address is `(literal..., loop-index)` gets a per-plan stage index; a
+    # LogjointGradientCache pre-resolves its constrained values into a dense
+    # Float64 vector indexed by the loop index, and the scoring loop reads
+    # `values[i]` instead of assembling an address tuple and hashing into the
+    # ChoiceMap. 0 when the step does not qualify. `stage_iterator_slot` is
+    # the environment slot of the enclosing loop iterator the address's final
+    # dynamic part reads (0 when `stage_index` is 0).
+    stage_index::Int
+    stage_iterator_slot::Int
 end
 
 struct CompiledDeterministicPlanStep{E<:AbstractCompiledExpr} <: AbstractCompiledPlanStep
@@ -156,6 +166,9 @@ struct CompiledExecutionPlan{S<:Tuple}
     # slotless choice (a marginalize=:enumerate site or a loop-scoped binding)
     # feeds them. Empty when the plan has no noncentered site.
     required_walk_slots::Set{Int}
+    # Number of stageable loop-observation sites in the plan (issue #145); the
+    # per-cache dense observation stage sizes its site vector from this count.
+    stage_count::Int
 end
 
 # If `callee` is a dotted operator symbol (e.g. `.*`, `.+`), return the underlying
@@ -193,6 +206,49 @@ function _resolve_compile_symbol(model::TeaModel, layout::EnvironmentLayout, sym
     throw(ArgumentError("lower-level logjoint could not resolve symbol `$sym` in model $(model.name)"))
 end
 
+# `sum(a .* b)` compiled without the intermediate broadcast array (issue #145).
+# Below 16 elements Base's `mapreduce` reduces sequentially without `@simd`, so
+# summing the lazy `Broadcasted` visits the identical element values in the
+# identical order as summing the materialized array and the result is
+# bit-identical while skipping the per-call allocation -- this covers the
+# per-observation `sum(beta .* X[:, i])` dots the rewrite targets. From 16
+# elements up, `@simd` may associate array loads and lazily computed products
+# differently (observed to diverge in the last ulp), so materialize exactly as
+# the unrewritten `sum(broadcast(*, a, b))` would.
+function _sum_broadcast_multiply(a, b)
+    lazy = Broadcast.instantiate(Broadcast.broadcasted(*, a, b))
+    length(lazy) < 16 && return sum(lazy)
+    return sum(Broadcast.materialize(lazy))
+end
+
+_compiled_literal_is(expr::AbstractCompiledExpr, value) =
+    expr isa CompiledLiteralExpr && expr.value === value
+
+# Post-compilation call rewrites (issue #145): `X[:, i]` (a `getindex` with a
+# literal `Colon` index) becomes a `view`, so per-observation column reads stop
+# materializing fresh vectors, and `sum(a .* b)` becomes an allocation-free
+# broadcast reduction. Both rewrites read the same element values in the same
+# order as the original calls.
+function _rewrite_compiled_call(expr::CompiledCallExpr)
+    if _compiled_literal_is(expr.callee, getindex) &&
+       any(arg -> arg isa CompiledLiteralExpr && arg.value isa Colon, expr.arguments)
+        return CompiledCallExpr(CompiledLiteralExpr(view), expr.arguments)
+    end
+    if _compiled_literal_is(expr.callee, sum) && length(expr.arguments) == 1
+        inner = expr.arguments[1]
+        if inner isa CompiledCallExpr &&
+           _compiled_literal_is(inner.callee, broadcast) &&
+           length(inner.arguments) == 3 &&
+           _compiled_literal_is(inner.arguments[1], *)
+            return CompiledCallExpr(
+                CompiledLiteralExpr(_sum_broadcast_multiply),
+                (inner.arguments[2], inner.arguments[3]),
+            )
+        end
+    end
+    return expr
+end
+
 function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
     if expr isa QuoteNode
         return CompiledLiteralExpr(expr.value)
@@ -214,7 +270,7 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
             end
             callee = _compile_plan_expr(model, layout, expr.args[1])
             arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args[2:end])...)
-            return CompiledCallExpr(callee, arguments)
+            return _rewrite_compiled_call(CompiledCallExpr(callee, arguments))
         elseif expr.head == :block
             arguments = tuple((
                 _compile_plan_expr(model, layout, arg) for arg in expr.args if !(arg isa LineNumberNode)
@@ -229,7 +285,7 @@ function _compile_plan_expr(model::TeaModel, layout::EnvironmentLayout, expr)
         elseif expr.head == :ref
             callee = CompiledLiteralExpr(getindex)
             arguments = tuple((_compile_plan_expr(model, layout, arg) for arg in expr.args)...)
-            return CompiledCallExpr(callee, arguments)
+            return _rewrite_compiled_call(CompiledCallExpr(callee, arguments))
         end
 
         throw(ArgumentError("unsupported expression in lower-level logjoint compilation: $expr"))
@@ -251,11 +307,38 @@ function _compile_address(layout::EnvironmentLayout, model::TeaModel, address::A
     return CompiledAddressSpec(parts)
 end
 
+# A choice step qualifies for dense observed-value staging (issue #145) when
+# its value comes from the constraints (no parameter slot), it is not an
+# enumerated latent, and its address is `(literal..., loop-index)` -- every
+# part literal except a final dynamic part that reads an enclosing loop's
+# iterator slot. Returns `(stage_index, iterator_slot)` or `(0, 0)`.
+function _stage_observation_marker(
+    address::CompiledAddressSpec,
+    parameter_slot::Union{Nothing,Int},
+    marginalize::Union{Nothing,CompiledMarginalize},
+    loop_iterator_slots::Tuple{Vararg{Int}},
+    stage_counter::Base.RefValue{Int},
+)
+    isnothing(parameter_slot) || return (0, 0)
+    isnothing(marginalize) || return (0, 0)
+    parts = address.parts
+    length(parts) >= 2 || return (0, 0)
+    all(part -> part isa CompiledAddressLiteralPart, Base.front(parts)) || return (0, 0)
+    tail = last(parts)
+    tail isa CompiledAddressDynamicPart || return (0, 0)
+    tail.expr isa CompiledSlotExpr || return (0, 0)
+    tail.expr.slot in loop_iterator_slots || return (0, 0)
+    stage_counter[] += 1
+    return (stage_counter[], tail.expr.slot)
+end
+
 function _compile_plan_step(
     model::TeaModel,
     layout::EnvironmentLayout,
     parameter_layout::ParameterLayout,
     step::ChoicePlanStep,
+    loop_iterator_slots::Tuple{Vararg{Int}},
+    stage_counter::Base.RefValue{Int},
 )
     step.rhs isa DistributionSpec || step.rhs isa BroadcastDistributionSpec ||
         throw(ArgumentError("compiled lower-level logjoint only supports distribution choice steps"))
@@ -292,15 +375,20 @@ function _compile_plan_step(
     if step.rhs isa DistributionSpec && step.rhs.marginalize === :enumerate
         marginalize = CompiledMarginalize(_marginalize_support(step.rhs))
     end
+    address = _compile_address(layout, model, step.address)
+    stage_index, stage_iterator_slot =
+        _stage_observation_marker(address, step.parameter_slot, marginalize, loop_iterator_slots, stage_counter)
     return CompiledChoicePlanStep(
         step.binding_slot,
-        _compile_address(layout, model, step.address),
+        address,
         constructor,
         arguments,
         parameter_value_indices,
         step.parameter_slot,
         noncentered,
         marginalize,
+        stage_index,
+        stage_iterator_slot,
     )
 end
 
@@ -329,12 +417,24 @@ function _compile_plan_step(
     layout::EnvironmentLayout,
     parameter_layout::ParameterLayout,
     step::DeterministicPlanStep,
+    loop_iterator_slots::Tuple{Vararg{Int}},
+    stage_counter::Base.RefValue{Int},
 )
     return CompiledDeterministicPlanStep(step.binding_slot, _compile_plan_expr(model, layout, step.expr))
 end
 
-function _compile_plan_step(model::TeaModel, layout::EnvironmentLayout, parameter_layout::ParameterLayout, step::LoopPlanStep)
-    body = tuple((_compile_plan_step(model, layout, parameter_layout, inner) for inner in step.body)...)
+function _compile_plan_step(
+    model::TeaModel,
+    layout::EnvironmentLayout,
+    parameter_layout::ParameterLayout,
+    step::LoopPlanStep,
+    loop_iterator_slots::Tuple{Vararg{Int}},
+    stage_counter::Base.RefValue{Int},
+)
+    body_slots = (loop_iterator_slots..., step.iterator_slot)
+    body = tuple((
+        _compile_plan_step(model, layout, parameter_layout, inner, body_slots, stage_counter) for inner in step.body
+    )...)
     return CompiledLoopPlanStep(step.iterator_slot, _compile_plan_expr(model, layout, step.iterable), body)
 end
 
@@ -356,10 +456,14 @@ function _reject_branchful_compiled_scoring(model::TeaModel)
 end
 
 function _compile_execution_plan(model::TeaModel, raw_plan::ExecutionPlan)
+    stage_counter = Ref(0)
     compiled_steps = tuple(
-        (_compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step) for step in raw_plan.steps)...,
+        (
+            _compile_plan_step(model, raw_plan.environment_layout, raw_plan.parameter_layout, step, (), stage_counter) for
+            step in raw_plan.steps
+        )...,
     )
-    return CompiledExecutionPlan(compiled_steps, _required_walk_slots(compiled_steps))
+    return CompiledExecutionPlan(compiled_steps, _required_walk_slots(compiled_steps), stage_counter[])
 end
 
 _compile_execution_plan(model::TeaModel) = _compile_execution_plan(model, executionplan(model))
@@ -401,10 +505,22 @@ mutable struct ResolvedSignaturePlan
     # `BackendLoweringResult` once populated; `nothing` until then. Untyped so
     # `evaluator.jl` need not see the backend types (defined later, in backend.jl).
     backend_lowering::Base.RefValue{Any}
+    # Memoized `ForwardDiff.GradientConfig`s for the public
+    # `logjoint_gradient_unconstrained` (issue #145), keyed by
+    # `(objective type, eltype, length)` so a config is only reused for the
+    # closure/chunk shape it was built for. Holds a `Dict` once populated;
+    # `nothing` until then. Untyped for the same reason as `backend_lowering`.
+    gradient_config_cache::Base.RefValue{Any}
+    # Single-slot memo of the last dense `ObservationStage` built by the public
+    # `logjoint_gradient_unconstrained` (issue #145): repeated calls with the
+    # SAME (unmutated) constraints object skip the staging walk. Validated per
+    # call via `_stage_is_current`, so a different or mutated ChoiceMap simply
+    # rebuilds. `nothing` until first populated.
+    observation_stage_cache::Base.RefValue{Any}
 end
 
 ResolvedSignaturePlan(plan::ExecutionPlan, compiled::CompiledExecutionPlan) =
-    ResolvedSignaturePlan(plan, compiled, Ref{Any}(nothing))
+    ResolvedSignaturePlan(plan, compiled, Ref{Any}(nothing), Ref{Any}(nothing), Ref{Any}(nothing))
 
 # A representative single ChoiceMap for the conditioning signature. The batched
 # and device paths accept either a shared ChoiceMap or a per-column vector of
@@ -512,14 +628,24 @@ function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledSlotExpr)
     return _environment_value(env, expr.slot)
 end
 
+# Recursive tuple map over compiled argument tuples. A generator splat
+# (`tuple((_eval_compiled_expr(env, a) for a in args)...)`) loses the tuple's
+# element types and routes every call through dynamic apply-iterate machinery
+# (~60% of logistic scoring samples, issue #145); the head/tail recursion
+# keeps the argument tuple type concrete so calls specialize.
+@inline _eval_compiled_exprs(env::PlanEnvironment, ::Tuple{}) = ()
+@inline function _eval_compiled_exprs(env::PlanEnvironment, exprs::Tuple)
+    return (_eval_compiled_expr(env, first(exprs)), _eval_compiled_exprs(env, Base.tail(exprs))...)
+end
+
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledCallExpr)
     callee = _eval_compiled_expr(env, expr.callee)
-    arguments = tuple((_eval_compiled_expr(env, arg) for arg in expr.arguments)...)
+    arguments = _eval_compiled_exprs(env, expr.arguments)
     return callee(arguments...)
 end
 
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledTupleExpr)
-    return tuple((_eval_compiled_expr(env, arg) for arg in expr.arguments)...)
+    return _eval_compiled_exprs(env, expr.arguments)
 end
 
 function _eval_compiled_expr(env::PlanEnvironment, expr::CompiledVectorExpr)
@@ -551,7 +677,7 @@ function _concrete_address(env::PlanEnvironment, address::CompiledAddressSpec)
 end
 
 function _compiled_distribution(step::CompiledChoicePlanStep, env::PlanEnvironment)
-    arguments = tuple((_eval_compiled_expr(env, arg) for arg in step.arguments)...)
+    arguments = _eval_compiled_exprs(env, step.arguments)
     return step.constructor(arguments...)
 end
 
@@ -567,16 +693,73 @@ function _parameter_slot_value(indices::UnitRange{Int}, params::AbstractVector)
     return collect(view(params, indices))
 end
 
-_score_compiled_steps(::Tuple{}, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) = 0.0
+# --- dense observed-value staging (issue #145) --------------------------------
+#
+# A dense `Vector{Float64}` read costs ~0.5 ns; the equivalent per-observation
+# ChoiceMap lookup assembles a `(literal..., i)` tuple and hashes it (~137 ns +
+# 5 allocs). Constraints are bound once per LogjointGradientCache and assumed
+# immutable for its lifetime, so the cache pre-resolves every stage-marked
+# loop observation (`CompiledChoicePlanStep.stage_index`) into a dense
+# per-site vector indexed by the loop index. Anything dynamic -- non-Int loop
+# indices, non-Float64 values, indices the staging walk never visited -- falls
+# back to the live ChoiceMap lookup, and the assumed immutability is verified
+# per evaluation via the ChoiceMap mutation counter (see `_stage_is_current`).
 
-function _score_compiled_steps(steps::Tuple, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap)
+struct StagedObservationSite
+    values::Vector{Float64}
+    filled::BitVector
+end
+
+struct ObservationStage
+    sites::Vector{StagedObservationSite}
+    constraints::ChoiceMap
+    constraints_mutation_count::Int
+end
+
+# The staging contract: the stage may only be consulted for the exact
+# constraints object it snapshot, and only while that object has not been
+# mutated since (gibbs replaces discrete-site values in its merged constraints
+# in place between gradient evaluations -- staged values would be stale).
+_stage_is_current(stage::ObservationStage, constraints::ChoiceMap) =
+    stage.constraints === constraints && stage.constraints_mutation_count == constraints.mutation_count
+
+# Staged value for a stage-marked choice step, or `nothing` when the site (or
+# this particular index) must fall back to the ChoiceMap.
+@inline function _staged_observation_value(stage::ObservationStage, step::CompiledChoicePlanStep, env::PlanEnvironment)
+    site = @inbounds stage.sites[step.stage_index]
+    index = _environment_value(env, step.stage_iterator_slot)
+    index isa Int || return nothing
+    (1 <= index <= length(site.filled) && @inbounds(site.filled[index])) || return nothing
+    return @inbounds site.values[index]
+end
+
+const _MaybeObservationStage = Union{Nothing,ObservationStage}
+
+_score_compiled_steps(steps::Tuple, env::PlanEnvironment, params::AbstractVector, constraints::ChoiceMap) =
+    _score_compiled_steps(steps, env, params, constraints, nothing)
+
+_score_compiled_steps(
+    ::Tuple{},
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
+) = 0.0
+
+function _score_compiled_steps(
+    steps::Tuple,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
+)
     head = first(steps)
     tail = Base.tail(steps)
     if head isa CompiledChoicePlanStep && !isnothing(head.marginalize)
-        return _score_marginalized_choice!(head, tail, env, params, constraints)
+        return _score_marginalized_choice!(head, tail, env, params, constraints, stage)
     end
-    return _score_plan_step!(head, env, params, constraints) +
-           _score_compiled_steps(tail, env, params, constraints)
+    return _score_plan_step!(head, env, params, constraints, stage) +
+           _score_compiled_steps(tail, env, params, constraints, stage)
 end
 
 # marginalize=:enumerate (docs/discrete-enumeration.md): the fold above makes
@@ -592,17 +775,19 @@ function _score_marginalized_choice!(
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
 )
     address = _concrete_address(env, step.address)
     dist = _compiled_distribution(step, env)
     found, constrained_value = _choice_tryget_normalized(constraints, address)
     if found
         isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, constrained_value)
-        return logpdf(dist, constrained_value) + _score_compiled_steps(tail, env, params, constraints)
+        return logpdf(dist, constrained_value) + _score_compiled_steps(tail, env, params, constraints, stage)
     end
 
     snapshot = _environment_snapshot(env)
-    terms = _marginalized_suffix_terms(step.marginalize.support, snapshot, dist, step, tail, env, params, constraints)
+    terms =
+        _marginalized_suffix_terms(step.marginalize.support, snapshot, dist, step, tail, env, params, constraints, stage)
     _environment_restore_snapshot!(env, snapshot)
 
     # max-shifted logsumexp, mirroring `logpdf(::MixtureDist, x)`
@@ -624,6 +809,7 @@ function _marginalized_suffix_terms(
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
 )
     return ()
 end
@@ -637,6 +823,7 @@ function _marginalized_suffix_terms(
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
 )
     # every branch re-runs the suffix from the same pre-branch environment
     # (suffix rebinds like `x = x + 1` must not leak across branches)
@@ -650,13 +837,13 @@ function _marginalized_suffix_terms(
     # logsumexp gradient
     term = if isfinite(choice_logpdf)
         isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
-        choice_logpdf + _score_compiled_steps(tail, env, params, constraints)
+        choice_logpdf + _score_compiled_steps(tail, env, params, constraints, stage)
     else
         oftype(choice_logpdf, -Inf)
     end
     return (
         term,
-        _marginalized_suffix_terms(Base.tail(support), snapshot, dist, step, tail, env, params, constraints)...,
+        _marginalized_suffix_terms(Base.tail(support), snapshot, dist, step, tail, env, params, constraints, stage)...,
     )
 end
 
@@ -665,7 +852,16 @@ function _score_plan_step!(
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
 )
+    if !isnothing(stage) && step.stage_index != 0
+        staged_value = _staged_observation_value(stage, step, env)
+        if staged_value isa Float64
+            dist = _compiled_distribution(step, env)
+            isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, staged_value)
+            return logpdf(dist, staged_value)
+        end
+    end
     address = _concrete_address(env, step.address)
     value = if !isnothing(step.parameter_value_indices)
         _parameter_slot_value(step.parameter_value_indices, params)
@@ -685,6 +881,7 @@ function _score_plan_step!(
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
 )
     _environment_set!(env, step.binding_slot, _eval_compiled_expr(env, step.expr))
     return 0.0
@@ -695,6 +892,7 @@ function _score_plan_step!(
     env::PlanEnvironment,
     params::AbstractVector,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
 )
     iterable = _eval_compiled_expr(env, step.iterable)
     had_previous = _environment_hasvalue(env, step.iterator_slot)
@@ -703,7 +901,7 @@ function _score_plan_step!(
 
     for item in iterable
         _environment_set!(env, step.iterator_slot, item)
-        total += _score_compiled_steps(step.body, env, params, constraints)
+        total += _score_compiled_steps(step.body, env, params, constraints, stage)
     end
 
     _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
@@ -764,6 +962,112 @@ function _sample_prior_step!(
     return nothing
 end
 
+# --- staging walk (issue #145) -------------------------------------------------
+#
+# Build the dense per-site observation vectors by walking the compiled plan
+# once, exactly like a scoring pass but recording constrained values instead of
+# summing logpdfs (distributions are never constructed). Latent bindings come
+# from the constrained-space `params`; a loop iterable that somehow yields
+# different indices at other parameter values is harmless because scoring falls
+# back to the ChoiceMap for any index the walk did not fill. Any anomaly aborts
+# the walk (`nothing` -- full ChoiceMap fallback); a non-Int index or a
+# non-Float64 value deactivates just that site.
+
+function _stage_observations(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    unconstrained_seed::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    compiled = resolved.compiled
+    compiled.stage_count == 0 && return nothing
+    mutation_count = constraints.mutation_count
+    sites = [StagedObservationSite(Float64[], BitVector()) for _ = 1:compiled.stage_count]
+    active = trues(compiled.stage_count)
+    try
+        seed = collect(Float64, unconstrained_seed)
+        constrained, _ = _transform_to_constrained_with_logabsdet(model, resolved, seed, args, constraints)
+        complete_args = _complete_model_args(model, args)
+        env = PlanEnvironment(resolved.plan.environment_layout)
+        for (slot, value) in zip(resolved.plan.environment_layout.argument_slots, complete_args)
+            _environment_set!(env, slot, value)
+        end
+        _stage_walk_steps!(sites, active, compiled.steps, env, constrained, constraints)
+    catch
+        return nothing
+    end
+    for site_index in eachindex(active)
+        if !active[site_index]
+            empty!(sites[site_index].values)
+            empty!(sites[site_index].filled)
+        end
+    end
+    return ObservationStage(sites, constraints, mutation_count)
+end
+
+function _stage_walk_steps!(
+    sites::Vector{StagedObservationSite},
+    active::BitVector,
+    steps::Tuple,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    for step in steps
+        _stage_walk_step!(sites, active, step, env, params, constraints)
+    end
+    return nothing
+end
+
+function _stage_walk_step!(
+    sites::Vector{StagedObservationSite},
+    active::BitVector,
+    step::CompiledChoicePlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    value = if !isnothing(step.parameter_value_indices)
+        _parameter_slot_value(step.parameter_value_indices, params)
+    else
+        address = _concrete_address(env, step.address)
+        found, constrained_value = _choice_tryget_normalized(constraints, address)
+        if found
+            constrained_value
+        elseif !isnothing(step.marginalize)
+            # unconstrained enumerated latent: bind a representative support
+            # value so the walk stays linear -- staged values are a pure
+            # function of (site, loop index) and the fallback covers any
+            # branch-dependent loop pattern
+            first(step.marginalize.support)
+        else
+            # scoring would throw here; abort staging so it does
+            throw(ArgumentError("staging walk found no value for choice $(address)"))
+        end
+    end
+    if step.stage_index != 0 && active[step.stage_index]
+        index = _environment_value(env, step.stage_iterator_slot)
+        if index isa Int && index >= 1 && value isa Float64
+            site = sites[step.stage_index]
+            if index > length(site.values)
+                previous_length = length(site.values)
+                resize!(site.values, index)
+                resize!(site.filled, index)
+                for unfilled = (previous_length+1):index
+                    site.filled[unfilled] = false
+                end
+            end
+            site.values[index] = value
+            site.filled[index] = true
+        else
+            active[step.stage_index] = false
+        end
+    end
+    isnothing(step.binding_slot) || _environment_set!(env, step.binding_slot, value)
+    return nothing
+end
+
 function _sample_prior_step!(
     step::CompiledDeterministicPlanStep,
     env::PlanEnvironment,
@@ -771,6 +1075,18 @@ function _sample_prior_step!(
     params::AbstractVector,
     constraints::ChoiceMap,
     rng::AbstractRNG,
+)
+    _environment_set!(env, step.binding_slot, _eval_compiled_expr(env, step.expr))
+    return nothing
+end
+
+function _stage_walk_step!(
+    sites::Vector{StagedObservationSite},
+    active::BitVector,
+    step::CompiledDeterministicPlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
 )
     _environment_set!(env, step.binding_slot, _eval_compiled_expr(env, step.expr))
     return nothing
@@ -797,6 +1113,25 @@ function _sample_prior_step!(
     return nothing
 end
 
+function _stage_walk_step!(
+    sites::Vector{StagedObservationSite},
+    active::BitVector,
+    step::CompiledLoopPlanStep,
+    env::PlanEnvironment,
+    params::AbstractVector,
+    constraints::ChoiceMap,
+)
+    iterable = _eval_compiled_expr(env, step.iterable)
+    had_previous = _environment_hasvalue(env, step.iterator_slot)
+    previous_value = had_previous ? _environment_value(env, step.iterator_slot) : nothing
+    for item in iterable
+        _environment_set!(env, step.iterator_slot, item)
+        _stage_walk_steps!(sites, active, step.body, env, params, constraints)
+    end
+    _environment_restore!(env, step.iterator_slot, previous_value, had_previous)
+    return nothing
+end
+
 function logjoint(
     model::TeaModel,
     params::AbstractVector,
@@ -813,6 +1148,7 @@ function _logjoint(
     params::AbstractVector,
     args::Tuple,
     constraints::ChoiceMap,
+    stage::_MaybeObservationStage=nothing,
 )
     plan = resolved.plan
     expected = parametervaluecount(plan.parameter_layout)
@@ -833,7 +1169,11 @@ function _logjoint(
         _environment_set!(env, slot, value)
     end
 
-    return _score_compiled_steps(resolved.compiled.steps, env, params, constraints)
+    # verify the staging assumption (immutable constraints per cache lifetime)
+    # every evaluation: a mutated or different ChoiceMap silently drops back to
+    # live lookups instead of scoring stale staged values
+    active_stage = (stage isa ObservationStage && _stage_is_current(stage, constraints)) ? stage : nothing
+    return _score_compiled_steps(resolved.compiled.steps, env, params, constraints, active_stage)
 end
 
 function logjoint_unconstrained(
@@ -843,8 +1183,19 @@ function logjoint_unconstrained(
     constraints::ChoiceMap=choicemap(),
 )
     resolved = _resolve_signature_plan(model, constraints)
+    return _logjoint_unconstrained(model, resolved, params, args, constraints, nothing)
+end
+
+function _logjoint_unconstrained(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    params::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
+)
     constrained, logabsdet = _transform_to_constrained_with_logabsdet(model, resolved, params, args, constraints)
-    return _logjoint(model, resolved, constrained, args, constraints) + logabsdet
+    return _logjoint(model, resolved, constrained, args, constraints, stage) + logabsdet
 end
 
 # --- dependent-transform plan walk (reparam=:noncentered) ---------------------
@@ -1177,6 +1528,22 @@ struct LogjointGradientCache{F,C,V}
     buffer::V
 end
 
+# The gradient objective binds the resolved signature plan and the dense
+# observation stage once, so per-evaluation work is the compiled scoring walk
+# alone (no signature re-resolution, no per-observation ChoiceMap hashing for
+# staged sites). Building it through a named helper keeps the closure type a
+# pure function of the captured types, which the public gradient-config
+# memoization keys on.
+function _gradient_objective(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    args::Tuple,
+    constraints::ChoiceMap,
+    stage::_MaybeObservationStage,
+)
+    return theta -> _logjoint_unconstrained(model, resolved, theta, args, constraints, stage)
+end
+
 function _logjoint_gradient_cache(
     model::TeaModel,
     params::AbstractVector,
@@ -1187,7 +1554,9 @@ function _logjoint_gradient_cache(
     seed = collect(params)
     length(buffer) == length(seed) ||
         throw(DimensionMismatch("expected gradient buffer of length $(length(seed)), got $(length(buffer))"))
-    objective = theta -> logjoint_unconstrained(model, theta, args, constraints)
+    resolved = _resolve_signature_plan(model, constraints)
+    stage = _stage_observations(model, resolved, seed, args, constraints)
+    objective = _gradient_objective(model, resolved, args, constraints, stage)
     config = ForwardDiff.GradientConfig(objective, seed)
     return LogjointGradientCache(objective, config, buffer)
 end
@@ -1197,6 +1566,49 @@ function _logjoint_gradient!(cache::LogjointGradientCache, params::AbstractVecto
     return cache.buffer
 end
 
+# Memoized `ForwardDiff.GradientConfig` for the public gradient entry point
+# (issue #145): the config (seed duals + chunk buffers, ~80 kB for the audit
+# models) depends only on the objective's type, the seed eltype, and the
+# parameter count, all of which are stable per resolved signature -- not on
+# the constraint or argument VALUES -- so it lives on the memoized
+# `ResolvedSignaturePlan` instead of being rebuilt per call.
+function _cached_gradient_config(resolved::ResolvedSignaturePlan, objective, seed::AbstractVector)
+    store = resolved.gradient_config_cache[]
+    if isnothing(store)
+        store = Dict{Tuple{DataType,DataType,Int},Any}()
+        resolved.gradient_config_cache[] = store
+    end
+    dict = store::Dict{Tuple{DataType,DataType,Int},Any}
+    key = (typeof(objective), eltype(seed), length(seed))
+    config = get(dict, key, nothing)
+    isnothing(config) || return config
+    config = ForwardDiff.GradientConfig(objective, seed)
+    dict[key] = config
+    return config
+end
+
+# Stage memo for the public gradient entry point: reuse the last stage while
+# it is still current (same constraints object, no mutations since); rebuild
+# otherwise. A cache miss costs one plan walk -- about half a gradient
+# evaluation -- and every hit removes the per-observation ChoiceMap lookups
+# from every subsequent call.
+function _memoized_observation_stage(
+    model::TeaModel,
+    resolved::ResolvedSignaturePlan,
+    seed::AbstractVector,
+    args::Tuple,
+    constraints::ChoiceMap,
+)
+    resolved.compiled.stage_count == 0 && return nothing
+    cached = resolved.observation_stage_cache[]
+    if cached isa ObservationStage && _stage_is_current(cached, constraints)
+        return cached
+    end
+    stage = _stage_observations(model, resolved, seed, args, constraints)
+    isnothing(stage) || (resolved.observation_stage_cache[] = stage)
+    return stage
+end
+
 function logjoint_gradient_unconstrained(
     model::TeaModel,
     params::AbstractVector,
@@ -1204,8 +1616,11 @@ function logjoint_gradient_unconstrained(
     constraints::ChoiceMap=choicemap(),
 )
     seed = collect(params)
-    cache = _logjoint_gradient_cache(model, seed, args, constraints)
+    resolved = _resolve_signature_plan(model, constraints)
+    stage = _memoized_observation_stage(model, resolved, seed, args, constraints)
+    objective = _gradient_objective(model, resolved, args, constraints, stage)
+    config = _cached_gradient_config(resolved, objective, seed)
     gradient = similar(seed)
-    ForwardDiff.gradient!(gradient, cache.objective, seed, cache.config)
+    ForwardDiff.gradient!(gradient, objective, seed, config)
     return gradient
 end
