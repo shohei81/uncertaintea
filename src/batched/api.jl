@@ -18,6 +18,7 @@ function _batched_backend_gradient_cache(
         batch_args,
         batch_constraints,
         _backend_gradient_seed_rows(workspace.layout),
+        IdDict{Any,Any}(),
     )
     totals = _batched_totals_buffer!(workspace, size(params, 2), element_type)
     try
