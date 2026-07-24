@@ -449,6 +449,38 @@ function _batched_nuts_state(
     )
 end
 
+# Per-iteration buffer reuse (issue #142): `sqrt.(Float64.(imm))` and
+# `trues(num_chains)` used to be allocated on every draw; they now fill the
+# workspace buffers added in data_types.jl. Elementwise `sqrt(Float64(x))`
+# matches the old broadcast bitwise.
+function _batched_nuts_sqrt_inverse_mass!(
+    workspace::BatchedNUTSWorkspace,
+    inverse_mass_matrix::AbstractVector,
+)
+    buffer = workspace.sqrt_inverse_mass
+    @inbounds for index in eachindex(buffer, inverse_mass_matrix)
+        buffer[index] = sqrt(Float64(inverse_mass_matrix[index]))
+    end
+    return buffer
+end
+
+# Per-chain overload: one sqrt inverse-mass column per chain.
+function _batched_nuts_sqrt_inverse_mass!(
+    workspace::BatchedNUTSWorkspace,
+    inverse_mass_matrices::AbstractMatrix,
+)
+    buffer = workspace.sqrt_inverse_mass_columns
+    @inbounds for index in eachindex(buffer, inverse_mass_matrices)
+        buffer[index] = sqrt(Float64(inverse_mass_matrices[index]))
+    end
+    return buffer
+end
+
+function _all_chains_active!(workspace::BatchedNUTSWorkspace)
+    fill!(workspace.all_chains_active, true)
+    return workspace.all_chains_active
+end
+
 function _initialize_batched_nuts_continuations!(
     workspace::BatchedNUTSWorkspace,
     model::TeaModel,
@@ -463,7 +495,11 @@ function _initialize_batched_nuts_continuations!(
     rng::AbstractRNG,
 )
     num_chains = size(position, 2)
-    _sample_batched_momentum!(workspace.current_momentum, rng, sqrt.(Float64.(inverse_mass_matrix)))
+    _sample_batched_momentum!(
+        workspace.current_momentum,
+        rng,
+        _batched_nuts_sqrt_inverse_mass!(workspace, inverse_mass_matrix),
+    )
     _batched_hamiltonian!(workspace.current_energy, current_logjoint, workspace.current_momentum, inverse_mass_matrix)
     fill!(workspace.control.accepted_step, true)
     _sample_batched_nuts_directions!(workspace.control.step_direction, rng, workspace.control.accepted_step)
@@ -497,7 +533,13 @@ function _initialize_batched_nuts_continuations!(
     copyto!(workspace.continuation_proposal_logjoint, current_logjoint)
     copyto!(workspace.continuation_proposed_energy, workspace.current_energy)
     fill!(workspace.continuation_delta_energy, 0.0)
-    _load_batched_nuts_first_states!(workspace, position, current_logjoint, current_gradient, trues(num_chains))
+    _load_batched_nuts_first_states!(
+        workspace,
+        position,
+        current_logjoint,
+        current_gradient,
+        _all_chains_active!(workspace),
+    )
 
     for chain_index = 1:num_chains
         tree_workspace = workspace.column_tree_workspaces[chain_index]

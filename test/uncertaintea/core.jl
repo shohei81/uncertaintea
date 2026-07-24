@@ -73,6 +73,7 @@ core_test_files = [
     ("per_chain_warmup_batched.jl", "sampling"),
     ("dense_mass_matrix_single_chain.jl", "sampling"),
     ("masked_batched_nuts.jl", "sampling"),
+    ("allocfree_leapfrog_bitwise.jl", "sampling"),
     ("sbc_calibration.jl", "sampling"),
     ("reparam_noncentered_cpu.jl", "sampling"),
     ("discrete_enum_cpu.jl", "sampling"),
